@@ -1,0 +1,9 @@
+# @id b41c1f64-aced-4ce9-bcf5-1b565ac7c242
+PUT {{baseUrl}}/put
+Accept: application/json
+Content-Type: application/json
+
+# @rawSubtype: json
+{
+  "field": "updated"
+}

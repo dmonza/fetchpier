@@ -1,0 +1,138 @@
+{
+  "startedAt": "2026-05-23T20:23:52.262Z",
+  "gitSha": "1a9afa83f7ab1e49b2bda3c5caa418086fb880f4",
+  "snapshots": [
+    {
+      "label": "T+0",
+      "electronVersion": "42.1.0",
+      "chromiumVersion": "148.0.7778.97",
+      "v8Version": "14.8.178.14-electron.0",
+      "os": {
+        "platform": "win32",
+        "arch": "x64",
+        "release": "10.0.26200"
+      },
+      "processes": [
+        {
+          "pid": 40664,
+          "type": "Browser",
+          "rssKb": 115636,
+          "privateBytesKb": 87948,
+          "workingSetKb": 115636
+        },
+        {
+          "pid": 23056,
+          "type": "GPU",
+          "name": "GPU",
+          "rssKb": 74748,
+          "privateBytesKb": 26436,
+          "workingSetKb": 74748
+        },
+        {
+          "pid": 42340,
+          "type": "Utility",
+          "name": "Network Service",
+          "rssKb": 52316,
+          "privateBytesKb": 14916,
+          "workingSetKb": 52316
+        },
+        {
+          "pid": 35324,
+          "type": "Tab",
+          "rssKb": 93616,
+          "privateBytesKb": 43200,
+          "workingSetKb": 93616
+        }
+      ],
+      "totalRssKb": 336316
+    },
+    {
+      "label": "T+5s",
+      "electronVersion": "42.1.0",
+      "chromiumVersion": "148.0.7778.97",
+      "v8Version": "14.8.178.14-electron.0",
+      "os": {
+        "platform": "win32",
+        "arch": "x64",
+        "release": "10.0.26200"
+      },
+      "processes": [
+        {
+          "pid": 40664,
+          "type": "Browser",
+          "rssKb": 117052,
+          "privateBytesKb": 88372,
+          "workingSetKb": 117052
+        },
+        {
+          "pid": 23056,
+          "type": "GPU",
+          "name": "GPU",
+          "rssKb": 102636,
+          "privateBytesKb": 26948,
+          "workingSetKb": 102636
+        },
+        {
+          "pid": 42340,
+          "type": "Utility",
+          "name": "Network Service",
+          "rssKb": 52332,
+          "privateBytesKb": 14920,
+          "workingSetKb": 52332
+        },
+        {
+          "pid": 35324,
+          "type": "Tab",
+          "rssKb": 130460,
+          "privateBytesKb": 54484,
+          "workingSetKb": 130460
+        }
+      ],
+      "totalRssKb": 402480
+    },
+    {
+      "label": "T+30s",
+      "electronVersion": "42.1.0",
+      "chromiumVersion": "148.0.7778.97",
+      "v8Version": "14.8.178.14-electron.0",
+      "os": {
+        "platform": "win32",
+        "arch": "x64",
+        "release": "10.0.26200"
+      },
+      "processes": [
+        {
+          "pid": 40664,
+          "type": "Browser",
+          "rssKb": 115864,
+          "privateBytesKb": 84020,
+          "workingSetKb": 115864
+        },
+        {
+          "pid": 23056,
+          "type": "GPU",
+          "name": "GPU",
+          "rssKb": 92556,
+          "privateBytesKb": 27012,
+          "workingSetKb": 92556
+        },
+        {
+          "pid": 42340,
+          "type": "Utility",
+          "name": "Network Service",
+          "rssKb": 52296,
+          "privateBytesKb": 14856,
+          "workingSetKb": 52296
+        },
+        {
+          "pid": 35324,
+          "type": "Tab",
+          "rssKb": 124480,
+          "privateBytesKb": 55284,
+          "workingSetKb": 124480
+        }
+      ],
+      "totalRssKb": 385196
+    }
+  ]
+}

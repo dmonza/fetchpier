@@ -1,0 +1,4 @@
+{
+  "$comment": "Network egress invariant: remote-resource references allowed in the renderer bundle. Expected to stay EMPTY. Each entry must state why the exception is justified. Schema: { file: glob-or-suffix, pattern: literal substring that may appear, reason: 'why' }.",
+  "allow": []
+}

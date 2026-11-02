@@ -1,0 +1,3 @@
+# @id 7e273d50-7ea2-4c88-be8e-904974bac38e
+DELETE {{baseUrl}}/delete
+Accept: application/json

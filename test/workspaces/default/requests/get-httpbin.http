@@ -1,0 +1,3 @@
+# @id 0952047a-c14d-4e5c-a080-56bc81642514
+GET {{baseUrl}}/get
+Accept: application/json

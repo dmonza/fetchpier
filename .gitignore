@@ -1,0 +1,60 @@
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+out/
+.vite/
+*.local
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+# Windows shortcuts, which Explorer creates from a distracted drag & drop.
+*.lnk
+
+# TypeScript
+*.tsbuildinfo
+
+# Coverage
+coverage/
+# Perf benchmark output (REQ-0059) — already covered by coverage/, noted for clarity
+coverage/perf/
+
+# Playwright / E2E
+playwright-report/
+test-results/
+test/e2e/.tmp/
+
+# Claude Code
+CLAUDE.md
+.claude/
+Claude outputs/
+
+# Internal Documentation
+docs/
+
+# NOT ignored, deliberately: `build/` holds the installer resources — the icons,
+# the NSIS sidebars and the macOS entitlements that electron-builder reads
+# through `directories.buildResources`. Ignoring it produces a tree that clones
+# and tests fine and cannot be packaged. It was ignored here once; do not put it
+# back.
+
+profiles/

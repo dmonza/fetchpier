@@ -1,0 +1,103 @@
+name: Nightly
+
+# What a nightly adds over the per-commit gate: it catches things that break
+# without anyone touching the code — a newly disclosed advisory in a dependency,
+# or environment drift under the E2E suite. A failure here blocks nothing by
+# itself; it is a notification.
+#
+# Scheduled runs always execute on the default branch.
+
+on:
+  schedule:
+    # 04:00 UTC daily — outside working hours in the maintainer's timezone.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Kept in lockstep with ci.yml — see the rationale there.
+  NODE_VERSION: '24'
+
+jobs:
+  e2e:
+    name: Full E2E suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Identical host setup to the per-PR e2e job, by construction rather than
+      # by hand: this job used to restate the steps and silently lacked the
+      # keyring, so the five workspace-key specs aborted every night while the
+      # PR job passed.
+      - uses: ./.github/actions/setup-e2e-linux
+        with:
+          keyring: 'true'
+
+      - run: npm ci
+
+      # After `npm ci`: the sandbox helper does not exist until dependencies are
+      # installed. Measured on the runner, allowing user namespaces alone was NOT
+      # enough — the engine had already ruled the helper out.
+      - run: scripts/ci/enable-chrome-sandbox.sh
+
+      - run: npm run build
+
+      - name: Full UI suite
+        run: xvfb-run -a dbus-run-session -- scripts/ci/run-with-keyring.sh npm run test:e2e
+        env:
+          FETCHPIER_TEST_REQUIRE_DOCKER: '1'
+          # No keyring is required here: no Linux runner has one, so the
+          # keyring-dependent specs skip (announced by global-setup) and the
+          # `native-capabilities` job in ci.yml is where they actually run.
+          # A Linux runner cannot sandbox the renderer; the CI `sandbox` job
+          # verifies the invariant on Windows and macOS. Logged on every run.
+          FETCHPIER_TEST_ALLOW_UNSANDBOXED: '1'
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      # Same threshold and scope the release gate already uses: runtime
+      # dependencies only, failing on high and critical. Moderate advisories are
+      # frequent and often unfixable without an upstream release.
+      #
+      # A high/critical advisory with no published fix will keep this red until
+      # upstream ships one. That is accepted for now — no allowlist exists yet;
+      # add one if it becomes noise rather than signal.
+      - name: npm audit (high+)
+        run: npm audit --omit=dev --audit-level=high

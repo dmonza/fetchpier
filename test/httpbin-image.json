@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Pinned HTTP test target for the Playwright/Electron suite. THIS FILE IS THE SINGLE",
+    "SOURCE OF TRUTH: the harness provisions the container itself, so no workflow file",
+    "restates the image reference. A second copy of the digest anywhere in the repo is a",
+    "defect, not a trade-off.",
+    "",
+    "To move the target: `docker manifest inspect --verbose <image>` and copy the",
+    "`Descriptor.digest` value here, then re-run `npm run test:e2e` to confirm every",
+    "endpoint the fixtures use still behaves the same.",
+    "",
+    "`containerPort` MUST match the port the image actually listens on — check it with",
+    "`docker image inspect <ref> --format '{{json .Config.ExposedPorts}}'`. Different",
+    "builds of httpbin bind different ports (this image binds 80; some rebuilds bind",
+    "8080), and getting it wrong makes every health check time out.",
+    "",
+    "The image publishes linux/amd64 only — there is no arm64 variant. CI runs on amd64",
+    "runners; on arm64 hardware the container runs emulated."
+  ],
+  "image": "kennethreitz/httpbin",
+  "digest": "sha256:599fe5e5073102dbb0ee3dbb65f049dab44fa9fc251f6835c9990f8fb196a72b",
+  "hostPort": 8080,
+  "containerPort": 80,
+  "containerName": "httpbin-test",
+  "platforms": ["linux/amd64"],
+  "resolvedAt": "2026-07-28"
+}

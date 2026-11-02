@@ -1,0 +1,58 @@
+{
+  "name": "@fetchpier/core",
+  "version": "0.9.4",
+  "description": "Fetchpier business layer — Node-only, Electron-free. Consumed by the desktop app and the future CLI.",
+  "private": true,
+  "author": "Daniel Monza",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./schema-import": {
+      "types": "./dist/schema-import.d.ts",
+      "require": "./dist/schema-import.js",
+      "default": "./dist/schema-import.js"
+    },
+    "./atomic-write": {
+      "types": "./dist/atomic-write.d.ts",
+      "require": "./dist/atomic-write.js",
+      "default": "./dist/atomic-write.js"
+    },
+    "./activity-log": {
+      "types": "./dist/activity-log/index.d.ts",
+      "require": "./dist/activity-log/index.js",
+      "default": "./dist/activity-log/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@readme/openapi-parser": "^6.3.0",
+    "fast-xml-parser": "^5.11.2",
+    "graphql": "^16.14.0",
+    "js-yaml": "^4.3.2",
+    "libsodium-wrappers": "^0.8.4",
+    "mime": "^4.1.1",
+    "tough-cookie": "^6.0.2",
+    "undici": "^8.12.3"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/libsodium-wrappers": "^0.7.14",
+    "mockttp": "^4.6.5"
+  }
+}

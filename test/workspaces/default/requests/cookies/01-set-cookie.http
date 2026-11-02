@@ -1,0 +1,3 @@
+# @id 55119458-718b-4adf-8c86-8ab1057e9ef6
+GET {{baseUrl}}/cookies/set?session=fetchpier-test
+Accept: application/json

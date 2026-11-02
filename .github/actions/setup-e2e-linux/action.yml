@@ -1,0 +1,64 @@
+name: Set up the Linux E2E host
+description: >
+  Everything a Linux job needs before it launches the app: the runtime
+  libraries, a virtual display, a sandbox-capable kernel, and — on request — an
+  OS keyring. Defined once and referenced by every such job, because the two
+  jobs that ran the same suite with hand-copied setup steps drifted apart and
+  five specs failed for a week.
+
+inputs:
+  keyring:
+    description: >
+      Install an OS keyring. Only runs that reach the workspace-key specs need
+      one; without it the secrets subsystem correctly keeps keys in memory and
+      never writes the keystore. The job must ALSO wrap the suite in a session
+      bus with the keyring unlocked and set FETCHPIER_TEST_REQUIRE_KEYRING —
+      apt alone does not provide a running daemon.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Electron runtime libraries and a virtual display
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1
+
+    - name: Install an OS keyring
+      if: inputs.keyring == 'true'
+      shell: bash
+      run: |
+        sudo apt-get install -y --no-install-recommends gnome-keyring dbus-x11
+
+    # Part one of the renderer-sandbox remedy. `sandbox: true` is a documented
+    # invariant and the suite asserts it at the kernel level, so the runner has
+    # to be able to honor it.
+    #
+    # MEASURED: this step is necessary-at-most, not sufficient. On the runner the
+    # setting went 1 → 0 and every renderer still reported `Seccomp: 0`, because
+    # the decisive cause is elsewhere — the privileged sandbox helper installed
+    # by the package manager is owned by the installing user, so its setuid bit
+    # is inert and the engine disables the sandbox outright. That half is
+    # `scripts/ci/enable-chrome-sandbox.sh`, which must run AFTER dependency
+    # installation and therefore lives in the job, not here.
+    #
+    # Kept anyway: it costs nothing and covers a host that ships no helper at
+    # all, where the user-namespace path is the only one available.
+    #
+    # Best-effort ON PURPOSE. This attempts the remedy; the harness's host
+    # precondition is what *verifies* it, and aborts before any spec if the
+    # renderer is still unsandboxed. One authority, not two.
+    - name: Allow the browser engine to sandbox its renderers
+      shell: bash
+      run: |
+        key=kernel.apparmor_restrict_unprivileged_userns
+        before=$(sysctl -n "$key" 2>/dev/null || echo absent)
+        echo "[setup-e2e-linux] $key before: $before"
+        if [ "$before" != "absent" ] && [ "$before" != "0" ]; then
+          sudo sysctl -w "$key"=0 || echo "[setup-e2e-linux] could not change $key"
+        fi
+        after=$(sysctl -n "$key" 2>/dev/null || echo absent)
+        echo "[setup-e2e-linux] $key after: $after"

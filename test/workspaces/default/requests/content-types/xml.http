@@ -1,0 +1,3 @@
+# @id 88068e19-e645-4acf-8745-53e17351b2cd
+GET {{baseUrl}}/xml
+Accept: application/xml

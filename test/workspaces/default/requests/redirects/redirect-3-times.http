@@ -1,0 +1,7 @@
+# @id 616ca6c2-9f23-4862-a189-c893e37b572e
+# @settings
+# followRedirects: true
+# maxRedirects: 5
+# @end-settings
+GET {{baseUrl}}/redirect/3
+Accept: application/json

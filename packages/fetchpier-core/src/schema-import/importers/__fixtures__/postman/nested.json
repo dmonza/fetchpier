@@ -1,0 +1,118 @@
+{
+  "info": {
+    "name": "Nested API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "collection-token" }]
+  },
+  "item": [
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List users",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": ["console.log('before list')"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/users",
+              "host": ["{{base_url}}"],
+              "path": ["users"]
+            }
+          }
+        },
+        {
+          "name": "Get user by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/users/:userId",
+              "host": ["{{base_url}}"],
+              "path": ["users", ":userId"]
+            }
+          }
+        },
+        {
+          "name": "Public login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "admin" },
+                { "key": "password", "value": "secret" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/login",
+              "host": ["{{base_url}}"],
+              "path": ["login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Upload avatar",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "avatar", "type": "file", "src": "/tmp/avatar.png" },
+                { "key": "label", "value": "primary", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/avatar",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "avatar"]
+            }
+          }
+        },
+        {
+          "name": "Search",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Ping { ping }",
+                "variables": "{\"x\":1}"
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/graphql",
+              "host": ["{{base_url}}"],
+              "path": ["graphql"]
+            }
+          }
+        }
+      ],
+      "variable": [
+        { "key": "admin_role", "value": "superuser" }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "https://api.example.com" }
+  ]
+}

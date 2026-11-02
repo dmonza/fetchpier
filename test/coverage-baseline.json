@@ -1,0 +1,175 @@
+{
+  "$schema": "Phase 6 will publish a schema. Today this file is consumed only by scripts/post-req.mjs (also Phase 6).",
+  "capturedAt": "2026-08-05",
+  "commit": "uncommitted (PLAN-0158 — re-capture after the 2026-05-22 reference went stale)",
+  "phaseHistory": [
+    {
+      "phase": 1,
+      "lines": 35.5,
+      "branches": 31.99,
+      "functions": 24.48,
+      "statements": 34.31
+    },
+    {
+      "phase": 3,
+      "lines": 39.62,
+      "branches": 36.67,
+      "functions": 29.39,
+      "statements": 38.91
+    },
+    {
+      "phase": "REQ-0057",
+      "note": "Business layer moved from src/main to packages/fetchpier-core. The `main` project drops sharply because its well-tested domain code (http, scripting, tls, schema, cookies, history) now lives in the new `core` project; the tests moved with it. Total is essentially unchanged.",
+      "lines": 40.18,
+      "branches": 37.14,
+      "functions": 30.1,
+      "statements": 39.35
+    },
+    {
+      "phase": "REQ-0058",
+      "note": "Added the `@fetchpier/cli` package (the `fp` command). The new `cli` project lands well-tested (unit + integration with mockttp + spawn-based exit-code tests), so it raises the total across the board. The binary entry (fp.ts) and the SIGINT signal module are exercised only via spawned child processes, which v8 coverage does not attribute to the parent run; they read as low-coverage by design.",
+      "lines": 45,
+      "branches": 42.17,
+      "functions": 34.01,
+      "statements": 43.93
+    },
+    {
+      "phase": "PLAN-0158",
+      "note": "Re-capture. The reference had not moved since 2026-05-22 while the suite kept growing, so the gate was comparing a 67.86%-covered tree against a 45.00% mark and only fired below 44.5% — roughly a third of all covered lines could have been deleted without turning it red. No test was added or removed here; the figures were already true, they were simply never recorded. `main` (16.17 → 62.55 lines) and `renderer` (18.42 → 47.35) move the most, which is where the testing effort went. Captured from two consecutive runs that agreed to within 0.02 pp.",
+      "lines": 45,
+      "branches": 42.17,
+      "functions": 34.01,
+      "statements": 43.93
+    }
+  ],
+  "vitest": "4.1.6",
+  "coverageProvider": "@vitest/coverage-v8@4.1.6",
+  "regressionTolerance": 0.5,
+  "policy": {
+    "minimum": "no metric may drop below the baseline by more than regressionTolerance percentage points",
+    "aspirational": {
+      "core": {
+        "lines": 80,
+        "branches": 70
+      },
+      "shared": {
+        "lines": 80,
+        "branches": 70
+      },
+      "main": "now mostly Electron adapters (IPC, windows, menu) exercised via E2E; unit coverage is naturally low and not a target",
+      "renderer": "no minimum until Playwright UI tests are in place; renderer is currently exercised mainly via E2E"
+    }
+  },
+  "projects": {
+    "main": {
+      "statements": 59.93,
+      "branches": 54.65,
+      "functions": 49.51,
+      "lines": 62.55
+    },
+    "shared": {
+      "statements": 97.31,
+      "branches": 91.18,
+      "functions": 100,
+      "lines": 98.72
+    },
+    "renderer": {
+      "statements": 46.47,
+      "branches": 40.47,
+      "functions": 44.46,
+      "lines": 47.37
+    },
+    "core": {
+      "statements": 84,
+      "branches": 72.4,
+      "functions": 87.41,
+      "lines": 86.75
+    },
+    "cli": {
+      "statements": 85.49,
+      "branches": 79.93,
+      "functions": 76.84,
+      "lines": 87.64
+    },
+    "total": {
+      "statements": 65.87,
+      "branches": 58.22,
+      "functions": 59.48,
+      "lines": 67.87
+    }
+  },
+  "expectedZeroCoverageFiles": [
+    "packages/fetchpier-cli/src/commands/env/index.ts",
+    "packages/fetchpier-cli/src/commands/index.ts",
+    "packages/fetchpier-cli/src/fp.ts",
+    "packages/fetchpier-cli/src/index.ts",
+    "packages/fetchpier-core/src/schema-import/index.ts",
+    "src/main/http/cookie-jar.ts",
+    "src/main/http/variables.ts",
+    "src/main/index.ts",
+    "src/main/ipc/certificates.ipc.ts",
+    "src/main/ipc/cookies.ipc.ts",
+    "src/main/ipc/file.ipc.ts",
+    "src/main/ipc/history.ipc.ts",
+    "src/main/ipc/locale.ipc.ts",
+    "src/main/ipc/schema.ipc.ts",
+    "src/main/ipc/script.ipc.ts",
+    "src/main/ipc/secrets.ipc.ts",
+    "src/main/ipc/theme.ipc.ts",
+    "src/main/ipc/tree-state.ipc.ts",
+    "src/main/ipc/ui-state.ipc.ts",
+    "src/main/ipc/updates.ipc.ts",
+    "src/main/ipc/workspace-state.ipc.ts",
+    "src/main/menu.ts",
+    "src/main/scripting/script-runner.ts",
+    "src/main/tls/paths.ts",
+    "src/main/tls/store.ts",
+    "src/main/window/create-activity-panel-window.ts",
+    "src/main/window/create-main-window.ts",
+    "src/renderer/App.tsx",
+    "src/renderer/activity-panel-popout.tsx",
+    "src/renderer/components/LanguageSelector.tsx",
+    "src/renderer/components/ThemeProvider.tsx",
+    "src/renderer/components/ThemeToggle.tsx",
+    "src/renderer/components/activity-panel/ActivityPanel.tsx",
+    "src/renderer/components/activity-panel/ActivityPanelPopoutApp.tsx",
+    "src/renderer/components/activity-panel/RequestsActivityTab.tsx",
+    "src/renderer/components/cookies/CookieForm.tsx",
+    "src/renderer/components/cookies/CookiesModal.tsx",
+    "src/renderer/components/environment/EnterKeyDialog.tsx",
+    "src/renderer/components/environment/RotateKeyDialog.tsx",
+    "src/renderer/components/environment/SecretSetupDialog.tsx",
+    "src/renderer/components/request/AuthEditor.tsx",
+    "src/renderer/components/request/BodyEditor.tsx",
+    "src/renderer/components/request/ClientCertificatePreview.tsx",
+    "src/renderer/components/request/RequestEditor.tsx",
+    "src/renderer/components/request/SaveRequestDialog.tsx",
+    "src/renderer/components/request/ScriptsEditor.tsx",
+    "src/renderer/components/request/SettingsEditor.tsx",
+    "src/renderer/components/response/ResponseViewer.tsx",
+    "src/renderer/components/response/TestsTab.tsx",
+    "src/renderer/components/schema/ImportResultSummary.tsx",
+    "src/renderer/components/schema/ImportSchemaModal.tsx",
+    "src/renderer/components/settings/AddWorkspaceKeyDialog.tsx",
+    "src/renderer/components/settings/DeleteWorkspaceKeyDialog.tsx",
+    "src/renderer/components/settings/WorkspaceKeysPanel.tsx",
+    "src/renderer/components/sidebar/CollectionTree.tsx",
+    "src/renderer/components/ui/SortableRows.tsx",
+    "src/renderer/components/ui/badge.tsx",
+    "src/renderer/components/ui/resizable.tsx",
+    "src/renderer/components/ui/tabs.tsx",
+    "src/renderer/components/ui/toast-container.tsx",
+    "src/renderer/components/updates/UpdatesPanel.tsx",
+    "src/renderer/components/workspace/WorkspaceSettingsDialog.tsx",
+    "src/renderer/hooks/useFileSyncReconciliation.ts",
+    "src/renderer/i18n/index.ts",
+    "src/renderer/lib/relative-time.ts",
+    "src/renderer/lib/repoint-guard.ts",
+    "src/renderer/lib/tree-paths.ts",
+    "src/renderer/main.tsx",
+    "src/renderer/stores/display.ts",
+    "src/renderer/stores/schemaImport.ts",
+    "src/renderer/stores/workspace.ts"
+  ],
+  "expectedZeroCoverageFilesNote": "Files executing no line under the unit suites. Electron adapters (IPC handlers, windows, menu) and most React components are covered by the Playwright suite instead, which v8 does not attribute to this run; barrels and binary entry points have nothing to execute. Nothing reads this field — it exists so a reader does not mistake a deliberate gap for a regression. Regenerate it rather than editing by hand."
+}

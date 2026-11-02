@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!--
+      Entitlements for the Fetchpier.app bundle, signed with `hardenedRuntime: true`.
+      Referenced from electron-builder.yml as `mac.entitlements`; guarded by
+      scripts/packaging-config.test.ts.
+
+      This is deliberately the same set as electron-builder's own default template
+      (app-builder-lib/templates/entitlements.mac.plist) — the file it would sign with
+      had the config not overridden the path. Nothing here is this project's invention.
+
+      Deliberately ABSENT, and each for a reason:
+
+        com.apple.security.cs.allow-dyld-environment-variables
+          Only needed by an app that re-execs itself with DYLD_* or ELECTRON_RUN_AS_NODE.
+          Fetchpier spawns no child process — the `fp` script sandbox is an in-process
+          node:vm — so granting it would widen the runtime for nothing.
+
+        com.apple.security.get-task-allow
+          Permits a debugger to attach. Apple's notary service rejects any submission
+          carrying it.
+
+        com.apple.security.app-sandbox and every com.apple.security.{network,files}.* key
+          App Sandbox entitlements, meaningful only for a Mac App Store build. Fetchpier
+          ships DMG + ZIP outside the store; under the hardened runtime alone they are
+          inert. Filesystem and network access are governed by TCC and by the
+          NSDocumentsFolderUsageDescription / NSDownloadsFolderUsageDescription strings
+          in electron-builder.yml's `mac.extendInfo`.
+    -->
+
+    <!-- V8 compiles JavaScript at runtime; without these two the renderer dies on launch. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!--
+      Lets the process load libraries signed by another Team ID or unsigned — required
+      by Electron's multi-binary layout (Helper apps + Electron Framework), and required
+      outright when a hardened-runtime build is ad-hoc signed.
+
+      This is the one entitlement here that relaxes the runtime. It does NOT touch the
+      renderer's own isolation: `sandbox: true` and `contextIsolation: true` are enforced
+      by Chromium and the OS, not by entitlements.
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

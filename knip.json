@@ -1,0 +1,41 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/main.tsx",
+        "src/renderer/activity-panel-popout.tsx",
+        "electron.vite.config.ts",
+        "scripts/**/*.{mjs,ts}",
+        "test/e2e/**/*.spec.ts",
+        "test/e2e/**/*.ts",
+        "**/*.test.{ts,tsx}",
+        "**/*.bench.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "test/**/*.ts"],
+      "paths": {
+        "@renderer/*": ["src/renderer/*"],
+        "@shared/*": ["src/shared/*"],
+        "@fetchpier/core/activity-log": ["packages/fetchpier-core/src/activity-log/index.ts"]
+      },
+      "ignore": ["**/*.d.ts"],
+      "ignoreDependencies": [
+        "@readme/openapi-parser",
+        "fast-xml-parser",
+        "graphql",
+        "js-yaml",
+        "mime"
+      ]
+    },
+    "packages/fetchpier-core": {
+      "entry": ["**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/fetchpier-cli": {
+      "entry": ["test/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    }
+  }
+}

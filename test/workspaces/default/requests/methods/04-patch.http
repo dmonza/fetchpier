@@ -1,0 +1,9 @@
+# @id d5d015f2-2e66-4851-be4c-2e02d58add8c
+PATCH {{baseUrl}}/patch
+Accept: application/json
+Content-Type: application/json
+
+# @rawSubtype: json
+{
+  "field": "patched"
+}

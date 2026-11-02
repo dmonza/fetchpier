@@ -1,0 +1,3 @@
+# @id 259fbdac-a71e-4696-a58a-af002fa252e4
+GET {{baseUrl}}/delay/2
+Accept: application/json

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "types": ["node"],
+    "ignoreDeprecations": "6.0",
+    "paths": {
+      "@shared/*": ["../../src/shared/*"],
+      "@fetchpier/core": ["../fetchpier-core/src/index.ts"],
+      // Named explicitly rather than as a `@fetchpier/core/*` wildcard: a
+      // wildcard would make every core internal deep-importable, which is
+      // exactly what the barrel and the separate cold-path entries exist to
+      // prevent. This module is not part of core's runtime surface at all — it
+      // is a packaging fact, reachable only from a test.
+      "@fetchpier/core/runtime-dynamic-deps": ["../fetchpier-core/src/runtime-dynamic-deps.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*", "tsup.config.ts"]
+}

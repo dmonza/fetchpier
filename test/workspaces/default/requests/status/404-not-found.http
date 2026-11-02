@@ -1,0 +1,3 @@
+# @id d335ff29-cf23-464e-8bff-f6ddffdf0d76
+GET {{baseUrl}}/status/404
+Accept: application/json

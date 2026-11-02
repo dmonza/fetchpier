@@ -1,0 +1,6 @@
+# @id 74faf167-1c5c-4006-ab64-d97fe3749fad
+# @settings
+# followRedirects: false
+# @end-settings
+GET {{baseUrl}}/status/301
+Accept: application/json

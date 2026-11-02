@@ -1,0 +1,13 @@
+# @id 0188ec41-edd4-4c0b-a4b0-07928589b2e3
+GET {{baseUrl}}/get?probe=1
+Accept: application/json
+
+# @post-response-script
+# fp.test('status is 200', () => {
+#   fp.expect(fp.response.status).to.equal(200)
+# })
+# fp.test('body has url', () => {
+#   const body = fp.response.json()
+#   fp.expect(body.url).to.be.a('string')
+# })
+# @end-script

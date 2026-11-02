@@ -1,0 +1,288 @@
+name: Release
+
+# Builds the three installers from a `v*` tag and publishes them as a DRAFT
+# GitHub Release. Nothing here overlaps with `ci.yml`: the gates run on every
+# push, this runs only on a tag, and it assumes the gates already passed.
+#
+# Windows is deliberately NOT part of a build matrix. Authenticode signing
+# through SignPath needs the `artifact-id` that `actions/upload-artifact`
+# returns, and reading a step output across a matrix leg is unreliable — so the
+# Windows build owns its upload and its signing step in one job. Linux and macOS
+# stay separate for symmetry and because a failure on one platform should not
+# cancel the others.
+#
+# ── Signing status ──────────────────────────────────────────────────────────
+# Windows: wired for SignPath Foundation, DORMANT until the repository variable
+#          `SIGNPATH_ORGANIZATION_ID` is set. Until then the unsigned installer
+#          is published as-is and the release notes must say so.
+# macOS:   unsigned and un-notarized. SignPath issues Authenticode certificates;
+#          a macOS build needs an Apple Developer ID, which is a separate paid
+#          account. `CSC_IDENTITY_AUTO_DISCOVERY: false` is what makes
+#          electron-builder skip signing instead of failing on a runner with no
+#          keychain identity.
+# Linux:   AppImage and .deb are conventionally unsigned. Nothing to do.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Lets a failed release be re-run without moving the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v0.9.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Same value as ci.yml and nightly.yml — see the rationale in ci.yml.
+  NODE_VERSION: '24'
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Refuses to build if the tag and package.json disagree. Cheap, and it is the
+  # only thing standing between a mistyped tag and an installer whose file name
+  # says one version while its metadata says another — which SignPath rejects
+  # anyway, because the Foundation requires binary metadata to match the build.
+  # ───────────────────────────────────────────────────────────────────────────
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      # Not optional: `npm ci` below needs an npm new enough for this
+      # package-lock.json (see the NODE_VERSION comment in ci.yml). Relying on
+      # whatever Node the runner image ships with is exactly the drift that
+      # produces an unfixable "Missing: ... from lock file".
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "v$PKG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $PKG."
+            exit 1
+          fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+
+      # The committed file must already be current — `npm run build` regenerates
+      # it via `prebuild`, so checking afterwards would compare freshly generated
+      # content against itself and never fail. Same ordering as ci.yml.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm run check:licenses
+
+  # ───────────────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build (Linux)
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+      - run: npm run package:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  build-macos:
+    name: Build (macOS)
+    needs: verify
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+
+      # Both architectures: `npmRebuild: false` and no native modules mean the
+      # cross-arch build is a pure repack, so this costs one extra pass and no
+      # correctness risk.
+      - name: Package (x64 + arm64, unsigned)
+        run: npm run build && npx electron-builder --mac --x64 --arm64
+        env:
+          # Without this, electron-builder hunts for a Developer ID in the
+          # runner's keychain, finds none, and fails the build. Setting it to
+          # false makes it skip signing deliberately instead.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/*.dmg
+            dist/*-mac-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # The only job with a signing step. It stays green whether or not SignPath is
+  # configured: the submit step is skipped when the org id variable is empty,
+  # and the publish job picks up whichever installer ended up in `dist/`.
+  # ───────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Build + sign (Windows)
+    needs: verify
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      # Required by the SignPath action to read the uploaded artifact when the
+      # repository is private and the SignPath GitHub App is not installed.
+      # Harmless on a public repository; kept so a temporary re-privatisation
+      # does not silently break signing.
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+      - run: npm run package:win
+
+      # SignPath signs what this step uploads, addressed by the artifact id it
+      # returns — hence the `id`.
+      - name: Upload unsigned installer
+        id: unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: dist/Fetchpier-Installer-${{ needs.verify.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      # ── SignPath Foundation ────────────────────────────────────────────────
+      # Dormant until the repository variable SIGNPATH_ORGANIZATION_ID is set
+      # (Settings → Secrets and variables → Actions → Variables) together with
+      # the SIGNPATH_API_TOKEN secret.
+      #
+      # `wait-for-completion: true` blocks on a human: the Foundation requires
+      # every release to be approved by a named approver in the SignPath UI.
+      # That is why this step gets its own generous timeout — the job is idle,
+      # not stuck.
+      #
+      # The signed file is written back over `dist/`, so the publish job below
+      # needs no branch: it uploads whatever is there.
+      - name: Submit signing request
+        id: signpath
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        timeout-minutes: 90
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Record signing status
+        shell: bash
+        run: |
+          if [ "${{ steps.signpath.outcome }}" = "success" ]; then
+            echo "signed=true"  >> "$GITHUB_ENV"
+            echo "### Windows installer signed by SignPath" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "signed=false" >> "$GITHUB_ENV"
+            echo "### Windows installer is UNSIGNED — say so in the release notes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Fetchpier-Installer-${{ needs.verify.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Draft, never published automatically. The draft is the last human gate: the
+  # release notes get read, the SmartScreen caveat gets written while signing is
+  # still dormant, and the assets get eyeballed before anyone can download them.
+  # ───────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish draft release
+    needs: [verify, build-linux, build-macos, build-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.verify.outputs.tag }}
+          name: Fetchpier ${{ needs.verify.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: artifacts/*

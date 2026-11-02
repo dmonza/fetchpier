@@ -1,0 +1,4 @@
+# @id a720186b-daa2-48e2-8244-66915b48353e
+GET {{baseUrl}}/basic-auth/{{basicAuthUser}}/{{basicAuthPass}}
+Authorization: Basic dXNlcjpwYXNz
+Accept: application/json

@@ -1,0 +1,251 @@
+name: CI
+
+# Gate every commit. The jobs deliberately compose the EXISTING npm
+# orchestrators (`post-req`, `test:e2e`) rather than re-listing their steps, so
+# a change to a gate is picked up here without editing this file.
+#
+# Platform split: anything that builds or launches the app runs on Linux, which
+# is the only runner where the HTTP test target (a Linux container) can run. The
+# unit suites reach no network and cost almost nothing, so they run on all three
+# desktop platforms — the product is filesystem-first and path/case/line-ending
+# behavior deserves per-platform verification.
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Aligned with the development runtime so CI verifies on the runtime the code
+  # is written on. It is NOT what keeps `npm ci` working — that is a property of
+  # `package-lock.json`, which must be written by npm >= 11.16. Older npm omits
+  # the top-level `@emnapi/core` / `@emnapi/runtime` entries (peers of
+  # `@napi-rs/wasm-runtime`, bundled by `@tailwindcss/oxide-wasm32-wasi`) that
+  # every npm from 11.16 on requires, and the resulting `Missing: ... from lock
+  # file` is unfixable from the workflow side. A lock written by a current npm
+  # is accepted by npm 10.9 through 12.x alike, so this value is free to track
+  # the LTS line.
+  NODE_VERSION: '24'
+
+jobs:
+  gate:
+    name: Gate (Linux)
+    # Pinned rather than `ubuntu-latest`: the Electron runtime libraries below
+    # are named per release (libasound2t64 exists on 24.04, libasound2 on 22.04),
+    # so a floating runner would break the install step on its own schedule.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # The smoke spec launches the app, so this job runs it under the same host
+      # setup as the full suite. It does not touch secrets, so no keyring.
+      - uses: ./.github/actions/setup-e2e-linux
+
+      - run: npm ci
+
+      # Still attempted even though this runner is waived below: the two together
+      # are self-healing. If a future runner image can sandbox, the waiver simply
+      # finds nothing to waive and the log stops reporting one — no workflow edit
+      # needed to regain the coverage.
+      - run: scripts/ci/enable-chrome-sandbox.sh
+
+      # MUST run before anything that builds: `npm run build` triggers
+      # `prebuild` → `generate:licenses`, which overwrites the committed file.
+      # Run this afterwards and it would always compare against freshly
+      # generated content and never fail.
+      - name: Third-party license drift
+        run: npm run check:licenses
+
+      # typecheck → lint → unit+coverage → coverage no-regression → build → smoke.
+      # The smoke spec launches the app and sends a real request, so it needs the
+      # virtual display and the HTTP target. Strict mode makes a fall back to the
+      # public service a hard failure instead of a silent degradation.
+      - name: Full gate
+        run: xvfb-run -a npm run post-req
+        env:
+          FETCHPIER_TEST_REQUIRE_DOCKER: '1'
+          # This runner cannot sandbox the renderer; the invariant is verified by
+          # `native-capabilities` instead. The waiver is logged on every run.
+          FETCHPIER_TEST_ALLOW_UNSANDBOXED: '1'
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  static:
+    # The job name carries no Node version: the `env` context is unavailable in
+    # `jobs.<id>.name`, so the default runners could not render it. The floor
+    # entry is identifiable by being the only Linux one here.
+    name: Static + unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        # One extra entry pinned to the exact `engines.node` floor. Without it
+        # every job in this repo runs on 24 and the declared floor is a claim
+        # nothing ever exercises. It is pinned to the exact version rather than
+        # the `22` line precisely because the floor is what is under test.
+        #
+        # Hardcoded rather than lifted to a workflow-level env var: the `env`
+        # context is not available inside `strategy`, so it could not be read
+        # from here anyway. It must track `engines.node` in package.json by
+        # hand — the CLI keeps its own copy of the floor honest via
+        # packages/fetchpier-cli/src/node-floor.test.ts.
+        #
+        # If this entry goes red the fix is to RAISE the floor to whatever
+        # actually works, not to delete the entry: red here means the repo
+        # never supported the version it advertises.
+        include:
+          - os: ubuntu-24.04
+            node: '22.19.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node || env.NODE_VERSION }}
+          cache: npm
+
+      # No job here launches the app, so the ~150 MB runtime download is pure waste.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - run: npm run typecheck
+      - run: npm run lint
+      # Style drift is cheap to detect and annoying to find late, so it runs on
+      # all three OSes here rather than waiting for the full gate job.
+      - run: npm run format:check
+
+      - run: npm test
+
+  # The specs that need an OS capability the Linux runner does not have.
+  #
+  # Two of them, for the same underlying reason — a CI runner is not a desktop:
+  #   - the renderer sandbox: no Linux runner delivers one, and the ecosystem's
+  #     usual answer is to disable it, which would assert the invariant nowhere;
+  #   - a real OS keyring: without one the secrets subsystem correctly keeps keys
+  #     in memory, so specs asserting a keystore on disk have nothing to read.
+  #
+  # Windows and macOS provide both natively. Neither spec sends a request, so
+  # this job needs no HTTP target — which is what keeps it cheap enough to run
+  # per push on two extra runners.
+  #
+  # `FETCHPIER_TEST_REQUIRE_KEYRING` is what makes this job the real coverage: a
+  # host that lost its keyring aborts here rather than quietly skipping.
+  native-capabilities:
+    name: Native OS capabilities (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Unlike the `static` job, this one launches the app, so the runtime is
+      # required rather than skipped.
+      - run: npm ci
+      - run: npm run build
+
+      - name: Renderer sandbox and workspace keys
+        run: npx playwright test sandbox.spec.ts workspace-keys.spec.ts
+        env:
+          FETCHPIER_TEST_REQUIRE_KEYRING: '1'
+
+  e2e:
+    name: E2E suite (Linux)
+    # Only for changes heading into the default branch — the suite is serialized
+    # (workers: 1) with a 60 s per-test budget, too slow for every push.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - uses: ./.github/actions/setup-e2e-linux
+        with:
+          keyring: 'true'
+
+      - run: npm ci
+
+      # After `npm ci` — see the script for why the kernel setting alone is not
+      # enough.
+      - run: scripts/ci/enable-chrome-sandbox.sh
+
+      - run: npm run build
+
+      # The keyring daemon must live on the same session bus as Electron, hence
+      # `dbus-run-session` wrapping the whole thing rather than a separate step.
+      #
+      # The two FETCHPIER_TEST_REQUIRE_* flags are what make the harness abort
+      # BEFORE any spec when the host cannot satisfy a precondition, so one
+      # missing host capability produces one message instead of a scatter of
+      # unrelated-looking failures.
+      - name: Full UI suite
+        run: xvfb-run -a dbus-run-session -- scripts/ci/run-with-keyring.sh npm run test:e2e
+        env:
+          FETCHPIER_TEST_REQUIRE_DOCKER: '1'
+          # No keyring is required here: no Linux runner has one, so the
+          # keyring-dependent specs skip (announced by global-setup) and the
+          # `native-capabilities` job in ci.yml is where they actually run.
+          # See `native-capabilities` — the invariant is verified there, not here.
+          FETCHPIER_TEST_ALLOW_UNSANDBOXED: '1'
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

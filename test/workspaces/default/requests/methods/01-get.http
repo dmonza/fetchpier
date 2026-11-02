@@ -1,0 +1,3 @@
+# @id 668479e0-c715-4a00-9a94-10ae42b72e17
+GET {{baseUrl}}/get?foo=bar
+Accept: application/json

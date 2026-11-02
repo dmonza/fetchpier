@@ -1,0 +1,23 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "src/renderer/**/*",
+    "src/shared/**/*",
+    "packages/fetchpier-core/src/activity-log/**/*"
+  ],
+  // Shared *tests* run in the node environment (the `shared` project in
+  // `vitest.config.ts`), so they are typed by `tsconfig.node.json`, which is the
+  // config that carries Node's types. Typing them here as well would forbid the
+  // Node APIs they are entitled to use — a test that reads a file off disk, for
+  // instance. The shared *sources* stay included: those are consumed by the
+  // renderer and must typecheck against it.
+  "exclude": ["node_modules", "src/shared/**/*.test.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "paths": {
+      "@renderer/*": ["./src/renderer/*"],
+      "@shared/*": ["./src/shared/*"],
+      "@fetchpier/core/activity-log": ["./packages/fetchpier-core/src/activity-log/index.ts"]
+    }
+  }
+}

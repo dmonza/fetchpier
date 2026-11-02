@@ -1,0 +1,216 @@
+import { promises as fs } from 'fs'
+import type {
+  IntermediateSchema,
+  SchemaImportWarning,
+  SchemaConflictStrategy,
+  IntermediateOperation,
+  PostmanImportOptions,
+  Environment
+} from '@shared/types'
+import { serializeRequest } from '@shared/lib/http-serializer'
+import { sanitizeName } from './sanitize'
+import {
+  createEnvironmentFile,
+  envConfigPath,
+  resolveEnvFolder,
+  envDirPath,
+  readEnvFile,
+  writeEnvFile
+} from '../workspace/environments'
+import { resolveInsideWorkspace } from '../workspace/safe-path'
+import { atomicWriteFile } from '../workspace/atomic-write'
+
+async function exists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export interface WriteOptions {
+  targetFolder: string
+  collectionName: string
+  conflictStrategy: SchemaConflictStrategy
+  /** Workspace root. Required — used to confine every write under the workspace. */
+  workspacePath: string
+  /** Postman-specific options (only honored when the schema carries `envVariables`). */
+  postman?: PostmanImportOptions
+  onProgress?: (current: number, total: number, message?: string) => void
+}
+
+export interface WriteResult {
+  collectionPath: string
+  operationsCreated: number
+  foldersCreated: number
+  warnings: SchemaImportWarning[]
+  /** File stem (id) of an env created by this write. */
+  environmentCreated?: string
+  /** Id of an env that was merged into by this write. */
+  environmentMerged?: string
+}
+
+export async function writeSchemaToDisk(
+  schema: IntermediateSchema,
+  opts: WriteOptions
+): Promise<WriteResult> {
+  if (!opts.workspacePath) {
+    throw new Error('writeSchemaToDisk: workspacePath is required')
+  }
+  const warnings: SchemaImportWarning[] = []
+  const collectionDirName = sanitizeName(opts.collectionName, 'api-schema')
+  // Confine every write under the active workspace.
+  const safeTargetFolder = resolveInsideWorkspace(opts.workspacePath, opts.targetFolder)
+  const collectionPath = resolveInsideWorkspace(
+    opts.workspacePath,
+    safeTargetFolder,
+    collectionDirName
+  )
+
+  const alreadyExists = await exists(collectionPath)
+  if (alreadyExists) {
+    if (opts.conflictStrategy === 'abort') {
+      throw new Error(`Target folder already exists: ${collectionPath}`)
+    }
+    // 'merge' → keep existing folder, skip colliding files. There is no
+    // destructive option: an existing collection is never wiped (REQ write-safety).
+  }
+
+  await fs.mkdir(collectionPath, { recursive: true })
+
+  const foldersCreated = new Set<string>()
+  let operationsCreated = 0
+
+  const total = schema.operations.length
+  let current = 0
+  for (const op of schema.operations) {
+    current++
+    opts.onProgress?.(current, total, op.displayName)
+    try {
+      const written = await writeOperation(
+        op,
+        collectionPath,
+        opts.workspacePath,
+        warnings,
+        foldersCreated
+      )
+      if (written) operationsCreated++
+    } catch (err) {
+      warnings.push({
+        kind: 'skipped-operation',
+        message: (err as Error).message,
+        location: `${op.folderPath.join('/')}/${op.name}`
+      })
+    }
+  }
+
+  // Environment handling (Postman-only)
+  let environmentCreated: string | undefined
+  let environmentMerged: string | undefined
+  const postman = opts.postman
+  const envVars = schema.envVariables
+  if (
+    postman &&
+    postman.environmentStrategy !== 'none' &&
+    envVars &&
+    Object.keys(envVars).length > 0
+  ) {
+    const envDir = resolveInsideWorkspace(opts.workspacePath, envDirPath(opts.workspacePath))
+    await fs.mkdir(envDir, { recursive: true })
+
+    if (postman.environmentStrategy === 'new') {
+      const desiredName = (
+        postman.environmentName?.trim() ||
+        opts.collectionName ||
+        'imported'
+      ).toString()
+      const env = await createEnvironmentFile(opts.workspacePath, desiredName, { ...envVars })
+      // The user-facing handle is the folder, not the opaque identifier.
+      environmentCreated = env.folder
+    } else if (postman.environmentStrategy === 'merge' && postman.mergeEnvironmentId) {
+      try {
+        // The merge target is addressed by its opaque identifier; resolve it to a
+        // folder rather than treating it as one (§6.10).
+        const targetFolder = await resolveEnvFolder(opts.workspacePath, postman.mergeEnvironmentId)
+        const envPath = resolveInsideWorkspace(
+          opts.workspacePath,
+          envConfigPath(opts.workspacePath, targetFolder)
+        )
+        const env = await readEnvFile(envPath)
+        const merged: Environment = {
+          ...env,
+          // Pin the folder explicitly rather than trusting the parsed file — the
+          // write must land in the folder we just resolved, nowhere else.
+          folder: targetFolder,
+          // Existing vars take precedence; only add new keys.
+          variables: { ...envVars, ...env.variables }
+        }
+        await writeEnvFile(opts.workspacePath, merged)
+        environmentMerged = targetFolder
+      } catch (err) {
+        warnings.push({
+          kind: 'other',
+          message: `Could not merge into environment "${postman.mergeEnvironmentId}": ${(err as Error).message}`
+        })
+      }
+    } else if (postman.environmentStrategy === 'merge' && !postman.mergeEnvironmentId) {
+      warnings.push({
+        kind: 'other',
+        message: 'Environment merge requested but no active environment id was provided'
+      })
+    }
+  }
+
+  return {
+    collectionPath,
+    operationsCreated,
+    foldersCreated: foldersCreated.size,
+    warnings,
+    environmentCreated,
+    environmentMerged
+  }
+}
+
+async function writeOperation(
+  op: IntermediateOperation,
+  collectionPath: string,
+  workspacePath: string,
+  warnings: SchemaImportWarning[],
+  foldersCreated: Set<string>
+): Promise<boolean> {
+  const dirSegments = op.folderPath.map((s) => sanitizeName(s, 'folder'))
+  // Belt-and-braces: even with sanitizeName rejecting dots, confirm the
+  // resolved directory stays under collectionPath (and therefore the workspace).
+  const dir = resolveInsideWorkspace(workspacePath, collectionPath, ...dirSegments)
+  if (!foldersCreated.has(dir)) {
+    const dirDidExist = await exists(dir)
+    await fs.mkdir(dir, { recursive: true })
+    if (!dirDidExist) foldersCreated.add(dir)
+  }
+
+  const fileName = `${sanitizeName(op.name, 'op')}.http`
+  const filePath = resolveInsideWorkspace(workspacePath, dir, fileName)
+
+  if (await exists(filePath)) {
+    // No strategy overwrites an existing request (REQ write-safety): 'merge'
+    // skips the collision; 'abort' already threw if the collection pre-existed.
+    warnings.push({
+      kind: 'name-collision',
+      message: `File already exists, skipped: ${fileName}`,
+      location: dir
+    })
+    return false
+  }
+
+  let content = serializeRequest(op.editorState, op.id)
+  if (op.comment) {
+    const commentLines = op.comment
+      .split(/\r?\n/)
+      .map((l) => `# ${l}`)
+      .join('\n')
+    content = `${commentLines}\n${content}`
+  }
+  await atomicWriteFile(filePath, content)
+  return true
+}

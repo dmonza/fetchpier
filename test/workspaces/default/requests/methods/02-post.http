@@ -1,0 +1,10 @@
+# @id fd67e3b4-89b5-42ec-a85d-4eef4039886b
+POST {{baseUrl}}/post
+Accept: application/json
+Content-Type: application/json
+
+# @rawSubtype: json
+{
+  "name": "Fetchpier",
+  "kind": "smoke-test"
+}

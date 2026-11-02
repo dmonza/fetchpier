@@ -1,0 +1,5 @@
+# @id 7c9e6a11-1111-4abc-9def-0123456789ab
+POST {{baseUrl}}/post
+Content-Type: application/json
+
+{ "user": "juan" }

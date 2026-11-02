@@ -1,0 +1,28 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "include": [
+    "electron.vite.config.*",
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "packages/fetchpier-core/src/**/*"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "types": ["electron-vite/node"],
+    // Every entry point of `@fetchpier/core` must be mapped to its SOURCE, not
+    // just the barrel. Left unmapped, a subpath falls through to the workspace
+    // symlink and resolves via the package's `exports` to `dist/*.d.ts` — a
+    // gitignored build artifact. Typecheck then passes on any machine that has
+    // run `npm run dev` and fails on a fresh clone (which is what CI is), long
+    // after the omission was introduced. Keep in sync with the entries in
+    // `packages/fetchpier-core/tsup.config.ts`.
+    "paths": {
+      "@shared/*": ["./src/shared/*"],
+      "@fetchpier/core": ["./packages/fetchpier-core/src/index.ts"],
+      "@fetchpier/core/schema-import": ["./packages/fetchpier-core/src/schema-import.ts"],
+      "@fetchpier/core/atomic-write": ["./packages/fetchpier-core/src/atomic-write.ts"],
+      "@fetchpier/core/activity-log": ["./packages/fetchpier-core/src/activity-log/index.ts"]
+    }
+  }
+}

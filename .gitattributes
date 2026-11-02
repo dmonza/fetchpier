@@ -1,0 +1,17 @@
+# Line endings are a correctness constraint here, not a style preference.
+#
+# Without this file, `core.autocrlf=true` (the default on Windows, including
+# GitHub's windows-latest runners) checks every text file out as CRLF, while a
+# developer machine ends up mostly LF because Prettier rewrites what it touches
+# and its `endOfLine` default is `lf`. The result is that the same commit has
+# different bytes on the dev box and on CI, per file, with no visible pattern.
+#
+# That is not hypothetical: it made `scripts/audit/atomic-write-audit.mjs` fail
+# to import under Vitest on windows-latest only. The file starts with a shebang,
+# and vite-node's shebang stripper does not account for the `\r`, so what was
+# left did not parse — `SyntaxError: Invalid or unexpected token`, 11 tests never
+# collected, while the identical file passed everywhere else.
+#
+# `text=auto` still lets Git detect binary content and leave it untouched; every
+# blob in this repo is already stored with LF, so this changes no history.
+* text=auto eol=lf

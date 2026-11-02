@@ -1,0 +1,16 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "include": [
+    "playwright.config.ts",
+    "test/e2e/**/*.ts",
+    // The harness seeds the app's settings document, and typing that seed with
+    // the product's own `AppSettings` is what makes a newly added settings field
+    // fail here instead of in a scheduled Linux-only run. The file is pure types
+    // with no imports of its own, so this pulls in nothing else.
+    "src/shared/types.ts"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "types": ["node"]
+  }
+}

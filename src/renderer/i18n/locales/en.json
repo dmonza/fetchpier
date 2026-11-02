@@ -1,0 +1,1128 @@
+{
+  "app": {
+    "title": "Fetchpier",
+    "subtitle": "Your desktop REST client — powered by Electron + React"
+  },
+  "textMenu": {
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste"
+  },
+  "workspace": {
+    "open": "Open Workspace",
+    "create": "Create Workspace",
+    "gitignoreGenerated": "A default .gitignore was generated for your workspace.",
+    "watchDegraded": "Automatic file tracking stopped for this workspace. The tree still refreshes when you return to the window; reopen the workspace to restore tracking.",
+    "openError": {
+      "notFound": "That folder no longer exists. It was removed from recent workspaces.",
+      "notAWorkspace": "That folder is not a Fetchpier workspace. It was removed from recent workspaces."
+    }
+  },
+  "workspaceDialog": {
+    "rootReject": {
+      "title": "Invalid folder",
+      "message": "You can't use the filesystem root as a workspace",
+      "detail": "\"{{path}}\" is the filesystem root. Pick or create a specific subfolder for your workspace.",
+      "ok": "OK"
+    },
+    "create": {
+      "title": "Create workspace",
+      "message": "Create a workspace in \"{{name}}\"?",
+      "detail": "This folder isn't a workspace yet. The required structure (.fetchpier/) will be created.",
+      "confirm": "Create workspace",
+      "cancel": "Cancel"
+    }
+  },
+  "unresponsiveCloseDialog": {
+    "title": "Fetchpier is not responding",
+    "message": "The application interface has stopped responding.",
+    "detail": "Closing now will not check for unsaved changes.",
+    "keepWaiting": "Keep Waiting",
+    "closeAnyway": "Close Anyway"
+  },
+  "theme": {
+    "switchToDark": "Switch to dark mode",
+    "switchToSystem": "Switch to system mode",
+    "switchToLight": "Switch to light mode"
+  },
+  "language": {
+    "label": "Language",
+    "en": "English",
+    "es": "Español"
+  },
+  "sidebar": {
+    "recent": "Recent Workspaces",
+    "collections": "Collections",
+    "empty": "Open a workspace to see collections",
+    "openOrCreate": "Open or create a Workspace",
+    "noFiles": "No requests found. Create one to get started.",
+    "tabCollections": "Collections",
+    "tabHistory": "History",
+    "newCollection": "New Collection",
+    "newRequest": "New Request",
+    "importSchema": "Import schema",
+    "collapseAll": "Collapse all",
+    "expandAll": "Expand all",
+    "noWorkspace": "No workspace selected",
+    "workspaceSettings": "Workspace settings",
+    "openOrCreateWorkspace": "Open or create workspace",
+    "closeWorkspace": "Close workspace"
+  },
+  "collection": {
+    "newCollectionName": "New Collection",
+    "newRequestName": "new-request",
+    "nameConflict": "This name already exists in this folder",
+    "contextMenu": {
+      "newRequest": "New Request",
+      "newCollection": "New Collection",
+      "createInstance": "Create instance",
+      "importSchemaHere": "Import schema here…",
+      "rename": "Rename",
+      "delete": "Delete",
+      "duplicate": "Duplicate",
+      "moveTo": "Move to...",
+      "reveal": "Reveal in file manager",
+      "copyPath": "Copy path",
+      "copyRelativePath": "Copy relative path"
+    },
+    "createInstance": {
+      "placeholder": "instance-name"
+    },
+    "rename": {
+      "title": "Rename",
+      "placeholder": "Name...",
+      "confirm": "Rename",
+      "cancel": "Cancel"
+    },
+    "delete": {
+      "title": "Delete",
+      "confirmFile": "Delete \"{{name}}\"?",
+      "confirmFolder": "Delete folder \"{{name}}\" and all its contents?",
+      "instancesWarning": "This request has {{count}} instance(s) that will also be deleted.",
+      "historyWarning": "This will also delete {{count}} saved run(s) from history.",
+      "confirm": "Delete",
+      "confirmWithHistory": "Delete with history",
+      "cancel": "Cancel"
+    },
+    "moveTo": {
+      "title": "Move to...",
+      "root": "(Workspace root)",
+      "confirm": "Move",
+      "cancel": "Cancel"
+    },
+    "errors": {
+      "createCollection": "Failed to create collection",
+      "createRequest": "Failed to create request",
+      "rename": "Failed to rename",
+      "delete": "Failed to delete",
+      "move": "Failed to move",
+      "moveConflict": "\"{{name}}\" already exists in the destination folder",
+      "moveIntoItself": "A folder cannot be moved into itself",
+      "nameConflict": "\"{{name}}\" already exists in this folder",
+      "duplicate": "Failed to duplicate",
+      "invalidInstanceName": "An instance name may only contain letters, digits, hyphens, and underscores",
+      "instanceConflict": "An instance named \"{{name}}\" already exists",
+      "createInstance": "Failed to create instance",
+      "reveal": "Failed to reveal the item in the file manager"
+    }
+  },
+  "tabs": {
+    "new": "New tab",
+    "close": "Close tab",
+    "untitled": "Untitled",
+    "removedOnDisk": "This file was moved or deleted on disk. Save to re-create it here.",
+    "conflict": "This file changed on disk while you had unsaved edits.",
+    "pinned": "Pinned",
+    "contextMenu": {
+      "close": "Close",
+      "closeOthers": "Close others",
+      "closeAll": "Close all",
+      "closeToRight": "Close to the right",
+      "closeToLeft": "Close to the left",
+      "pin": "Pin",
+      "unpin": "Unpin"
+    }
+  },
+  "titlebar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
+  },
+  "about": {
+    "title": "About Fetchpier",
+    "appName": "Fetchpier - Beta Version",
+    "version": "Version {{version}}",
+    "description": "An open-source desktop API client. Local-first, standard `.http` format, no lock-in.",
+    "author": "Author",
+    "website": "Website",
+    "license": {
+      "title": "License",
+      "loading": "Loading…",
+      "loadError": "Could not load the license file."
+    },
+    "publicBeta": {
+      "badge": "Public Beta"
+    },
+    "thirdParty": {
+      "button": "Third-Party Licenses",
+      "dialogTitle": "Third-Party Licenses",
+      "description": "This software includes the following open source components:",
+      "loading": "Loading…",
+      "loadError": "Could not load third-party licenses.",
+      "back": "Back to About"
+    }
+  },
+  "updates": {
+    "title": "Check for Updates",
+    "openFromAbout": "Check for updates",
+    "idleHint": "Check whether a newer version of Fetchpier is available.",
+    "check": "Check now",
+    "checking": "Checking for updates…",
+    "upToDate": "You're up to date.",
+    "updateAvailable": "Version {{version}} is available.",
+    "currentVersion": "Current version: {{version}}",
+    "openReleases": "Download from GitHub Releases",
+    "errors": {
+      "network": "Could not reach the update server. Check your internet connection and try again.",
+      "timeout": "The update server did not respond in time. Try again later.",
+      "invalid-json": "The update server returned an unexpected response.",
+      "product-not-found": "No update information was found for this product.",
+      "invalid-version": "The update server returned an invalid version number."
+    },
+    "menu": {
+      "checkForUpdates": "Check for Updates…"
+    }
+  },
+  "request": {
+    "urlPlaceholder": "Enter URL...",
+    "variableSuggestion": {
+      "secret": "Secret variable",
+      "dynamic": "Dynamic variable"
+    },
+    "send": "Send",
+    "cancel": "Cancel",
+    "cancelled": "Request cancelled",
+    "save": "Save",
+    "unsaved": "Unsaved request",
+    "malformedQuery": {
+      "title": "A query parameter could not be decoded",
+      "detail": "The parameter {{keys}} has malformed percent-encoding and was kept as-is. Saving the request will remove it. Edit it by hand first to keep it."
+    },
+    "malformedPart": {
+      "title": "A multipart file part could not be read",
+      "detail": "Its file reference is unreadable. Saving the request will remove the part. Re-select the file first to keep it."
+    },
+    "strayContent": {
+      "title": "Unrecognized content will be removed",
+      "detail": "This file contains a line that is neither a header nor a comment. Saving the request normalizes it away."
+    },
+    "multiRequest": {
+      "title": "This file contains more than one request",
+      "detail": "Only the first request is shown and executed. The others are preserved and saved unchanged."
+    },
+    "diskConflict": {
+      "title": "This file changed on disk",
+      "detail": "It was edited by another tool while you had unsaved changes. Reload to take the on-disk version, or keep your edits and overwrite it on the next save.",
+      "reload": "Reload from disk",
+      "keep": "Keep my edits"
+    },
+    "removedOnDisk": {
+      "title": "This file was removed from disk",
+      "detail": "It was moved or deleted by another tool. Your edits are kept here; saving re-creates the file at this path."
+    },
+    "tabs": {
+      "params": "Params",
+      "headers": "Headers",
+      "body": "Body",
+      "auth": "Auth",
+      "scripts": "Scripts",
+      "settings": "Settings"
+    },
+    "settings": {
+      "httpVersion": "HTTP version",
+      "verifySsl": "Verify SSL certificate",
+      "followRedirects": "Follow redirects",
+      "maxRedirects": "Max redirects",
+      "followAuthorizationOnRedirect": "Follow Authorization header on redirect",
+      "encodeUrl": "Encode URL automatically",
+      "disableCookieJar": "Disable cookie jar",
+      "defaultWorkspace": "Default: Workspace",
+      "overridden": "Overridden",
+      "overriddenCount": "{{count}} overridden",
+      "resetToDefault": "Reset to default",
+      "httpVersionOptions": {
+        "auto": "Auto"
+      },
+      "hints": {
+        "httpVersion": "Which HTTP protocol version to use. Auto negotiates via ALPN for HTTPS.",
+        "verifySsl": "Validate the server's TLS certificate. Disable only for trusted self-signed endpoints.",
+        "followRedirects": "Automatically follow 3xx redirects.",
+        "maxRedirects": "Maximum number of redirect hops before aborting.",
+        "followAuthorizationOnRedirect": "Keep the Authorization header when redirects cross to a different host.",
+        "encodeUrl": "Percent-encode reserved characters in the URL before sending.",
+        "disableCookieJar": "Do not persist or send cookies for this request."
+      },
+      "binaryLimits": {
+        "sectionTitle": "Binary file limits",
+        "sectionHint": "Stage-time policy for files attached as a binary request body. Defaults match GitHub's per-file push limits (50 MB warning, 100 MB hard block) so workspaces shared via Git do not push files the provider rejects.",
+        "warnLabel": "Warn above (MB)",
+        "warnHint": "Show a confirmation prompt before staging a file at or above this size.",
+        "blockLabel": "Block above (MB)",
+        "blockHint": "Reject attachment outright when the file exceeds this size.",
+        "resetToGithubDefaults": "Reset to GitHub defaults (50 / 100 MB)",
+        "validationWarnExceedsBlock": "The warn threshold must be less than or equal to the block threshold.",
+        "validationNegative": "Limits must be ≥ 0 MB."
+      }
+    },
+    "scripts": {
+      "preRequest": "Pre-request Script",
+      "preRequestHint": "Runs before the request is sent",
+      "postResponse": "Post-response Script",
+      "postResponseHint": "Runs after the response is received",
+      "help": "Use the `fp` global: `fp.request`, `fp.response`, `fp.environment`, `fp.variables`, `fp.test(name, fn)`, `fp.expect(value)`, `fp.log(...)`.",
+      "intellisenseLoading": "Loading IntelliSense…",
+      "intellisenseLoadError": "IntelliSense failed to load",
+      "completionLoading": "Loading details…",
+      "completionDeprecated": "Deprecated"
+    },
+    "params": {
+      "keyPlaceholder": "Parameter",
+      "valuePlaceholder": "Value"
+    },
+    "headers": {
+      "keyPlaceholder": "Header",
+      "valuePlaceholder": "Value"
+    },
+    "bodyTypes": {
+      "none": "none",
+      "multipart-form": "form-data",
+      "x-www-form-urlencoded": "x-www-form-urlencoded",
+      "raw": "raw",
+      "binary": "binary"
+    },
+    "body": {
+      "noBody": "This request has no body.",
+      "rawSubtype": {
+        "label": "Format:",
+        "json": "JSON",
+        "xml": "XML",
+        "javascript": "JavaScript",
+        "text": "Text",
+        "html": "HTML"
+      },
+      "binary": {
+        "chooseFile": "Choose file…",
+        "replace": "Replace",
+        "remove": "Remove",
+        "noFileSelected": "No file selected.",
+        "fileInfo": "{{name}} — {{size}} — {{mime}}",
+        "fileMissing": "Binary file not found in the workspace ({{ref}}). Re-attach the file or fix the reference.",
+        "confirmTitle": "Attach a large file?",
+        "confirmMessage": "This file is {{sizeMB}} MB, which exceeds the workspace's warning threshold of {{warnMB}} MB. Workspaces shared via Git may push slowly or hit provider limits. Continue?",
+        "confirmAttach": "Attach",
+        "confirmCancel": "Cancel",
+        "tooLargeBlock": "The selected file is {{sizeMB}} MB, which exceeds the workspace block limit of {{limitMB}} MB. Choose a smaller file or raise the limit in workspace settings.",
+        "errorReadingFile": "Could not read the selected file: {{message}}",
+        "picker": {
+          "openLabel": "Pick a workspace file",
+          "searchPlaceholder": "Search staged files…",
+          "empty": "No staged files yet.",
+          "selectLocal": "Select local file…"
+        }
+      },
+      "multipart": {
+        "addTextPart": "Add text part",
+        "addFilePart": "Add file part",
+        "noPartsYet": "No parts yet. Add a text or file part to get started.",
+        "kindText": "Text",
+        "kindFile": "File",
+        "name": "Name",
+        "namePlaceholder": "field name",
+        "value": "Value",
+        "valuePlaceholder": "value",
+        "filename": "Filename",
+        "filenamePlaceholder": "(use original)",
+        "contentType": "Content-Type",
+        "contentTypePlaceholder": "(auto)",
+        "disabled": "Disabled",
+        "removePart": "Remove part",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "chooseFile": "Choose file…",
+        "replaceFile": "Replace",
+        "kindSelect": "Part kind",
+        "headerHidden": "Content-Type is managed by the encoder when sending multipart bodies. Edit it in the part rows below.",
+        "fileMissing": "File not found in workspace ({{ref}}). Re-attach to fix.",
+        "fileInfo": "{{name}} — {{size}}",
+        "parseError": "Invalid part: {{error}}"
+      }
+    },
+    "auth": {
+      "type": "Auth Type",
+      "types": {
+        "none": "None",
+        "bearer": "Bearer Token",
+        "basic": "Basic Auth",
+        "api-key": "API Key"
+      },
+      "noAuth": "No authentication configured.",
+      "token": "Token",
+      "tokenPlaceholder": "Enter Bearer token...",
+      "username": "Username",
+      "password": "Password",
+      "keyName": "Key Name",
+      "keyValue": "Key Value",
+      "keyLocation": "Add to",
+      "locations": {
+        "header": "Header",
+        "query": "Query Param"
+      },
+      "managedByAuth": "Managed by the Auth tab — edit it there"
+    }
+  },
+  "keyValue": {
+    "keyPlaceholder": "Key",
+    "valuePlaceholder": "Value",
+    "addRow": "Add",
+    "remove": "Remove",
+    "toggleEnabled": "Toggle enabled",
+    "dragHandle": "Drag to reorder",
+    "expand": "Expand row",
+    "collapse": "Collapse row"
+  },
+  "response": {
+    "empty": "Send a request to see the response",
+    "emptyTitle": "Ready to send",
+    "emptyHint": "Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to send the current request",
+    "emptyTips": [
+      "Tip: use {{var}} to reference variables from the active environment",
+      "Tip: Ctrl+P opens the command palette",
+      "Tip: right-click a folder to create a collection inside",
+      "Tip: Ctrl+L focuses the URL bar",
+      "Tip: Ctrl+B toggles the sidebar"
+    ],
+    "loading": "Sending request...",
+    "error": "Request failed",
+    "tabs": {
+      "body": "Body",
+      "headers": "Headers",
+      "tests": "Tests",
+      "cookies": "Cookies"
+    },
+    "tests": {
+      "empty": "Run a request with scripts to see test results here.",
+      "testResults": "Test Results",
+      "noTests": "No tests executed.",
+      "summary": "{{passed}}/{{total}} tests passed",
+      "console": "Console",
+      "consoleEmpty": "No logs captured.",
+      "clearConsole": "Clear",
+      "errorIn": "Error in {{phase}} script",
+      "export": {
+        "button": "Export",
+        "copyJson": "Copy as JSON",
+        "copyJUnit": "Copy as JUnit XML",
+        "saveJson": "Save as JSON…",
+        "saveJUnit": "Save as JUnit XML…",
+        "copied": "Copied to clipboard",
+        "saved": "Saved to {{path}}",
+        "error": "Export failed"
+      }
+    },
+    "body": {
+      "copy": "Copy",
+      "prettyPrint": "Pretty",
+      "raw": "Raw",
+      "imageAlt": "Response image"
+    },
+    "headers": {
+      "name": "Name",
+      "value": "Value",
+      "empty": "No headers in response"
+    },
+    "cookies": {
+      "name": "Name",
+      "value": "Value",
+      "domain": "Domain",
+      "hop": "Hop",
+      "sent": "Sent with the request",
+      "received": "Received from the response",
+      "noneSent": "No cookies were attached to this request.",
+      "noneReceived": "The response offered no cookies.",
+      "empty": "This send neither sent nor received cookies.",
+      "hasWarnings": "This send produced cookie warnings",
+      "rejected": "Cookie \"{{name}}\" from {{host}} was not stored: {{reason}}",
+      "crossSiteInsecure": "Cookie \"{{name}}\" from {{host}} sets SameSite=None without Secure. It was stored, but a browser would reject it.",
+      "reason": {
+        "DOMAIN_MISMATCH": "its Domain names a host this server has no authority over",
+        "PUBLIC_SUFFIX": "its Domain is a public suffix, which would match every host under it",
+        "PREFIX_VIOLATION": "its name carries a reserved security prefix whose rules its attributes do not satisfy",
+        "INSECURE_OVERWRITE": "it arrived over an insecure connection and would have replaced a Secure cookie",
+        "MALFORMED": "the Set-Cookie header could not be parsed",
+        "REJECTED": "the cookie jar refused it"
+      },
+      "path": "Path",
+      "expires": "Expires",
+      "httpOnly": "HttpOnly",
+      "secure": "Secure",
+      "sameSite": "SameSite",
+      "session": "Session",
+      "notStored": "The server sent this cookie and the jar did not store it.",
+      "resizeColumn": "Resize column"
+    }
+  },
+  "environment": {
+    "label": "Environment",
+    "noEnvironment": "No Environment",
+    "manage": "Manage Environments",
+    "new": "New Environment",
+    "newNamePlaceholder": "Environment name...",
+    "search": "Search...",
+    "searchClear": "Clear search",
+    "noMatches": "No environments match.",
+    "sort": {
+      "label": "Order",
+      "asc": "Name, A to Z",
+      "desc": "Name, Z to A"
+    },
+    "create": "Create",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deleteConfirm": "Delete environment \"{{name}}\"? Its machine-local cookies and local values are deleted with it — they are not committed and have no other copy.",
+    "save": "Save",
+    "variables": "Variables",
+    "keyPlaceholder": "Variable name",
+    "valuePlaceholder": "Value",
+    "reservedName": "Variable names cannot start with \"$\" (reserved for dynamic variables).",
+    "noVariables": "No variables defined.",
+    "unresolvedWarning": "Unresolved: {{vars}}",
+    "local": {
+      "sharedColumn": "Shared",
+      "localColumn": "Local (this machine)",
+      "override": "override",
+      "overrideTooltip": "A local value on this machine overrides the shared one",
+      "orphan": "lost",
+      "invalid": "invalid",
+      "unsharedTooltip": "Not in the shared environment file. Type a shared value to give this variable to the team, or check Sync to discard your local value.",
+      "unsharedPlaceholder": "Not shared — type to share",
+      "placeholder": "Local value…",
+      "setSecretPlaceholder": "Set a local value…",
+      "orphanNotice": "Local override lost after key rotation: {{names}}. Re-enter if needed.",
+      "sync": "Sync",
+      "syncTooltip": "Follow the team's shared value",
+      "reservedPrefix": "Values starting with \"enc:\" are reserved for encrypted secrets.",
+      "recheck": {
+        "title": "Return to the shared value?",
+        "body": "This variable will follow the team again: it returns to the shared value \"{{shared}}\" and your local value \"{{local}}\" will be discarded.",
+        "needsValue": "\"{{name}}\" will return to needs value: your local value \"{{local}}\" will be discarded.",
+        "emptyDestination": "There is no shared value to return to, so this variable will be left empty. Type a shared value first if you want to keep it.",
+        "scriptHint": "A script in this environment writes this variable; it will return to a local value on the next run.",
+        "confirm": "Return to shared"
+      },
+      "syncAll": {
+        "button": "Sync all",
+        "tooltip": "Return every diverged variable to the team's shared value",
+        "title": "Sync all variables?",
+        "body": "These variables will return to their shared values, discarding your local values: {{names}}.",
+        "confirm": "Sync all"
+      }
+    },
+    "errors": {
+      "nameEmpty": "The name must contain at least one letter or digit.",
+      "folderConflict": "The folder that name maps to is already used by \"{{name}}\". Pick a different name.",
+      "notFound": "That environment no longer exists. The list has been reloaded.",
+      "operationFailed": "The operation failed."
+    },
+    "contextMenu": {
+      "rename": "Rename",
+      "duplicate": "Duplicate",
+      "delete": "Delete"
+    }
+  },
+  "history": {
+    "title": "History",
+    "empty": "No requests sent yet.",
+    "clear": "Clear history",
+    "clearConfirm": "Clear all history entries?",
+    "repeat": "Repeat request",
+    "noWorkspace": "Open a workspace to see history.",
+    "readOnlyBanner": "Read-only — history entry {{datetime}}",
+    "allEntries": "All history",
+    "emptyForFile": "No history for this request.",
+    "rawBanner": "Raw — .http file content (read-only)",
+    "contextMenu": {
+      "open": "Open",
+      "raw": "Raw .http",
+      "delete": "Delete"
+    },
+    "chips": {
+      "check": "Include in history filter",
+      "uncheck": "Exclude from history filter",
+      "remove": "Remove tag"
+    },
+    "expansion": {
+      "metadata": {
+        "title": "Metadata",
+        "sourceFile": "Source file",
+        "openFile": "Open file",
+        "runId": "Run ID",
+        "requestId": "Request ID",
+        "duration": "Duration",
+        "durationMs": "{{ms}} ms",
+        "status": "Status",
+        "remoteIp": "Remote IP",
+        "timestamp": "Timestamp",
+        "settings": "Settings"
+      },
+      "request": {
+        "title": "Request"
+      },
+      "response": {
+        "title": "Response",
+        "format": "Format",
+        "raw": "Raw"
+      },
+      "scripts": {
+        "title": "Scripts",
+        "preRequest": "Pre-request",
+        "postResponse": "Post-response"
+      },
+      "errors": {
+        "fetchFailed": "Couldn't load this run.",
+        "retry": "Retry",
+        "sourceFileMissing": "Source file no longer exists: {{path}}"
+      }
+    }
+  },
+  "activityPanel": {
+    "toggle": {
+      "tooltip": "Toggle Activity Panel ({{shortcut}})",
+      "ariaLabel": "Toggle activity panel"
+    },
+    "popout": {
+      "tooltip": "Open in separate window"
+    },
+    "dock": {
+      "tooltip": "Dock back to main window"
+    },
+    "close": {
+      "tooltip": "Close panel"
+    },
+    "tabs": {
+      "requests": "Requests"
+    },
+    "popoutWindow": {
+      "title": "Fetchpier — Activity"
+    },
+    "empty": {
+      "noWorkspace": "Open a workspace to see your activity."
+    },
+    "errors": {
+      "popoutRejected": "Activity panel is already detached on another window."
+    }
+  },
+  "statusBar": {
+    "noWorkspace": "No workspace",
+    "theme": {
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    },
+    "zoom": {
+      "label": "{{percent}}%",
+      "tooltip": "Zoom level",
+      "resetTooltip": "Click to reset zoom to 100%"
+    },
+    "commandPalette": {
+      "tooltip": "Open command palette ({{shortcut}})"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "general": "General",
+      "proxy": "Proxy",
+      "updates": "Updates",
+      "certificates": "Certificates",
+      "workspaceKeys": "Workspace keys"
+    },
+    "zoom": {
+      "label": "Zoom",
+      "in": "Zoom in",
+      "out": "Zoom out",
+      "reset": "Reset zoom"
+    },
+    "editorTheme": {
+      "label": "Editor Theme",
+      "dark": "dark",
+      "light": "light",
+      "fallback": "default"
+    },
+    "requestTimeout": {
+      "label": "Request Timeout",
+      "unit": "seconds"
+    },
+    "proxy": {
+      "enable": "Enable proxy server",
+      "url": "Proxy URL",
+      "urlPlaceholder": "http://proxy.example.com:8080",
+      "username": "Username",
+      "password": "Password"
+    },
+    "updates": {
+      "autoCheck": "Check automatically on startup",
+      "intervalDays": "Interval",
+      "daysUnit": "days"
+    }
+  },
+  "certificates": {
+    "title": "Certificates",
+    "sections": {
+      "ca": "CA certificates",
+      "client": "Client certificates"
+    },
+    "intro": {
+      "ca": "Extra trust anchors used to verify servers signed by internal or corporate roots. Combined with Node's bundled CAs.",
+      "client": "Certificates Fetchpier presents during the TLS handshake. The right one is picked automatically per request based on the host pattern."
+    },
+    "table": {
+      "label": "Label",
+      "file": "File",
+      "host": "Host",
+      "port": "Port",
+      "type": "Type",
+      "enabled": "Enabled",
+      "actions": "Actions",
+      "anyPort": "any",
+      "unnamed": "(no label)",
+      "literalPassphraseWarning": "This passphrase is stored in clear text in the workspace settings file (committed to version control). Use a secret variable instead."
+    },
+    "empty": {
+      "ca": "No CA certificates yet.",
+      "client": "No client certificates yet."
+    },
+    "actions": {
+      "addCA": "Add CA",
+      "addClient": "Add client cert",
+      "edit": "Edit",
+      "remove": "Remove",
+      "cancel": "Cancel",
+      "import": "Import",
+      "save": "Save changes"
+    },
+    "remove": {
+      "ca": "Remove CA certificate \"{{name}}\"? The imported certificate was copied into the app — this is the only managed copy, and it will be deleted along with its metadata entry.",
+      "client": "Remove client certificate for \"{{name}}\"? The imported certificate material was copied into the app — this is the only managed copy, and its file(s) and metadata entry will be deleted."
+    },
+    "form": {
+      "ca": {
+        "title": "Add CA certificate",
+        "file": "PEM file",
+        "label": "Label (optional)",
+        "labelPlaceholder": "Corporate Root CA 2024",
+        "filePlaceholder": "Pick a .pem / .crt / .cer file"
+      },
+      "client": {
+        "title": "Add client certificate",
+        "editTitle": "Edit client certificate",
+        "filesImmutableNote": "To change the certificate files, remove this entry and add a new one.",
+        "type": "Type",
+        "typePem": "PEM (separate cert + key)",
+        "typePfx": "PKCS#12 (.pfx / .p12)",
+        "host": "Host pattern",
+        "hostPlaceholder": "api.example.com or *.example.com",
+        "port": "Port (optional)",
+        "portPlaceholder": "e.g. 443",
+        "certFile": "Certificate (.pem / .crt)",
+        "keyFile": "Private key (.key / .pem)",
+        "pfxFile": "PFX bundle (.pfx / .p12)",
+        "passphrase": "Passphrase",
+        "passphrasePlaceholder": "Literal value or {{varName}}",
+        "passphraseWarning": "This passphrase will be stored in plain text in the workspace settings file. If your workspace is shared via git, prefer {{example}} and define the value in an environment file.",
+        "pickFile": "Browse..."
+      }
+    },
+    "errors": {
+      "hostRequired": "Host pattern is required.",
+      "fileRequired": "Pick a file to import.",
+      "importFailed": "Import failed: {{message}}",
+      "passphraseVariableNotAllowed": "A global certificate passphrase cannot use a variable reference. Use a literal value, or move the certificate to workspace scope to use a variable."
+    },
+    "preview": {
+      "label": "Client certificate for this request",
+      "none": "(none — no matching certificate)",
+      "scopeWorkspace": "workspace scope",
+      "scopeApp": "app-global scope"
+    }
+  },
+  "workspaceSettings": {
+    "title": "Workspace Settings",
+    "subtitle": "Defaults applied to every request in this workspace.",
+    "tabs": {
+      "http": "HTTP",
+      "certificates": "Certificates"
+    },
+    "done": "Done",
+    "cancel": "Cancel",
+    "resetFactory": "Reset to factory defaults",
+    "confirmReset": "Are you sure? This will overwrite all HTTP defaults."
+  },
+  "commandPalette": {
+    "placeholder": "Type a command or search files...",
+    "empty": "No results.",
+    "noWorkspace": "Open a workspace to search files.",
+    "groups": {
+      "actions": "Actions",
+      "environments": "Environments",
+      "files": "Files"
+    },
+    "actions": {
+      "newRequest": "New request",
+      "toggleTheme": "Toggle theme",
+      "openSettings": "Open settings",
+      "clearHistory": "Clear history"
+    }
+  },
+  "saveRequest": {
+    "title": "Save Request",
+    "namePlaceholder": "Request name...",
+    "folderLabel": "Save in",
+    "confirm": "Save",
+    "cancel": "Cancel"
+  },
+  "closeConfirm": {
+    "title": "Unsaved changes",
+    "message": "\"{{name}}\" has unsaved changes. Close anyway?",
+    "confirm": "Close",
+    "cancel": "Cancel"
+  },
+  "emptyState": {
+    "title": "No request open",
+    "description": "Open a request from the sidebar or create a new one to get started.",
+    "newRequest": "New request",
+    "shortcutHint": "or press"
+  },
+  "closeGuard": {
+    "title": "Unsaved changes",
+    "message": "The following tabs have unsaved changes:",
+    "unsavedLabel": "(new, not saved)",
+    "saveAndClose": "Save all and close",
+    "closeWithoutSaving": "Close without saving",
+    "cancel": "Cancel"
+  },
+  "menu": {
+    "app": {
+      "about": "About Fetchpier",
+      "checkUpdates": "Check for Updates…",
+      "services": "Services",
+      "hide": "Hide Fetchpier",
+      "hideOthers": "Hide Others",
+      "unhide": "Show All",
+      "quit": "Quit Fetchpier"
+    },
+    "file": {
+      "label": "File",
+      "newRequest": "New Request",
+      "newCollection": "New Collection",
+      "openWorkspace": "Open Workspace…",
+      "closeWorkspace": "Close Workspace",
+      "save": "Save",
+      "closeTab": "Close Tab",
+      "closeAllTabs": "Close All Tabs",
+      "closeWindow": "Close Window"
+    },
+    "edit": {
+      "label": "Edit",
+      "undo": "Undo",
+      "redo": "Redo",
+      "cut": "Cut",
+      "copy": "Copy",
+      "paste": "Paste",
+      "selectAll": "Select All"
+    },
+    "request": {
+      "label": "Request",
+      "send": "Send",
+      "focusUrl": "Focus URL"
+    },
+    "view": {
+      "label": "View",
+      "commandPalette": "Command Palette…",
+      "toggleSidebar": "Toggle Sidebar",
+      "toggleActivityPanel": "Toggle Activity Panel",
+      "toggleDevTools": "Toggle Developer Tools",
+      "zoomIn": "Zoom In",
+      "zoomOut": "Zoom Out",
+      "resetZoom": "Actual Size"
+    },
+    "window": {
+      "label": "Window",
+      "minimize": "Minimize",
+      "zoom": "Zoom",
+      "front": "Bring All to Front"
+    }
+  },
+  "schemaImport": {
+    "title": "Import schema",
+    "target": "Importing into: {{path}}",
+    "source": {
+      "file": "File",
+      "url": "URL",
+      "text": "Paste text",
+      "fileHint": "Drag & drop an OpenAPI, GraphQL, WSDL or Postman collection file here, or browse.",
+      "browse": "Browse…",
+      "urlHint": "Public URLs only. The file will be fetched from the main process.",
+      "textPlaceholder": "Paste the schema contents (JSON, YAML, GraphQL SDL, WSDL, or Postman)…"
+    },
+    "format": {
+      "label": "Format",
+      "auto": "Auto-detect",
+      "openapi": "OpenAPI 3.x",
+      "swagger": "Swagger 2.0",
+      "graphql-sdl": "GraphQL SDL",
+      "graphql-introspection": "GraphQL Introspection",
+      "wsdl": "WSDL / SOAP",
+      "postman": "Postman Collection (v2.x)",
+      "detected": "Detected: {{format}}"
+    },
+    "wsdl": {
+      "note": "WSDL import supports SOAP 1.1 bindings only. Non-SOAP HTTP bindings and WSDL 2.0 (including REST/JSON services) are not supported — each operation is generated as a SOAP envelope."
+    },
+    "collectionName": {
+      "label": "Collection name (optional)",
+      "placeholder": "Leave empty to use schema title"
+    },
+    "conflict": {
+      "label": "If a collection with the same name exists",
+      "merge": "Merge",
+      "abort": "Abort",
+      "mergeHint": "Keep existing files; skip any new files that would collide.",
+      "abortHint": "Cancel the import if the folder already exists."
+    },
+    "progress": {
+      "starting": "Starting…",
+      "parsing": "Parsing schema…",
+      "generating": "Generating requests…",
+      "writing": "Writing files…",
+      "done": "Done"
+    },
+    "result": {
+      "success": "Imported \"{{title}}\" successfully",
+      "summary": "{{operations}} operation(s) in {{folders}} folder(s) — format: {{format}}",
+      "warnings": "Warnings ({{count}})",
+      "andMore": "…and {{count}} more",
+      "envCreated": "Environment created: {{id}}",
+      "envMerged": "Environment merged: {{id}}"
+    },
+    "warningKind": {
+      "unsupported-auth": "Unsupported authentication",
+      "missing-example": "Missing example",
+      "skipped-operation": "Skipped operation",
+      "name-collision": "Name collision",
+      "script-copied-asis": "Postman script copied verbatim",
+      "path-param-converted": "Path parameter converted to variable",
+      "response-example-ignored": "Response example ignored",
+      "variable-collected": "Variable collected into environment",
+      "body-binary-placeholder": "Binary body placeholder",
+      "unknown-field": "Unknown field ignored",
+      "other": "Other"
+    },
+    "postman": {
+      "envLabel": "Postman variables",
+      "envHint": "Collection and folder variables can be stored as an environment file.",
+      "strategy": {
+        "new": "Create new env",
+        "merge": "Merge into active env",
+        "none": "Don't import"
+      },
+      "envNameLabel": "New environment name",
+      "envNamePlaceholder": "Environment name",
+      "envNameRequired": "Environment name is required",
+      "mergeTarget": "Will merge new variables into \"{{name}}\" (existing values won't be overwritten).",
+      "mergeNoActive": "No active environment — merge is unavailable."
+    },
+    "actions": {
+      "import": "Import",
+      "cancel": "Cancel",
+      "close": "Close"
+    }
+  },
+  "cookies": {
+    "title": "Cookies — {{env}}",
+    "count": "{{count}} cookie(s)",
+    "new": "New cookie",
+    "empty": "No cookies stored for this environment.",
+    "search": "Search domains and cookies...",
+    "noResults": "No cookies found for \"{{query}}\"",
+    "name": "Name",
+    "value": "Value",
+    "domain": "Domain",
+    "path": "Path",
+    "expires": "Expires",
+    "expiresDate": "Expires (date)",
+    "maxAge": "Max-Age (seconds)",
+    "secure": "Secure",
+    "httpOnly": "HttpOnly",
+    "includeSubdomains": "Include subdomains",
+    "sameSite": "SameSite",
+    "sameSiteUnset": "(unset)",
+    "source": "Source",
+    "edit": "Edit",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "clearAll": "Clear all",
+    "confirmClearAll": "Remove all cookies for this environment?",
+    "confirmDelete": "Delete cookie \"{{name}}\"?",
+    "expired": "Expired",
+    "session": "Session",
+    "inSeconds": "in {{count}}s",
+    "selectEnvHint": "Select an environment to manage cookies",
+    "trigger": "Cookies",
+    "form": {
+      "newTitle": "New cookie",
+      "editTitle": "Edit cookie",
+      "inertAttributes": "Being an API client, SameSite and HttpOnly have no effect on what is sent. They are recorded and shown for fidelity, and are preserved when you edit a cookie."
+    },
+    "errors": {
+      "nameRequired": "Name is required",
+      "nameInvalid": "Name contains invalid characters",
+      "domainRequired": "Domain is required"
+    }
+  },
+  "common": {
+    "cancel": "Cancel",
+    "loadFailed": "This part of the app failed to load.",
+    "retry": "Retry"
+  },
+  "secrets": {
+    "makeSecret": "Make secret",
+    "makePlain": "Make plain (decrypt)",
+    "reveal": "Reveal",
+    "needsValue": "Needs value",
+    "enterValuePlaceholder": "Enter value…",
+    "corrupt": "Corrupt",
+    "clearReenter": "Clear and re-enter",
+    "keyIdLabel": "Key ID: {{keyId}}",
+    "sessionOnlyNotice": "No OS keyring detected — your key is held only for this session and will be asked again next launch.",
+    "locked": {
+      "banner": "This environment has secrets, but it is locked. Enter the workspace key to reveal or edit them.",
+      "unlock": "Unlock"
+    },
+    "setup": {
+      "title": "Save your workspace key",
+      "intro": "This key encrypts your secret variables. Every teammate and every other machine needs it to decrypt them.",
+      "copy": "Copy",
+      "copied": "Workspace key copied",
+      "copyFailed": "Could not copy the key",
+      "warning": "Fetchpier cannot recover this key. Store it in a password manager now — if you lose it, the secrets cannot be decrypted.",
+      "acknowledge": "I have saved this key in a safe place",
+      "confirm": "Done"
+    },
+    "enterKey": {
+      "title": "Unlock workspace secrets",
+      "intro": "Paste the workspace key (FPK1-…) to unlock the secret variables.",
+      "placeholder": "FPK1-…",
+      "invalidFormat": "That does not look like a valid key (format/checksum failed).",
+      "wrongKey": "That key does not match this workspace (expected key {{keyId}}).",
+      "failed": "Could not validate the key.",
+      "unlock": "Unlock"
+    },
+    "rotate": {
+      "title": "Rotate workspace key",
+      "button": "Rotate key",
+      "warnTeammates": "A new key will be generated and every secret re-encrypted. You must share the new key with every teammate.",
+      "warnNoRevoke": "Rotating the workspace key does NOT revoke anyone who already had access — they may still know the secret values. To truly revoke access, rotate the underlying credentials at their providers.",
+      "confirm": "Rotate key",
+      "doneTitle": "New workspace key"
+    },
+    "gitNote": {
+      "title": "Before encrypting",
+      "body": "Encrypting protects this value from now on. Plaintext copies already in your Git history are not removed — if the value was ever pushed, rotate the credential at its provider.",
+      "continue": "Encrypt"
+    },
+    "unsetConfirm": {
+      "title": "Store this value in plaintext?",
+      "body": "Making \"{{name}}\" plain will store and commit its value in plaintext in config.json. Anyone with repository access will see it.",
+      "confirm": "Make plain"
+    },
+    "deleteConfirm": {
+      "title": "Delete secret?",
+      "encryptedBody": "Delete the secret \"{{name}}\"? The encrypted value will be removed and cannot be recovered without the original.",
+      "needsValueBody": "Delete \"{{name}}\"?",
+      "localNote": "Your local value for it will be removed too.",
+      "confirm": "Delete"
+    }
+  },
+  "workspaceKeys": {
+    "heading": "Workspace keys",
+    "intro": "Keys stored on this machine to unlock encrypted workspace secrets. Listing them never reveals the key itself.",
+    "loading": "Loading keys…",
+    "empty": "No workspace keys are stored on this machine yet. A key is added the first time you set up or unlock a workspace's secrets — or you can add one ahead of time below.",
+    "unnamed": "—",
+    "degradedNotice": "No OS keyring detected — keys added here are held only for this session and will be asked again next launch.",
+    "table": {
+      "workspace": "Workspace hint",
+      "keyId": "Key id",
+      "lastUsed": "Last used",
+      "status": "Status",
+      "storage": "Storage",
+      "actions": "Actions"
+    },
+    "storage": {
+      "stored": "Stored",
+      "session": "This session only"
+    },
+    "mark": {
+      "inUse": "In use",
+      "inUseTooltip": "Used by: {{names}}",
+      "notReferenced": "Not referenced",
+      "notReferencedTooltip": "No workspace known to this app uses this key. It may still be needed by workspaces on other machines or folders.",
+      "couldNotCheck": "Could not check",
+      "couldNotCheckTooltip": "Some known workspaces could not be read, so this may be incomplete."
+    },
+    "actions": {
+      "delete": "Delete"
+    },
+    "add": {
+      "action": "Add a key",
+      "title": "Add a workspace key",
+      "intro": "Paste a workspace key (FPK1-…) to store it on this machine — useful when a teammate shares a key before you clone its workspace.",
+      "keyLabel": "Workspace key",
+      "keyPlaceholder": "FPK1-…",
+      "hintLabel": "Hint (optional)",
+      "hintPlaceholder": "Which project is this for?",
+      "submit": "Add key",
+      "invalidFormat": "That does not look like a valid key (format/checksum failed).",
+      "failed": "Could not add the key.",
+      "conflictTitle": "A key with this id already exists",
+      "conflictBody": "A different key with this id is already stored — hint \"{{hint}}\", last used {{lastUsed}}. Replace it?",
+      "keepExisting": "Keep existing",
+      "replace": "Replace"
+    },
+    "delete": {
+      "title": "Delete key for {{name}}?",
+      "consequence": "This key exists only on this machine. Every secret encrypted with it becomes permanently unrecoverable unless you re-enter its one-time key backup.",
+      "typePrompt": "Type the workspace name below to confirm. This is the only managed copy of the key.",
+      "tokenLabel": "Workspace name",
+      "inputPlaceholder": "Type the name exactly to enable Delete",
+      "copy": "Copy",
+      "copied": "Copied",
+      "confirm": "Delete key",
+      "blocked": {
+        "title": "This key is still in use",
+        "body": "This key is used by {{names}}. Remove the dependent secrets from that workspace first, then delete the key.",
+        "close": "Close"
+      }
+    }
+  },
+  "workspaceRequired": {
+    "title": "A workspace is needed to save",
+    "message": "This request has not been saved yet. Open an existing workspace or create a new one to save it into. Cancelling leaves the request open and unsaved.",
+    "open": "Open workspace…",
+    "create": "Create workspace…",
+    "cancel": "Cancel"
+  }
+}

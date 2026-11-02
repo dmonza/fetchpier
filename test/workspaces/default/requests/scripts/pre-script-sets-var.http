@@ -1,0 +1,7 @@
+# @id 045f0679-9e27-409c-8691-6715a742728d
+# @pre-request-script
+# fp.variables.set('runId', 'phase2-' + Date.now())
+# fp.request.headers.set('X-Run-Id', fp.variables.get('runId'))
+# @end-script
+GET {{baseUrl}}/headers
+Accept: application/json

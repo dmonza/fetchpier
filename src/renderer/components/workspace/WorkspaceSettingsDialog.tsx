@@ -1,0 +1,337 @@
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Info } from 'lucide-react'
+import { cn } from '../../lib/utils'
+import { Button } from '../ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '../ui/dialog'
+import { Switch } from '../ui/switch'
+import { Input } from '../ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { useWorkspaceSettingsStore } from '../../stores/workspaceSettings'
+import { useWorkspaceStore } from '../../stores/workspace'
+import { CertificatesPanel } from '../settings/CertificatesPanel'
+import { DEFAULT_BINARY_FILE_LIMITS } from '../../../shared/types'
+import type { BinaryFileLimits, HttpVersion, WorkspaceHttpSettings } from '../../../shared/types'
+
+const BYTES_PER_MB = 1024 * 1024
+const bytesToMb = (b: number): number => Math.round((b / BYTES_PER_MB) * 10) / 10
+const mbToBytes = (mb: number): number => Math.round(mb * BYTES_PER_MB)
+
+interface Props {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JSX.Element {
+  const { t } = useTranslation()
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath)
+  const settings = useWorkspaceSettingsStore((s) => s.httpSettings)
+  const update = useWorkspaceSettingsStore((s) => s.update)
+  const resetToDefaults = useWorkspaceSettingsStore((s) => s.resetToDefaults)
+  const [confirmReset, setConfirmReset] = useState(false)
+
+  const set = <K extends keyof WorkspaceHttpSettings>(
+    key: K,
+    value: WorkspaceHttpSettings[K]
+  ): void => {
+    if (!workspacePath) return
+    update({ [key]: value } as Partial<WorkspaceHttpSettings>).catch((err) =>
+      console.error('[WorkspaceSettings] update failed:', err)
+    )
+  }
+
+  const handleReset = (): void => {
+    if (!workspacePath) return
+    resetToDefaults().catch((err) => console.error('[WorkspaceSettings] reset failed:', err))
+    setConfirmReset(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t('workspaceSettings.title')}</DialogTitle>
+          <DialogDescription>{t('workspaceSettings.subtitle')}</DialogDescription>
+        </DialogHeader>
+
+        <Tabs defaultValue="http">
+          <TabsList>
+            <TabsTrigger value="http">{t('workspaceSettings.tabs.http')}</TabsTrigger>
+            <TabsTrigger value="certificates">
+              {t('workspaceSettings.tabs.certificates')}
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="http" className="pt-2">
+            <TooltipProvider>
+              <div className="flex flex-col gap-1">
+                <Row
+                  label={t('request.settings.httpVersion')}
+                  hint={t('request.settings.hints.httpVersion')}
+                >
+                  <Select
+                    value={settings.httpVersion}
+                    onValueChange={(v) => set('httpVersion', v as HttpVersion)}
+                  >
+                    <SelectTrigger size="sm" className="h-8 w-40 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        {t('request.settings.httpVersionOptions.auto')}
+                      </SelectItem>
+                      <SelectItem value="http1">HTTP/1.1</SelectItem>
+                      <SelectItem value="http2">HTTP/2</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Row>
+                <BoolRow
+                  label={t('request.settings.verifySsl')}
+                  hint={t('request.settings.hints.verifySsl')}
+                  value={settings.verifySsl}
+                  onChange={(v) => set('verifySsl', v)}
+                />
+                <BoolRow
+                  label={t('request.settings.followRedirects')}
+                  hint={t('request.settings.hints.followRedirects')}
+                  value={settings.followRedirects}
+                  onChange={(v) => set('followRedirects', v)}
+                />
+                <Row
+                  label={t('request.settings.maxRedirects')}
+                  hint={t('request.settings.hints.maxRedirects')}
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    max={50}
+                    value={settings.maxRedirects}
+                    disabled={!settings.followRedirects}
+                    onChange={(e) => {
+                      const n = Number(e.target.value)
+                      if (!Number.isFinite(n)) return
+                      set('maxRedirects', Math.max(0, Math.min(50, Math.round(n))))
+                    }}
+                    className={cn('h-8 w-24', !settings.followRedirects && 'opacity-50')}
+                  />
+                </Row>
+                <BoolRow
+                  label={t('request.settings.followAuthorizationOnRedirect')}
+                  hint={t('request.settings.hints.followAuthorizationOnRedirect')}
+                  value={settings.followAuthorizationOnRedirect}
+                  onChange={(v) => set('followAuthorizationOnRedirect', v)}
+                  disabled={!settings.followRedirects}
+                />
+                <BoolRow
+                  label={t('request.settings.encodeUrl')}
+                  hint={t('request.settings.hints.encodeUrl')}
+                  value={settings.encodeUrl}
+                  onChange={(v) => set('encodeUrl', v)}
+                />
+                <BoolRow
+                  label={t('request.settings.disableCookieJar')}
+                  hint={t('request.settings.hints.disableCookieJar')}
+                  value={settings.disableCookieJar}
+                  onChange={(v) => set('disableCookieJar', v)}
+                />
+                <BinaryFileLimitsSection
+                  value={settings.binaryFileLimits ?? DEFAULT_BINARY_FILE_LIMITS}
+                  onChange={(next) => set('binaryFileLimits', next)}
+                />
+              </div>
+            </TooltipProvider>
+          </TabsContent>
+          <TabsContent value="certificates" className="pt-2 max-h-[28rem] overflow-y-auto">
+            <CertificatesPanel scope="workspace" />
+          </TabsContent>
+        </Tabs>
+
+        <DialogFooter className="flex-row justify-between">
+          {confirmReset ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">{t('workspaceSettings.confirmReset')}</span>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)}>
+                {t('workspaceSettings.cancel')}
+              </Button>
+              <Button size="sm" variant="destructive" onClick={handleReset}>
+                {t('workspaceSettings.resetFactory')}
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
+              {t('workspaceSettings.resetFactory')}
+            </Button>
+          )}
+          <Button size="sm" onClick={() => onOpenChange(false)}>
+            {t('workspaceSettings.done')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Row({
+  label,
+  hint,
+  children
+}: {
+  label: string
+  hint: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-3 border-b border-border py-2 last:border-b-0">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span className="text-xs font-medium">{label}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="text-muted-foreground" tabIndex={-1}>
+              <Info className="h-3 w-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{hint}</TooltipContent>
+        </Tooltip>
+      </div>
+      <div className="flex shrink-0 items-center">{children}</div>
+    </div>
+  )
+}
+
+function BoolRow({
+  label,
+  hint,
+  value,
+  onChange,
+  disabled
+}: {
+  label: string
+  hint: string
+  value: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+}): React.JSX.Element {
+  return (
+    <Row label={label} hint={hint}>
+      <Switch checked={value} onCheckedChange={onChange} disabled={disabled} />
+    </Row>
+  )
+}
+
+function BinaryFileLimitsSection({
+  value,
+  onChange
+}: {
+  value: BinaryFileLimits
+  onChange: (next: BinaryFileLimits) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  // Local UI state so the user can type values that are momentarily invalid
+  // (e.g. warn=200 while block=100) without committing them.
+  const [warnMb, setWarnMb] = useState<number>(bytesToMb(value.warnBytes))
+  const [blockMb, setBlockMb] = useState<number>(bytesToMb(value.blockBytes))
+
+  // Re-sync local state when the upstream value changes (e.g. external broadcast,
+  // reset link). React's state-update reconciliation handles re-renders.
+  const upstreamWarnMb = bytesToMb(value.warnBytes)
+  const upstreamBlockMb = bytesToMb(value.blockBytes)
+  if (Math.abs(warnMb - upstreamWarnMb) > 0.01 && warnMb !== upstreamWarnMb) {
+    // Inline sync — fine because we guard with a tolerance check.
+    setWarnMb(upstreamWarnMb)
+  }
+  if (Math.abs(blockMb - upstreamBlockMb) > 0.01 && blockMb !== upstreamBlockMb) {
+    setBlockMb(upstreamBlockMb)
+  }
+
+  const negative = warnMb < 0 || blockMb < 0
+  const inverted = !negative && warnMb > blockMb
+  const invalid = negative || inverted
+
+  const commit = (nextWarnMb: number, nextBlockMb: number): void => {
+    if (nextWarnMb < 0 || nextBlockMb < 0) return
+    if (nextWarnMb > nextBlockMb) return
+    onChange({
+      warnBytes: mbToBytes(nextWarnMb),
+      blockBytes: mbToBytes(nextBlockMb)
+    })
+  }
+
+  const handleReset = (): void => {
+    setWarnMb(bytesToMb(DEFAULT_BINARY_FILE_LIMITS.warnBytes))
+    setBlockMb(bytesToMb(DEFAULT_BINARY_FILE_LIMITS.blockBytes))
+    onChange(DEFAULT_BINARY_FILE_LIMITS)
+  }
+
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-xs font-semibold">
+            {t('request.settings.binaryLimits.sectionTitle')}
+          </h3>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {t('request.settings.binaryLimits.sectionHint')}
+          </p>
+        </div>
+      </div>
+      <Row
+        label={t('request.settings.binaryLimits.warnLabel')}
+        hint={t('request.settings.binaryLimits.warnHint')}
+      >
+        <Input
+          type="number"
+          min={0}
+          value={warnMb}
+          onChange={(e) => {
+            const n = Number(e.target.value)
+            if (!Number.isFinite(n)) return
+            setWarnMb(n)
+            commit(n, blockMb)
+          }}
+          className="h-8 w-24"
+        />
+      </Row>
+      <Row
+        label={t('request.settings.binaryLimits.blockLabel')}
+        hint={t('request.settings.binaryLimits.blockHint')}
+      >
+        <Input
+          type="number"
+          min={0}
+          value={blockMb}
+          onChange={(e) => {
+            const n = Number(e.target.value)
+            if (!Number.isFinite(n)) return
+            setBlockMb(n)
+            commit(warnMb, n)
+          }}
+          className="h-8 w-24"
+        />
+      </Row>
+      {invalid && (
+        <p className="mt-1 text-[11px] text-destructive" role="alert">
+          {negative
+            ? t('request.settings.binaryLimits.validationNegative')
+            : t('request.settings.binaryLimits.validationWarnExceedsBlock')}
+        </p>
+      )}
+      <div className="mt-2 flex justify-end">
+        <button
+          type="button"
+          onClick={handleReset}
+          className="text-[11px] text-primary underline-offset-2 hover:underline"
+        >
+          {t('request.settings.binaryLimits.resetToGithubDefaults')}
+        </button>
+      </div>
+    </div>
+  )
+}

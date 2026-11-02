@@ -1,0 +1,4 @@
+# @id 8b834381-2ba6-41ca-a22b-4253d367e957
+GET {{baseUrl}}/headers
+X-Fetchpier-Test: phase2-default
+Accept: application/json

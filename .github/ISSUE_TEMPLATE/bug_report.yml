@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem in Fetchpier
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill in the sections below so the issue can be reproduced.
+
+        Do **not** report security vulnerabilities here — follow the process in [`SECURITY.md`](../blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug, including what you expected to happen instead.
+      placeholder: When I send a request with a multipart body, the app...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The minimal steps needed to reproduce the behavior. A sample `.http` snippet (with secrets removed) is very helpful.
+      placeholder: |
+        1. Open workspace '...'
+        2. Create a request '...'
+        3. Send it
+        4. See error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Fetchpier version
+      description: Visible in the About dialog, or the CLI via `fp --version`.
+      placeholder: '0.9.0'
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - Desktop app
+        - CLI (fp)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste any relevant error output or attach screenshots. Remove tokens, cookies, and credentials first.
+      render: shell
+    validations:
+      required: false

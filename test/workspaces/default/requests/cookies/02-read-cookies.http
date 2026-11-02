@@ -1,0 +1,3 @@
+# @id 09fe80b1-b341-4bda-88e6-5cfbc42ea173
+GET {{baseUrl}}/cookies
+Accept: application/json

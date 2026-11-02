@@ -1,0 +1,171 @@
+appId: com.fetchpier.app
+productName: Fetchpier
+copyright: Copyright © 2026 Daniel Monza (Sincrum)
+executableName: Fetchpier
+compression: maximum
+
+directories:
+  buildResources: build
+  output: dist
+
+# A whitelist, deliberately — not `**/*` plus exclusions. The previous form
+# shipped every top-level directory that nobody had remembered to exclude, and
+# an `app.asar` is unpacked with one command: that is how `.claude/` (local
+# agent config, gitignored), the whole `packages/fetchpier-cli/`, `scripts/`
+# and `assets/` ended up inside the installer. Naming what ships fails closed —
+# a new directory is only distributed when someone adds it here.
+#
+# `dist/` (directories.output) and `build/` (directories.buildResources) are
+# excluded automatically and need no entry.
+files:
+  - 'out/**'
+  - 'package.json'
+  # @fetchpier/core is an externalized workspace package: electron-vite does not
+  # bundle it, so the main process require()s it at runtime through the npm
+  # workspace symlink. Its built dist + manifest must ship.
+  - 'packages/fetchpier-core/dist/**/*'
+  - 'packages/fetchpier-core/package.json'
+  # NOT redundant with the whitelist above, and not dead weight. electron-builder
+  # always injects `!**/node_modules/**` into this matcher
+  # (app-builder-lib/out/fileMatcher.js), so production `node_modules` is never
+  # copied by these patterns — it is collected separately by the dependency
+  # collector, which reuses only the NEGATIVE patterns from this block
+  # (`getNodeModuleFileMatcher`, same file). Drop these three and core's source
+  # and tests ship again inside `node_modules/@fetchpier/core`.
+  #
+  # For the same reason, never add a positive `node_modules/...` pattern here:
+  # it moves where `!**/node_modules/**` is spliced and defeats the collector.
+  - '!node_modules/@fetchpier/core/src/**'
+  - '!node_modules/@fetchpier/core/test/**'
+  - '!node_modules/@fetchpier/core/{tsconfig.json,tsup.config.ts}'
+
+asarUnpack:
+  - resources/**
+
+# Flipped into the executable at package time, before signing. Without them a
+# copy of the signed binary runs arbitrary JS as Node (ELECTRON_RUN_AS_NODE,
+# NODE_OPTIONS, --inspect) and loads an unvalidated or replaced app.asar — the
+# same signed identity the secrets keystore is bound to.
+# `grantFileProtocolExtraPrivileges` stays on: the renderer is served from
+# file://. Pinned by scripts/packaging-config.test.ts.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  enableCookieEncryption: true
+  grantFileProtocolExtraPrivileges: true
+
+extraResources:
+  - from: THIRD_PARTY_LICENSES.txt
+    to: THIRD_PARTY_LICENSES.txt
+  # Single source of the About dialog's copyright line and license body.
+  - from: LICENSE
+    to: LICENSE
+
+win:
+  target:
+    - nsis
+
+nsis:
+  artifactName: 'Fetchpier-Installer-${version}.${ext}'
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: 'Fetchpier'
+
+  deleteAppDataOnUninstall: false
+
+  runAfterFinish: true
+
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+
+  displayLanguageSelector: false
+
+  warningsAsErrors: false
+
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/uninstallerSidebar.bmp
+
+  # Opcional pero recomendado
+  uninstallDisplayName: 'Fetchpier'
+
+mac:
+  icon: build/fetchpier-icon-macos.icns
+  category: public.app-category.developer-tools
+  artifactName: 'Fetchpier-${version}-mac-${arch}.${ext}'
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  extendInfo:
+    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+
+dmg:
+  artifactName: 'Fetchpier-${version}-mac-${arch}.${ext}'
+  title: 'Fetchpier ${version}'
+  backgroundColor: '#0B1020'
+  iconSize: 128
+  window:
+    width: 620
+    height: 380
+  contents:
+    - x: 160
+      y: 185
+      type: file
+    - x: 460
+      y: 185
+      type: link
+      path: /Applications
+
+linux:
+  icon: build/fetchpier-icon-linux.png
+  artifactName: 'Fetchpier-${version}-linux-${arch}.${ext}'
+  executableName: fetchpier
+  category: Development
+  synopsis: 'Local-first open-source REST client for developers'
+  description: |
+    Fetchpier is a local-first, open-source REST client for developers and teams.
+    It stores workspaces directly on the filesystem, integrates naturally with Git,
+    and keeps API work transparent, portable, and easy to share.
+  maintainer: Daniel Monza <dmonza@sincrum.com>
+  vendor: Sincrum
+  target:
+    - AppImage
+    - deb
+  desktop:
+    entry:
+      Name: Fetchpier
+      GenericName: REST API Client
+      Comment: Local-first open-source REST client
+      StartupWMClass: Fetchpier
+      Keywords: API;REST;HTTP;GraphQL;OpenAPI;Developer;
+
+appImage:
+  artifactName: 'Fetchpier-${version}-linux-${arch}.${ext}'
+
+deb:
+  artifactName: 'Fetchpier-${version}-linux-${arch}.${ext}'
+  packageName: fetchpier
+  priority: optional
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+
+npmRebuild: false

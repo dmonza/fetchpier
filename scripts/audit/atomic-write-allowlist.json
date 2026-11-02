@@ -1,0 +1,21 @@
+{
+  "$comment": "Atomic writes — closing the write-safety coverage gap: writers deliberately excluded from the atomic-write requirement because they target a path the user (or CI operator) named explicitly, equivalent to a shell redirect. Schema: { file: repo-relative path or directory prefix, reason }.",
+  "allow": [
+    {
+      "file": "src/main/ipc/file.ipc.ts",
+      "reason": "file:save-dialog — writes to a path the user picked via a native Save dialog"
+    },
+    {
+      "file": "packages/fetchpier-cli/src/reporters/html.ts",
+      "reason": "CLI --output artifact (CI report)"
+    },
+    {
+      "file": "packages/fetchpier-cli/src/reporters/junit.ts",
+      "reason": "CLI --output artifact (CI report)"
+    },
+    {
+      "file": "packages/fetchpier-cli/src/reporters/json.ts",
+      "reason": "CLI --output artifact (CI report)"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!--
+      Entitlements for everything inside the bundle that is signed separately: the
+      Helper apps (GPU / Renderer / Plugin) and Electron Framework.framework.
+      Referenced from electron-builder.yml as `mac.entitlementsInherit`; guarded by
+      scripts/packaging-config.test.ts.
+
+      Same three keys as entitlements.mac.plist, and that is correct rather than a
+      copy-paste slip: the Helper processes are the ones actually running V8, so they
+      need the JIT relaxations at least as much as the main bundle does. See
+      entitlements.mac.plist for why each key is here and what is deliberately absent.
+
+      Note the one key NOT carried over from the usual "inherit" template:
+
+        com.apple.security.inherit
+          App Sandbox inheritance. It is inert without com.apple.security.app-sandbox,
+          which this non-store build does not set. electron-builder's own fallback for
+          `entitlementsInherit` is literally the same non-sandbox template as for the
+          app bundle, so omitting it matches the tool's behavior.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

@@ -1,0 +1,103 @@
+{
+  "info": {
+    "name": "Fetchpier Test — Collection With Scripts",
+    "description": "Postman v2.1 export with pre-request and test scripts on multiple items. Triggers the script-copied-asis warning during import.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "GET with test script",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Body has url field\", function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.have.property('url');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "https://httpbin.org/get",
+          "host": ["httpbin", "org"],
+          "path": ["get"]
+        }
+      }
+    },
+    {
+      "name": "POST with pre-request script",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const ts = new Date().toISOString();",
+              "pm.variables.set('timestamp', ts);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"createdAt\": \"{{timestamp}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "https://httpbin.org/post",
+          "host": ["httpbin", "org"],
+          "path": ["post"]
+        }
+      }
+    },
+    {
+      "name": "Both pre-request and test scripts",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.variables.set('token', 'demo-token')"]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Authorization header was sent\", function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.headers).to.have.property('Authorization');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "https://httpbin.org/headers",
+          "host": ["httpbin", "org"],
+          "path": ["headers"]
+        }
+      }
+    }
+  ]
+}

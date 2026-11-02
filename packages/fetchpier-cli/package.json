@@ -1,0 +1,66 @@
+{
+  "name": "@fetchpier/cli",
+  "version": "0.9.4",
+  "description": "Fetchpier command-line interface — run requests and inspect environments of a Fetchpier workspace from the terminal. Reuses @fetchpier/core; no Electron.",
+  "author": "Daniel Monza",
+  "license": "MIT",
+  "homepage": "https://fetchpier.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dmonza/fetchpier.git",
+    "directory": "packages/fetchpier-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/dmonza/fetchpier/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "api-client",
+    "rest-client",
+    "http-client",
+    "cli",
+    "newman-alternative",
+    "fetchpier"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "fp": "./dist/fp.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^15.0.0",
+    "fast-xml-parser": "^5.11.2",
+    "libsodium-wrappers": "^0.8.4",
+    "mime": "^4.1.1",
+    "undici": "^8.12.3"
+  },
+  "devDependencies": {
+    "@fetchpier/core": "*",
+    "mockttp": "^4.6.5"
+  }
+}

@@ -1,0 +1,38 @@
+# What Prettier does NOT govern.
+#
+# Prettier does not read .gitignore — every generated path has to be repeated
+# here. If you add a generated directory, add it in BOTH files. Getting this
+# wrong is not cosmetic: playwright-report/index.html embeds minified script
+# and expands by ~21,700 lines if it is left governed.
+
+# ── Build and coverage output ───────────────────────────────────────────────
+out/
+dist/
+coverage/
+
+# ── Generated test reports ──────────────────────────────────────────────────
+playwright-report/
+test-results/
+
+# ── Documentation ───────────────────────────────────────────────────────────
+# The maintainer's local documentation folder. It is not part of the published
+# tree, and the format gate must not walk into it.
+docs/
+
+# ── Local scratch ───────────────────────────────────────────────────────────
+# Gitignored working notes. `.prettierignore` does not inherit `.gitignore`, so
+# without this line the gate walks into them.
+Claude outputs/
+
+# ── Test fixtures ───────────────────────────────────────────────────────────
+# Compared byte-for-byte by the importer and end-to-end suites. Reformatting
+# one silently changes what those suites assert.
+test/fixtures/
+test/workspaces/
+**/__fixtures__/
+
+# ── Script-owned baselines ──────────────────────────────────────────────────
+# Regenerated through JSON.stringify, whose output Prettier does not reproduce
+# exactly. Governing them turns the gate red after every legitimate update.
+test/perf-baseline.json
+test/coverage-baseline.json

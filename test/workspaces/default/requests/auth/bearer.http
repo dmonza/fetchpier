@@ -1,0 +1,4 @@
+# @id 4fde6e84-b91c-403e-9a9b-b6a7bdf807dd
+GET {{baseUrl}}/bearer
+Authorization: Bearer {{bearerToken}}
+Accept: application/json

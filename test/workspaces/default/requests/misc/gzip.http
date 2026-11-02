@@ -1,0 +1,4 @@
+# @id 5155c60c-d95e-45e0-bce0-339fbc3f901e
+GET {{baseUrl}}/gzip
+Accept-Encoding: gzip
+Accept: application/json

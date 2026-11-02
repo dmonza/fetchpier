@@ -1,0 +1,1128 @@
+{
+  "app": {
+    "title": "Fetchpier",
+    "subtitle": "Tu cliente REST de escritorio — impulsado por Electron + React"
+  },
+  "textMenu": {
+    "cut": "Cortar",
+    "copy": "Copiar",
+    "paste": "Pegar"
+  },
+  "workspace": {
+    "open": "Abrir Workspace",
+    "create": "Crear Workspace",
+    "gitignoreGenerated": "Se generó un .gitignore por defecto para tu workspace.",
+    "watchDegraded": "Se detuvo el seguimiento automático de archivos en este workspace. El árbol se sigue actualizando al volver a la ventana; reabrí el workspace para restaurarlo.",
+    "openError": {
+      "notFound": "Esa carpeta ya no existe. Se quitó de los workspaces recientes.",
+      "notAWorkspace": "Esa carpeta no es un workspace de Fetchpier. Se quitó de los workspaces recientes."
+    }
+  },
+  "workspaceDialog": {
+    "rootReject": {
+      "title": "Carpeta no válida",
+      "message": "No se puede usar la raíz del disco como workspace",
+      "detail": "\"{{path}}\" es la raíz del sistema de archivos. Elegí o creá una subcarpeta específica para tu workspace.",
+      "ok": "Aceptar"
+    },
+    "create": {
+      "title": "Crear workspace",
+      "message": "¿Crear un workspace en \"{{name}}\"?",
+      "detail": "Esta carpeta no contiene un workspace. Se creará la estructura necesaria (.fetchpier/).",
+      "confirm": "Crear workspace",
+      "cancel": "Cancelar"
+    }
+  },
+  "unresponsiveCloseDialog": {
+    "title": "Fetchpier no responde",
+    "message": "La interfaz de la aplicación dejó de responder.",
+    "detail": "Cerrar ahora no verificará si hay cambios sin guardar.",
+    "keepWaiting": "Esperar",
+    "closeAnyway": "Cerrar de todos modos"
+  },
+  "theme": {
+    "switchToDark": "Cambiar a modo oscuro",
+    "switchToSystem": "Cambiar a modo sistema",
+    "switchToLight": "Cambiar a modo claro"
+  },
+  "language": {
+    "label": "Idioma",
+    "en": "English",
+    "es": "Español"
+  },
+  "sidebar": {
+    "recent": "Workspaces Recientes",
+    "collections": "Colecciones",
+    "empty": "Abrí un workspace para ver las colecciones",
+    "openOrCreate": "Abrir o crear un Workspace",
+    "noFiles": "No hay archivos .http. Creá uno para comenzar.",
+    "tabCollections": "Colecciones",
+    "tabHistory": "Historial",
+    "newCollection": "Nueva Colección",
+    "newRequest": "Nuevo Request",
+    "importSchema": "Importar esquema",
+    "collapseAll": "Colapsar todo",
+    "expandAll": "Expandir todo",
+    "noWorkspace": "Workspace no seleccionado",
+    "workspaceSettings": "Configuración del workspace",
+    "openOrCreateWorkspace": "Abrir o crear workspace",
+    "closeWorkspace": "Cerrar workspace"
+  },
+  "collection": {
+    "newCollectionName": "Nueva Colección",
+    "newRequestName": "nuevo-request",
+    "nameConflict": "Este nombre ya existe en esta carpeta",
+    "contextMenu": {
+      "newRequest": "Nuevo Request",
+      "newCollection": "Nueva Colección",
+      "createInstance": "Crear instancia",
+      "importSchemaHere": "Importar esquema aquí…",
+      "rename": "Renombrar",
+      "delete": "Eliminar",
+      "duplicate": "Duplicar",
+      "moveTo": "Mover a...",
+      "reveal": "Revelar en el explorador de archivos",
+      "copyPath": "Copiar ruta",
+      "copyRelativePath": "Copiar ruta relativa"
+    },
+    "createInstance": {
+      "placeholder": "nombre-instancia"
+    },
+    "rename": {
+      "title": "Renombrar",
+      "placeholder": "Nombre...",
+      "confirm": "Renombrar",
+      "cancel": "Cancelar"
+    },
+    "delete": {
+      "title": "Eliminar",
+      "confirmFile": "¿Eliminar \"{{name}}\"?",
+      "confirmFolder": "¿Eliminar la carpeta \"{{name}}\" y todo su contenido?",
+      "instancesWarning": "Este request tiene {{count}} instancia(s) que también se eliminarán.",
+      "historyWarning": "Esto también eliminará {{count}} ejecución(es) guardada(s) del historial.",
+      "confirm": "Eliminar",
+      "confirmWithHistory": "Eliminar con historial",
+      "cancel": "Cancelar"
+    },
+    "moveTo": {
+      "title": "Mover a...",
+      "root": "(Raíz del workspace)",
+      "confirm": "Mover",
+      "cancel": "Cancelar"
+    },
+    "errors": {
+      "createCollection": "Error al crear la colección",
+      "createRequest": "Error al crear el request",
+      "rename": "Error al renombrar",
+      "delete": "Error al eliminar",
+      "move": "Error al mover",
+      "moveConflict": "\"{{name}}\" ya existe en la carpeta de destino",
+      "moveIntoItself": "Una carpeta no puede moverse dentro de sí misma",
+      "nameConflict": "\"{{name}}\" ya existe en esta carpeta",
+      "duplicate": "Error al duplicar",
+      "invalidInstanceName": "El nombre de la instancia solo puede contener letras, dígitos, guiones y guiones bajos",
+      "instanceConflict": "Ya existe una instancia llamada \"{{name}}\"",
+      "createInstance": "Error al crear la instancia",
+      "reveal": "No se pudo revelar el elemento en el explorador de archivos"
+    }
+  },
+  "tabs": {
+    "new": "Nueva pestaña",
+    "close": "Cerrar pestaña",
+    "untitled": "Sin título",
+    "removedOnDisk": "Este archivo se movió o eliminó en el disco. Guardá para volver a crearlo acá.",
+    "conflict": "Este archivo cambió en el disco mientras tenías ediciones sin guardar.",
+    "pinned": "Fijada",
+    "contextMenu": {
+      "close": "Cerrar",
+      "closeOthers": "Cerrar otras",
+      "closeAll": "Cerrar todas",
+      "closeToRight": "Cerrar las de la derecha",
+      "closeToLeft": "Cerrar las de la izquierda",
+      "pin": "Fijar",
+      "unpin": "Desfijar"
+    }
+  },
+  "titlebar": {
+    "minimize": "Minimizar",
+    "maximize": "Maximizar",
+    "restore": "Restaurar",
+    "close": "Cerrar"
+  },
+  "about": {
+    "title": "Acerca de Fetchpier",
+    "appName": "Fetchpier - Versión Beta",
+    "version": "Versión {{version}}",
+    "description": "Un cliente API de escritorio open-source. Local-first, formato estándar `.http`, sin lock-in.",
+    "author": "Autor",
+    "website": "Sitio web",
+    "license": {
+      "title": "Licencia",
+      "loading": "Cargando…",
+      "loadError": "No se pudo cargar el archivo de licencia."
+    },
+    "publicBeta": {
+      "badge": "Beta pública"
+    },
+    "thirdParty": {
+      "button": "Licencias de terceros",
+      "dialogTitle": "Licencias de terceros",
+      "description": "Este software incluye los siguientes componentes open source:",
+      "loading": "Cargando…",
+      "loadError": "No se pudieron cargar las licencias de terceros.",
+      "back": "Volver a Acerca de"
+    }
+  },
+  "updates": {
+    "title": "Chequeo de actualizaciones",
+    "openFromAbout": "Consultar actualizaciones",
+    "idleHint": "Consultá si hay una versión más reciente de Fetchpier.",
+    "check": "Consultar",
+    "checking": "Consultando actualizaciones…",
+    "upToDate": "Estás al día.",
+    "updateAvailable": "Hay una nueva versión disponible: {{version}}",
+    "currentVersion": "Versión actual: {{version}}",
+    "openReleases": "Descargar desde GitHub Releases",
+    "errors": {
+      "network": "No se pudo conectar con el servidor de actualizaciones. Revisá tu conexión e intentá de nuevo.",
+      "timeout": "El servidor de actualizaciones no respondió a tiempo. Intentá de nuevo más tarde.",
+      "invalid-json": "El servidor de actualizaciones devolvió una respuesta inesperada.",
+      "product-not-found": "No se encontró información de actualización para este producto.",
+      "invalid-version": "El servidor de actualizaciones devolvió un número de versión inválido."
+    },
+    "menu": {
+      "checkForUpdates": "Buscar actualizaciones…"
+    }
+  },
+  "request": {
+    "urlPlaceholder": "Ingresá la URL...",
+    "variableSuggestion": {
+      "secret": "Variable secreta",
+      "dynamic": "Variable dinámica"
+    },
+    "send": "Enviar",
+    "cancel": "Cancelar",
+    "cancelled": "Request cancelado",
+    "save": "Guardar",
+    "unsaved": "Request sin guardar",
+    "malformedQuery": {
+      "title": "No se pudo decodificar un parámetro de la query",
+      "detail": "El parámetro {{keys}} tiene un percent-encoding malformado y se mantuvo tal cual. Al guardar el request se eliminará. Editalo a mano primero si querés conservarlo."
+    },
+    "malformedPart": {
+      "title": "No se pudo leer una parte de archivo del multipart",
+      "detail": "Su referencia de archivo es ilegible. Al guardar el request se eliminará la parte. Volvé a seleccionar el archivo primero si querés conservarla."
+    },
+    "strayContent": {
+      "title": "Se eliminará contenido no reconocido",
+      "detail": "Este archivo tiene una línea que no es ni un header ni un comentario. Al guardar el request se normaliza y se elimina."
+    },
+    "multiRequest": {
+      "title": "Este archivo contiene más de un request",
+      "detail": "Solo se muestra y ejecuta el primero. Los demás se conservan y se guardan sin cambios."
+    },
+    "diskConflict": {
+      "title": "Este archivo cambió en el disco",
+      "detail": "Otra herramienta lo editó mientras tenías cambios sin guardar. Recargá para tomar la versión del disco, o conservá tus cambios y sobrescribilo al guardar.",
+      "reload": "Recargar del disco",
+      "keep": "Conservar mis cambios"
+    },
+    "removedOnDisk": {
+      "title": "Este archivo se eliminó del disco",
+      "detail": "Otra herramienta lo movió o eliminó. Tus cambios se conservan acá; al guardar se vuelve a crear el archivo en esta ruta."
+    },
+    "tabs": {
+      "params": "Params",
+      "headers": "Headers",
+      "body": "Body",
+      "auth": "Auth",
+      "scripts": "Scripts",
+      "settings": "Settings"
+    },
+    "settings": {
+      "httpVersion": "Versión HTTP",
+      "verifySsl": "Verificar certificado SSL",
+      "followRedirects": "Seguir redirecciones",
+      "maxRedirects": "Máx. redirecciones",
+      "followAuthorizationOnRedirect": "Enviar Authorization al redirigir",
+      "encodeUrl": "Codificar URL automáticamente",
+      "disableCookieJar": "Deshabilitar cookie jar",
+      "defaultWorkspace": "Default: Workspace",
+      "overridden": "Sobrescrito",
+      "overriddenCount": "{{count}} sobrescrito(s)",
+      "resetToDefault": "Restaurar default",
+      "httpVersionOptions": {
+        "auto": "Auto"
+      },
+      "hints": {
+        "httpVersion": "Versión del protocolo HTTP. Auto negocia vía ALPN para HTTPS.",
+        "verifySsl": "Valida el certificado TLS del servidor. Desactivalo solo para endpoints self-signed confiables.",
+        "followRedirects": "Sigue automáticamente respuestas 3xx.",
+        "maxRedirects": "Máximo de saltos de redirección antes de abortar.",
+        "followAuthorizationOnRedirect": "Mantiene el header Authorization cuando el redirect apunta a otro host.",
+        "encodeUrl": "Codifica caracteres reservados en la URL antes de enviar.",
+        "disableCookieJar": "No persiste ni envía cookies para este request."
+      },
+      "binaryLimits": {
+        "sectionTitle": "Límites de archivos binarios",
+        "sectionHint": "Política de tamaño al adjuntar archivos como cuerpo binario. Los valores por defecto coinciden con los límites por archivo de GitHub al hacer push (50 MB advertencia, 100 MB bloqueo) para que los workspaces compartidos vía Git no intenten subir archivos que el proveedor rechaza.",
+        "warnLabel": "Advertir desde (MB)",
+        "warnHint": "Pide confirmación antes de adjuntar un archivo igual o mayor a este tamaño.",
+        "blockLabel": "Bloquear desde (MB)",
+        "blockHint": "Rechaza el adjunto cuando supera este tamaño.",
+        "resetToGithubDefaults": "Restaurar defaults de GitHub (50 / 100 MB)",
+        "validationWarnExceedsBlock": "El umbral de advertencia debe ser menor o igual al de bloqueo.",
+        "validationNegative": "Los límites deben ser ≥ 0 MB."
+      }
+    },
+    "scripts": {
+      "preRequest": "Script pre-request",
+      "preRequestHint": "Se ejecuta antes de enviar el request",
+      "postResponse": "Script post-response",
+      "postResponseHint": "Se ejecuta después de recibir la respuesta",
+      "help": "Usá el global `fp`: `fp.request`, `fp.response`, `fp.environment`, `fp.variables`, `fp.test(name, fn)`, `fp.expect(valor)`, `fp.log(...)`.",
+      "intellisenseLoading": "Cargando IntelliSense…",
+      "intellisenseLoadError": "No se pudo cargar IntelliSense",
+      "completionLoading": "Cargando detalles…",
+      "completionDeprecated": "Deprecado"
+    },
+    "params": {
+      "keyPlaceholder": "Parámetro",
+      "valuePlaceholder": "Valor"
+    },
+    "headers": {
+      "keyPlaceholder": "Header",
+      "valuePlaceholder": "Valor"
+    },
+    "bodyTypes": {
+      "none": "ninguno",
+      "multipart-form": "form-data",
+      "x-www-form-urlencoded": "x-www-form-urlencoded",
+      "raw": "raw",
+      "binary": "binario"
+    },
+    "body": {
+      "noBody": "Este request no tiene body.",
+      "rawSubtype": {
+        "label": "Formato:",
+        "json": "JSON",
+        "xml": "XML",
+        "javascript": "JavaScript",
+        "text": "Texto",
+        "html": "HTML"
+      },
+      "binary": {
+        "chooseFile": "Elegir archivo…",
+        "replace": "Reemplazar",
+        "remove": "Quitar",
+        "noFileSelected": "Ningún archivo seleccionado.",
+        "fileInfo": "{{name}} — {{size}} — {{mime}}",
+        "fileMissing": "No se encontró el archivo binario en el workspace ({{ref}}). Volvé a adjuntarlo o corregí la referencia.",
+        "confirmTitle": "¿Adjuntar archivo grande?",
+        "confirmMessage": "El archivo pesa {{sizeMB}} MB, por encima del umbral de advertencia ({{warnMB}} MB) del workspace. Workspaces compartidos vía Git pueden hacer push lento o chocar contra límites del proveedor. ¿Continuar?",
+        "confirmAttach": "Adjuntar",
+        "confirmCancel": "Cancelar",
+        "tooLargeBlock": "El archivo seleccionado pesa {{sizeMB}} MB, por encima del límite de bloqueo del workspace ({{limitMB}} MB). Elegí un archivo más chico o subí el límite en la configuración del workspace.",
+        "errorReadingFile": "No se pudo leer el archivo seleccionado: {{message}}",
+        "picker": {
+          "openLabel": "Elegir archivo del workspace",
+          "searchPlaceholder": "Buscar archivos staged…",
+          "empty": "Sin archivos staged todavía.",
+          "selectLocal": "Elegir archivo local…"
+        }
+      },
+      "multipart": {
+        "addTextPart": "Agregar parte de texto",
+        "addFilePart": "Agregar parte de archivo",
+        "noPartsYet": "Sin partes aún. Agregá una parte de texto o de archivo para empezar.",
+        "kindText": "Texto",
+        "kindFile": "Archivo",
+        "name": "Nombre",
+        "namePlaceholder": "nombre del campo",
+        "value": "Valor",
+        "valuePlaceholder": "valor",
+        "filename": "Nombre de archivo",
+        "filenamePlaceholder": "(usar original)",
+        "contentType": "Content-Type",
+        "contentTypePlaceholder": "(auto)",
+        "disabled": "Deshabilitada",
+        "removePart": "Quitar parte",
+        "moveUp": "Mover arriba",
+        "moveDown": "Mover abajo",
+        "chooseFile": "Elegir archivo…",
+        "replaceFile": "Reemplazar",
+        "kindSelect": "Tipo de parte",
+        "headerHidden": "El Content-Type lo maneja el encoder al enviar multipart. Editalo en las filas de partes de abajo.",
+        "fileMissing": "Archivo no encontrado en el workspace ({{ref}}). Volvé a adjuntarlo para corregir.",
+        "fileInfo": "{{name}} — {{size}}",
+        "parseError": "Parte inválida: {{error}}"
+      }
+    },
+    "auth": {
+      "type": "Tipo de Auth",
+      "types": {
+        "none": "Ninguna",
+        "bearer": "Bearer Token",
+        "basic": "Basic Auth",
+        "api-key": "API Key"
+      },
+      "noAuth": "Sin autenticación configurada.",
+      "token": "Token",
+      "tokenPlaceholder": "Ingresá el Bearer token...",
+      "username": "Usuario",
+      "password": "Contraseña",
+      "keyName": "Nombre del Key",
+      "keyValue": "Valor del Key",
+      "keyLocation": "Agregar en",
+      "locations": {
+        "header": "Header",
+        "query": "Query Param"
+      },
+      "managedByAuth": "Gestionado por la pestaña Auth — editalo ahí"
+    }
+  },
+  "keyValue": {
+    "keyPlaceholder": "Clave",
+    "valuePlaceholder": "Valor",
+    "addRow": "Agregar",
+    "remove": "Eliminar",
+    "toggleEnabled": "Habilitar/deshabilitar",
+    "dragHandle": "Arrastrar para reordenar",
+    "expand": "Expandir fila",
+    "collapse": "Colapsar fila"
+  },
+  "response": {
+    "empty": "Enviá un request para ver la respuesta",
+    "emptyTitle": "Listo para enviar",
+    "emptyHint": "Presioná <kbd>Ctrl</kbd>+<kbd>Enter</kbd> para enviar el request actual",
+    "emptyTips": [
+      "Tip: usá {{var}} para variables del environment activo",
+      "Tip: Ctrl+P abre la paleta de comandos",
+      "Tip: clic derecho en una carpeta crea una colección dentro",
+      "Tip: Ctrl+L enfoca la barra de URL",
+      "Tip: Ctrl+B muestra u oculta la sidebar"
+    ],
+    "loading": "Enviando request...",
+    "error": "El request falló",
+    "tabs": {
+      "body": "Body",
+      "headers": "Headers",
+      "tests": "Tests",
+      "cookies": "Cookies"
+    },
+    "tests": {
+      "empty": "Enviá un request con scripts para ver los resultados de los tests aquí.",
+      "testResults": "Resultados de tests",
+      "noTests": "No se ejecutaron tests.",
+      "summary": "{{passed}}/{{total}} tests pasados",
+      "console": "Consola",
+      "consoleEmpty": "No hay logs capturados.",
+      "clearConsole": "Limpiar",
+      "errorIn": "Error en el script {{phase}}",
+      "export": {
+        "button": "Exportar",
+        "copyJson": "Copiar como JSON",
+        "copyJUnit": "Copiar como JUnit XML",
+        "saveJson": "Guardar como JSON…",
+        "saveJUnit": "Guardar como JUnit XML…",
+        "copied": "Copiado al portapapeles",
+        "saved": "Guardado en {{path}}",
+        "error": "Error al exportar"
+      }
+    },
+    "body": {
+      "copy": "Copiar",
+      "prettyPrint": "Formato",
+      "raw": "Raw",
+      "imageAlt": "Imagen de la respuesta"
+    },
+    "headers": {
+      "name": "Nombre",
+      "value": "Valor",
+      "empty": "Sin headers en la respuesta"
+    },
+    "cookies": {
+      "name": "Nombre",
+      "value": "Valor",
+      "domain": "Dominio",
+      "hop": "Salto",
+      "sent": "Enviadas con el request",
+      "received": "Recibidas de la respuesta",
+      "noneSent": "No se adjuntó ninguna cookie a este request.",
+      "noneReceived": "La respuesta no ofreció cookies.",
+      "empty": "Este envío no envió ni recibió cookies.",
+      "hasWarnings": "Este envío generó advertencias de cookies",
+      "rejected": "La cookie «{{name}}» de {{host}} no se guardó: {{reason}}",
+      "crossSiteInsecure": "La cookie «{{name}}» de {{host}} usa SameSite=None sin Secure. Se guardó, pero un navegador la rechazaría.",
+      "reason": {
+        "DOMAIN_MISMATCH": "su Domain nombra un host sobre el que este servidor no tiene autoridad",
+        "PUBLIC_SUFFIX": "su Domain es un sufijo público, que matchearía todos los hosts que cuelgan de él",
+        "PREFIX_VIOLATION": "su nombre lleva un prefijo de seguridad reservado cuyas reglas sus atributos no cumplen",
+        "INSECURE_OVERWRITE": "llegó por una conexión insegura y habría reemplazado una cookie Secure",
+        "MALFORMED": "no se pudo parsear el header Set-Cookie",
+        "REJECTED": "el cookie jar la rechazó"
+      },
+      "path": "Path",
+      "expires": "Expira",
+      "httpOnly": "HttpOnly",
+      "secure": "Secure",
+      "sameSite": "SameSite",
+      "session": "Sesión",
+      "notStored": "El servidor mandó esta cookie y el jar no la guardó.",
+      "resizeColumn": "Redimensionar columna"
+    }
+  },
+  "environment": {
+    "label": "Entorno",
+    "noEnvironment": "Sin entorno",
+    "manage": "Administrar entornos",
+    "new": "Nuevo entorno",
+    "newNamePlaceholder": "Nombre del entorno...",
+    "search": "Buscar...",
+    "searchClear": "Limpiar búsqueda",
+    "noMatches": "Ningún entorno coincide.",
+    "sort": {
+      "label": "Orden",
+      "asc": "Nombre, A a Z",
+      "desc": "Nombre, Z a A"
+    },
+    "create": "Crear",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "deleteConfirm": "¿Eliminar el entorno \"{{name}}\"? Sus cookies y valores locales de esta máquina se eliminan con él: no están versionados y no tienen otra copia.",
+    "save": "Guardar",
+    "variables": "Variables",
+    "keyPlaceholder": "Nombre de variable",
+    "valuePlaceholder": "Valor",
+    "reservedName": "Los nombres de variable no pueden empezar con \"$\" (reservado para variables dinámicas).",
+    "noVariables": "Sin variables definidas.",
+    "unresolvedWarning": "Sin resolver: {{vars}}",
+    "local": {
+      "sharedColumn": "Compartido",
+      "localColumn": "Local (esta máquina)",
+      "override": "override",
+      "overrideTooltip": "Un valor local en esta máquina reemplaza al compartido",
+      "orphan": "perdido",
+      "invalid": "inválido",
+      "unsharedTooltip": "No está en el archivo de entorno compartido. Escribí un valor compartido para darle esta variable al equipo, o tildá Sync para descartar tu valor local.",
+      "unsharedPlaceholder": "Sin compartir — escribí para compartir",
+      "placeholder": "Valor local…",
+      "setSecretPlaceholder": "Definir un valor local…",
+      "orphanNotice": "Override local perdido tras rotar la clave: {{names}}. Volvé a cargarlo si lo necesitás.",
+      "sync": "Sincronizar",
+      "syncTooltip": "Seguir el valor compartido del equipo",
+      "reservedPrefix": "Los valores que empiezan con \"enc:\" están reservados para secretos cifrados.",
+      "recheck": {
+        "title": "¿Volver al valor compartido?",
+        "body": "Esta variable volverá a seguir al equipo: regresa al valor compartido \"{{shared}}\" y se descartará tu valor local \"{{local}}\".",
+        "needsValue": "\"{{name}}\" volverá al estado «necesita valor»: se descartará tu valor local \"{{local}}\".",
+        "emptyDestination": "No hay valor compartido al que volver, así que la variable quedará vacía. Escribí antes un valor compartido si querés conservarlo.",
+        "scriptHint": "Un script de este entorno escribe esta variable; volverá a tener un valor local en la próxima ejecución.",
+        "confirm": "Volver al compartido"
+      },
+      "syncAll": {
+        "button": "Sincronizar todo",
+        "tooltip": "Devolver todas las variables divergentes al valor compartido del equipo",
+        "title": "¿Sincronizar todas las variables?",
+        "body": "Estas variables volverán a sus valores compartidos, descartando tus valores locales: {{names}}.",
+        "confirm": "Sincronizar todo"
+      }
+    },
+    "errors": {
+      "nameEmpty": "El nombre debe contener al menos una letra o un dígito.",
+      "folderConflict": "La carpeta a la que se traduce ese nombre ya la usa \"{{name}}\". Elegí otro nombre.",
+      "notFound": "Ese entorno ya no existe. Se recargó la lista.",
+      "operationFailed": "La operación falló."
+    },
+    "contextMenu": {
+      "rename": "Renombrar",
+      "duplicate": "Duplicar",
+      "delete": "Eliminar"
+    }
+  },
+  "history": {
+    "title": "Historial",
+    "empty": "Aún no se enviaron requests.",
+    "clear": "Limpiar historial",
+    "clearConfirm": "¿Limpiar todas las entradas del historial?",
+    "repeat": "Repetir request",
+    "noWorkspace": "Abrí un workspace para ver el historial.",
+    "readOnlyBanner": "Solo lectura — entrada del historial {{datetime}}",
+    "allEntries": "Todo el historial",
+    "emptyForFile": "Sin historial para este request.",
+    "rawBanner": "Raw — contenido del archivo .http (solo lectura)",
+    "contextMenu": {
+      "open": "Abrir",
+      "raw": "Raw .http",
+      "delete": "Eliminar"
+    },
+    "chips": {
+      "check": "Incluir en el filtro del historial",
+      "uncheck": "Excluir del filtro del historial",
+      "remove": "Quitar etiqueta"
+    },
+    "expansion": {
+      "metadata": {
+        "title": "Metadatos",
+        "sourceFile": "Archivo origen",
+        "openFile": "Abrir archivo",
+        "runId": "ID de ejecución",
+        "requestId": "ID del request",
+        "duration": "Duración",
+        "durationMs": "{{ms}} ms",
+        "status": "Estado",
+        "remoteIp": "IP remota",
+        "timestamp": "Marca de tiempo",
+        "settings": "Ajustes"
+      },
+      "request": {
+        "title": "Request"
+      },
+      "response": {
+        "title": "Response",
+        "format": "Formatear",
+        "raw": "Raw"
+      },
+      "scripts": {
+        "title": "Scripts",
+        "preRequest": "Pre-request",
+        "postResponse": "Post-response"
+      },
+      "errors": {
+        "fetchFailed": "No se pudo cargar esta ejecución.",
+        "retry": "Reintentar",
+        "sourceFileMissing": "El archivo origen ya no existe: {{path}}"
+      }
+    }
+  },
+  "activityPanel": {
+    "toggle": {
+      "tooltip": "Mostrar/ocultar panel de actividad ({{shortcut}})",
+      "ariaLabel": "Mostrar u ocultar el panel de actividad"
+    },
+    "popout": {
+      "tooltip": "Abrir en ventana separada"
+    },
+    "dock": {
+      "tooltip": "Volver a la ventana principal"
+    },
+    "close": {
+      "tooltip": "Cerrar panel"
+    },
+    "tabs": {
+      "requests": "Requests"
+    },
+    "popoutWindow": {
+      "title": "Fetchpier — Actividad"
+    },
+    "empty": {
+      "noWorkspace": "Abrí un workspace para ver la actividad."
+    },
+    "errors": {
+      "popoutRejected": "El panel de actividad ya está separado en otra ventana."
+    }
+  },
+  "statusBar": {
+    "noWorkspace": "Sin workspace",
+    "theme": {
+      "light": "Claro",
+      "dark": "Oscuro",
+      "system": "Sistema"
+    },
+    "zoom": {
+      "label": "{{percent}}%",
+      "tooltip": "Nivel de zoom",
+      "resetTooltip": "Clic para restablecer el zoom al 100%"
+    },
+    "commandPalette": {
+      "tooltip": "Abrir command palette ({{shortcut}})"
+    }
+  },
+  "settings": {
+    "title": "Configuración",
+    "tabs": {
+      "general": "General",
+      "proxy": "Proxy",
+      "updates": "Actualizaciones",
+      "certificates": "Certificados",
+      "workspaceKeys": "Claves del workspace"
+    },
+    "zoom": {
+      "label": "Zoom",
+      "in": "Acercar",
+      "out": "Alejar",
+      "reset": "Restablecer zoom"
+    },
+    "editorTheme": {
+      "label": "Tema del editor",
+      "dark": "oscuro",
+      "light": "claro",
+      "fallback": "default"
+    },
+    "requestTimeout": {
+      "label": "Timeout de Request",
+      "unit": "segundos"
+    },
+    "proxy": {
+      "enable": "Activar servidor proxy",
+      "url": "URL del Proxy",
+      "urlPlaceholder": "http://proxy.ejemplo.com:8080",
+      "username": "Usuario",
+      "password": "Contraseña"
+    },
+    "updates": {
+      "autoCheck": "Consultar automáticamente al iniciar",
+      "intervalDays": "Intervalo",
+      "daysUnit": "días"
+    }
+  },
+  "certificates": {
+    "title": "Certificados",
+    "sections": {
+      "ca": "Certificados de CA",
+      "client": "Certificados de cliente"
+    },
+    "intro": {
+      "ca": "Anclas de confianza adicionales para verificar servidores firmados por una CA interna o corporativa. Se combinan con las CAs de Node.",
+      "client": "Certificados que Fetchpier presenta en el handshake TLS. El correcto se elige automáticamente por request según el patrón de host."
+    },
+    "table": {
+      "label": "Etiqueta",
+      "file": "Archivo",
+      "host": "Host",
+      "port": "Puerto",
+      "type": "Tipo",
+      "enabled": "Habilitado",
+      "actions": "Acciones",
+      "anyPort": "cualquiera",
+      "unnamed": "(sin etiqueta)",
+      "literalPassphraseWarning": "Esta passphrase queda en texto plano en el archivo de settings del workspace (versionado en git). Usá una variable secreta en su lugar."
+    },
+    "empty": {
+      "ca": "Todavía no hay certificados de CA.",
+      "client": "Todavía no hay certificados de cliente."
+    },
+    "actions": {
+      "addCA": "Agregar CA",
+      "addClient": "Agregar cert. de cliente",
+      "edit": "Editar",
+      "remove": "Eliminar",
+      "cancel": "Cancelar",
+      "import": "Importar",
+      "save": "Guardar cambios"
+    },
+    "remove": {
+      "ca": "¿Eliminar la CA \"{{name}}\"? El certificado importado se copió dentro de la app: esta es la única copia gestionada y se borrará junto con su entrada.",
+      "client": "¿Eliminar el certificado de cliente para \"{{name}}\"? El material importado se copió dentro de la app: esta es la única copia gestionada y se borrarán sus archivos y su entrada."
+    },
+    "form": {
+      "ca": {
+        "title": "Agregar certificado de CA",
+        "file": "Archivo PEM",
+        "label": "Etiqueta (opcional)",
+        "labelPlaceholder": "CA Raíz Corporativa 2024",
+        "filePlaceholder": "Elegí un archivo .pem / .crt / .cer"
+      },
+      "client": {
+        "title": "Agregar certificado de cliente",
+        "editTitle": "Editar certificado de cliente",
+        "filesImmutableNote": "Para cambiar los archivos del certificado, eliminá esta entrada y agregá una nueva.",
+        "type": "Tipo",
+        "typePem": "PEM (cert + clave separados)",
+        "typePfx": "PKCS#12 (.pfx / .p12)",
+        "host": "Patrón de host",
+        "hostPlaceholder": "api.ejemplo.com o *.ejemplo.com",
+        "port": "Puerto (opcional)",
+        "portPlaceholder": "p. ej. 443",
+        "certFile": "Certificado (.pem / .crt)",
+        "keyFile": "Clave privada (.key / .pem)",
+        "pfxFile": "Bundle PFX (.pfx / .p12)",
+        "passphrase": "Passphrase",
+        "passphrasePlaceholder": "Valor literal o {{varName}}",
+        "passphraseWarning": "Esta passphrase queda en texto plano en el archivo de settings del workspace. Si compartís el workspace por git, usá {{example}} y definí el valor en un archivo de entorno.",
+        "pickFile": "Examinar..."
+      }
+    },
+    "errors": {
+      "hostRequired": "El patrón de host es obligatorio.",
+      "fileRequired": "Elegí un archivo a importar.",
+      "importFailed": "Falló la importación: {{message}}",
+      "passphraseVariableNotAllowed": "La passphrase de un certificado global no puede usar una referencia a variable. Usá un valor literal, o mové el certificado al alcance del workspace para usar una variable."
+    },
+    "preview": {
+      "label": "Certificado de cliente para este request",
+      "none": "(ninguno — no hay coincidencias)",
+      "scopeWorkspace": "scope del workspace",
+      "scopeApp": "scope global de la app"
+    }
+  },
+  "workspaceSettings": {
+    "title": "Configuración del workspace",
+    "subtitle": "Defaults aplicados a cada request de este workspace.",
+    "tabs": {
+      "http": "HTTP",
+      "certificates": "Certificados"
+    },
+    "done": "Listo",
+    "cancel": "Cancelar",
+    "resetFactory": "Restaurar valores de fábrica",
+    "confirmReset": "¿Seguro? Se sobrescribirán todos los defaults HTTP."
+  },
+  "commandPalette": {
+    "placeholder": "Escribí un comando o buscá archivos...",
+    "empty": "Sin resultados.",
+    "noWorkspace": "Abrí un workspace para buscar archivos.",
+    "groups": {
+      "actions": "Acciones",
+      "environments": "Entornos",
+      "files": "Archivos"
+    },
+    "actions": {
+      "newRequest": "Nueva request",
+      "toggleTheme": "Cambiar tema",
+      "openSettings": "Abrir ajustes",
+      "clearHistory": "Limpiar historial"
+    }
+  },
+  "saveRequest": {
+    "title": "Guardar Request",
+    "namePlaceholder": "Nombre del request...",
+    "folderLabel": "Guardar en",
+    "confirm": "Guardar",
+    "cancel": "Cancelar"
+  },
+  "closeConfirm": {
+    "title": "Cambios sin guardar",
+    "message": "\"{{name}}\" tiene cambios sin guardar. ¿Cerrar de todas formas?",
+    "confirm": "Cerrar",
+    "cancel": "Cancelar"
+  },
+  "emptyState": {
+    "title": "No hay ninguna petición abierta",
+    "description": "Abrí una petición desde la barra lateral o creá una nueva para empezar.",
+    "newRequest": "Nueva petición",
+    "shortcutHint": "o presioná"
+  },
+  "closeGuard": {
+    "title": "Cambios sin guardar",
+    "message": "Los siguientes tabs tienen cambios sin guardar:",
+    "unsavedLabel": "(nuevo, sin guardar)",
+    "saveAndClose": "Guardar todo y cerrar",
+    "closeWithoutSaving": "Cerrar sin guardar",
+    "cancel": "Cancelar"
+  },
+  "menu": {
+    "app": {
+      "about": "Acerca de Fetchpier",
+      "checkUpdates": "Buscar actualizaciones…",
+      "services": "Servicios",
+      "hide": "Ocultar Fetchpier",
+      "hideOthers": "Ocultar otros",
+      "unhide": "Mostrar todo",
+      "quit": "Salir de Fetchpier"
+    },
+    "file": {
+      "label": "Archivo",
+      "newRequest": "Nuevo request",
+      "newCollection": "Nueva colección",
+      "openWorkspace": "Abrir workspace…",
+      "closeWorkspace": "Cerrar workspace",
+      "save": "Guardar",
+      "closeTab": "Cerrar pestaña",
+      "closeAllTabs": "Cerrar todas las pestañas",
+      "closeWindow": "Cerrar ventana"
+    },
+    "edit": {
+      "label": "Edición",
+      "undo": "Deshacer",
+      "redo": "Rehacer",
+      "cut": "Cortar",
+      "copy": "Copiar",
+      "paste": "Pegar",
+      "selectAll": "Seleccionar todo"
+    },
+    "request": {
+      "label": "Request",
+      "send": "Enviar",
+      "focusUrl": "Ir a la URL"
+    },
+    "view": {
+      "label": "Vista",
+      "commandPalette": "Paleta de comandos…",
+      "toggleSidebar": "Alternar barra lateral",
+      "toggleActivityPanel": "Alternar panel de actividad",
+      "toggleDevTools": "Alternar herramientas de desarrollo",
+      "zoomIn": "Acercar",
+      "zoomOut": "Alejar",
+      "resetZoom": "Tamaño real"
+    },
+    "window": {
+      "label": "Ventana",
+      "minimize": "Minimizar",
+      "zoom": "Zoom",
+      "front": "Traer todo al frente"
+    }
+  },
+  "schemaImport": {
+    "title": "Importar esquema",
+    "target": "Importando en: {{path}}",
+    "source": {
+      "file": "Archivo",
+      "url": "URL",
+      "text": "Pegar texto",
+      "fileHint": "Arrastrá un archivo OpenAPI, GraphQL, WSDL o colección Postman aquí, o buscalo.",
+      "browse": "Buscar…",
+      "urlHint": "Solo URLs públicas. El archivo se descarga desde el main process.",
+      "textPlaceholder": "Pegá el contenido del esquema (JSON, YAML, GraphQL SDL, WSDL o Postman)…"
+    },
+    "format": {
+      "label": "Formato",
+      "auto": "Auto-detectar",
+      "openapi": "OpenAPI 3.x",
+      "swagger": "Swagger 2.0",
+      "graphql-sdl": "GraphQL SDL",
+      "graphql-introspection": "GraphQL Introspection",
+      "wsdl": "WSDL / SOAP",
+      "postman": "Colección Postman (v2.x)",
+      "detected": "Detectado: {{format}}"
+    },
+    "wsdl": {
+      "note": "La importación WSDL solo admite bindings SOAP 1.1. No se admiten bindings HTTP no-SOAP ni WSDL 2.0 (incluidos servicios REST/JSON): cada operación se genera como un envelope SOAP."
+    },
+    "collectionName": {
+      "label": "Nombre de la colección (opcional)",
+      "placeholder": "Dejalo vacío para usar el título del esquema"
+    },
+    "conflict": {
+      "label": "Si ya existe una colección con el mismo nombre",
+      "merge": "Combinar",
+      "abort": "Abortar",
+      "mergeHint": "Mantiene los archivos existentes; omite los nuevos que colisionen.",
+      "abortHint": "Cancela la importación si la carpeta ya existe."
+    },
+    "progress": {
+      "starting": "Iniciando…",
+      "parsing": "Parseando esquema…",
+      "generating": "Generando requests…",
+      "writing": "Escribiendo archivos…",
+      "done": "Listo"
+    },
+    "result": {
+      "success": "Se importó \"{{title}}\" correctamente",
+      "summary": "{{operations}} operación(es) en {{folders}} carpeta(s) — formato: {{format}}",
+      "warnings": "Advertencias ({{count}})",
+      "andMore": "…y {{count}} más",
+      "envCreated": "Environment creado: {{id}}",
+      "envMerged": "Environment combinado: {{id}}"
+    },
+    "warningKind": {
+      "unsupported-auth": "Autenticación no soportada",
+      "missing-example": "Ejemplo faltante",
+      "skipped-operation": "Operación omitida",
+      "name-collision": "Colisión de nombres",
+      "script-copied-asis": "Script de Postman copiado sin cambios",
+      "path-param-converted": "Parámetro de ruta convertido a variable",
+      "response-example-ignored": "Ejemplo de respuesta ignorado",
+      "variable-collected": "Variable movida al environment",
+      "body-binary-placeholder": "Marcador de cuerpo binario",
+      "unknown-field": "Campo desconocido ignorado",
+      "other": "Otro"
+    },
+    "postman": {
+      "envLabel": "Variables de Postman",
+      "envHint": "Las variables de la colección y las carpetas se pueden guardar como un environment.",
+      "strategy": {
+        "new": "Crear environment nuevo",
+        "merge": "Combinar con environment activo",
+        "none": "No importar"
+      },
+      "envNameLabel": "Nombre del nuevo environment",
+      "envNamePlaceholder": "Nombre del environment",
+      "envNameRequired": "El nombre del environment es obligatorio",
+      "mergeTarget": "Las nuevas variables se combinarán en \"{{name}}\" (no se sobrescriben valores existentes).",
+      "mergeNoActive": "No hay environment activo — la combinación no está disponible."
+    },
+    "actions": {
+      "import": "Importar",
+      "cancel": "Cancelar",
+      "close": "Cerrar"
+    }
+  },
+  "cookies": {
+    "title": "Cookies — {{env}}",
+    "count": "{{count}} cookie(s)",
+    "new": "Nueva cookie",
+    "empty": "No hay cookies almacenadas para este environment.",
+    "search": "Buscar dominios y cookies...",
+    "noResults": "No se encontraron cookies para \"{{query}}\"",
+    "name": "Nombre",
+    "value": "Valor",
+    "domain": "Dominio",
+    "path": "Ruta",
+    "expires": "Expira",
+    "expiresDate": "Expira (fecha)",
+    "maxAge": "Max-Age (segundos)",
+    "secure": "Secure",
+    "httpOnly": "HttpOnly",
+    "includeSubdomains": "Incluir subdominios",
+    "sameSite": "SameSite",
+    "sameSiteUnset": "(sin definir)",
+    "source": "Origen",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "close": "Cerrar",
+    "clearAll": "Limpiar todo",
+    "confirmClearAll": "¿Eliminar todas las cookies de este environment?",
+    "confirmDelete": "¿Eliminar cookie \"{{name}}\"?",
+    "expired": "Expirada",
+    "session": "Sesión",
+    "inSeconds": "en {{count}}s",
+    "selectEnvHint": "Seleccioná un environment para gestionar cookies",
+    "trigger": "Cookies",
+    "form": {
+      "newTitle": "Nueva cookie",
+      "editTitle": "Editar cookie",
+      "inertAttributes": "Al ser un cliente de API, los valores SameSite y HttpOnly no tienen efecto sobre lo que se envía. Se registran y muestran por fidelidad, y se conservan al editar una cookie."
+    },
+    "errors": {
+      "nameRequired": "El nombre es obligatorio",
+      "nameInvalid": "El nombre contiene caracteres inválidos",
+      "domainRequired": "El dominio es obligatorio"
+    }
+  },
+  "common": {
+    "cancel": "Cancelar",
+    "loadFailed": "No se pudo cargar esta parte de la aplicación.",
+    "retry": "Reintentar"
+  },
+  "secrets": {
+    "makeSecret": "Convertir en secreto",
+    "makePlain": "Convertir en texto plano (descifrar)",
+    "reveal": "Revelar",
+    "needsValue": "Falta valor",
+    "enterValuePlaceholder": "Ingresá un valor…",
+    "corrupt": "Corrupto",
+    "clearReenter": "Limpiar y reingresar",
+    "keyIdLabel": "ID de clave: {{keyId}}",
+    "sessionOnlyNotice": "No se detectó un llavero del sistema — tu clave se guarda solo para esta sesión y se pedirá de nuevo al reiniciar.",
+    "locked": {
+      "banner": "Este entorno tiene secretos, pero está bloqueado. Ingresá la clave del workspace para revelarlos o editarlos.",
+      "unlock": "Desbloquear"
+    },
+    "setup": {
+      "title": "Guardá la clave del workspace",
+      "intro": "Esta clave cifra tus variables secretas. Cada compañero y cada otra máquina la necesita para descifrarlas.",
+      "copy": "Copiar",
+      "copied": "Clave del workspace copiada",
+      "copyFailed": "No se pudo copiar la clave",
+      "warning": "Fetchpier no puede recuperar esta clave. Guardala ahora en un gestor de contraseñas — si la perdés, los secretos no se podrán descifrar.",
+      "acknowledge": "Guardé esta clave en un lugar seguro",
+      "confirm": "Listo"
+    },
+    "enterKey": {
+      "title": "Desbloquear los secretos del workspace",
+      "intro": "Pegá la clave del workspace (FPK1-…) para desbloquear las variables secretas.",
+      "placeholder": "FPK1-…",
+      "invalidFormat": "No parece una clave válida (falló el formato o la suma de verificación).",
+      "wrongKey": "Esa clave no corresponde a este workspace (se esperaba la clave {{keyId}}).",
+      "failed": "No se pudo validar la clave.",
+      "unlock": "Desbloquear"
+    },
+    "rotate": {
+      "title": "Rotar la clave del workspace",
+      "button": "Rotar clave",
+      "warnTeammates": "Se generará una clave nueva y se recifrarán todos los secretos. Tenés que compartir la nueva clave con cada compañero.",
+      "warnNoRevoke": "Rotar la clave del workspace NO revoca a quien ya tuvo acceso — puede seguir conociendo los valores secretos. Para revocar de verdad, rotá las credenciales subyacentes en sus proveedores.",
+      "confirm": "Rotar clave",
+      "doneTitle": "Nueva clave del workspace"
+    },
+    "gitNote": {
+      "title": "Antes de cifrar",
+      "body": "Cifrar protege este valor de ahora en más. Las copias en texto plano que ya están en el historial de Git no se eliminan — si el valor alguna vez se publicó, rotá la credencial en su proveedor.",
+      "continue": "Cifrar"
+    },
+    "unsetConfirm": {
+      "title": "¿Guardar este valor en texto plano?",
+      "body": "Convertir \"{{name}}\" en plano guardará y commiteará su valor en texto plano en config.json. Cualquiera con acceso al repositorio lo verá.",
+      "confirm": "Convertir en plano"
+    },
+    "deleteConfirm": {
+      "title": "¿Eliminar el secreto?",
+      "encryptedBody": "¿Eliminar el secreto \"{{name}}\"? El valor cifrado se eliminará y no podrá recuperarse sin el valor original.",
+      "needsValueBody": "¿Eliminar \"{{name}}\"?",
+      "localNote": "También se eliminará tu valor local.",
+      "confirm": "Eliminar"
+    }
+  },
+  "workspaceKeys": {
+    "heading": "Claves del workspace",
+    "intro": "Claves guardadas en esta máquina para desbloquear los secretos cifrados de un workspace. Listarlas nunca revela la clave en sí.",
+    "loading": "Cargando claves…",
+    "empty": "Todavía no hay claves de workspace guardadas en esta máquina. Una clave se agrega la primera vez que configurás o desbloqueás los secretos de un workspace, o podés agregar una con anticipación abajo.",
+    "unnamed": "—",
+    "degradedNotice": "No se detectó un llavero del sistema: las claves agregadas acá se guardan solo para esta sesión y se pedirán de nuevo en el próximo inicio.",
+    "table": {
+      "workspace": "Referencia del workspace",
+      "keyId": "Id de clave",
+      "lastUsed": "Último uso",
+      "status": "Estado",
+      "storage": "Almacenamiento",
+      "actions": "Acciones"
+    },
+    "storage": {
+      "stored": "Guardada",
+      "session": "Solo esta sesión"
+    },
+    "mark": {
+      "inUse": "En uso",
+      "inUseTooltip": "Usada por: {{names}}",
+      "notReferenced": "Sin referencias",
+      "notReferencedTooltip": "Ningún workspace conocido por esta app usa esta clave. Puede seguir siendo necesaria para workspaces en otras máquinas o carpetas.",
+      "couldNotCheck": "No se pudo verificar",
+      "couldNotCheckTooltip": "Algunos workspaces conocidos no se pudieron leer, así que esto puede estar incompleto."
+    },
+    "actions": {
+      "delete": "Eliminar"
+    },
+    "add": {
+      "action": "Agregar una clave",
+      "title": "Agregar una clave de workspace",
+      "intro": "Pegá una clave de workspace (FPK1-…) para guardarla en esta máquina, útil cuando un compañero comparte una clave antes de que clones su workspace.",
+      "keyLabel": "Clave del workspace",
+      "keyPlaceholder": "FPK1-…",
+      "hintLabel": "Referencia (opcional)",
+      "hintPlaceholder": "¿Para qué proyecto es?",
+      "submit": "Agregar clave",
+      "invalidFormat": "Eso no parece una clave válida (falló el formato o el checksum).",
+      "failed": "No se pudo agregar la clave.",
+      "conflictTitle": "Ya existe una clave con este id",
+      "conflictBody": "Ya hay una clave distinta guardada con este id: referencia \"{{hint}}\", último uso {{lastUsed}}. ¿Reemplazarla?",
+      "keepExisting": "Mantener la actual",
+      "replace": "Reemplazar"
+    },
+    "delete": {
+      "title": "¿Eliminar la clave de {{name}}?",
+      "consequence": "Esta clave existe solo en esta máquina. Cada secreto cifrado con ella queda irrecuperable para siempre, salvo que vuelvas a ingresar su respaldo de clave de un solo uso.",
+      "typePrompt": "Escribí el nombre del workspace abajo para confirmar. Esta es la única copia gestionada de la clave.",
+      "tokenLabel": "Nombre del workspace",
+      "inputPlaceholder": "Escribí el nombre exacto para habilitar Eliminar",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "confirm": "Eliminar clave",
+      "blocked": {
+        "title": "Esta clave todavía está en uso",
+        "body": "Esta clave la usa {{names}}. Quitá primero los secretos dependientes de ese workspace y después eliminá la clave.",
+        "close": "Cerrar"
+      }
+    }
+  },
+  "workspaceRequired": {
+    "title": "Hace falta un workspace para guardar",
+    "message": "Este request todavía no se guardó. Abrí un workspace existente o creá uno nuevo donde guardarlo. Si cancelás, el request queda abierto y sin guardar.",
+    "open": "Abrir workspace…",
+    "create": "Crear workspace…",
+    "cancel": "Cancelar"
+  }
+}

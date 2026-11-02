@@ -1,0 +1,68 @@
+{
+  "startedAt": "2026-06-29T17:45:40.318Z",
+  "gitSha": "3267ead7ba8b4ea7ebefcfa9b35cd9c509e572ef",
+  "electronVersion": "42.5.0",
+  "os": {
+    "platform": "win32",
+    "arch": "x64",
+    "release": "10.0.26200"
+  },
+  "fixture": "perf-minimal",
+  "iterations": 5,
+  "rawRuns": [
+    {
+      "tWindowCreated": 596,
+      "tDomContentLoaded": 640.3,
+      "tFirstUsablePaint": 767
+    },
+    {
+      "tWindowCreated": 554.8,
+      "tDomContentLoaded": 598.3,
+      "tFirstUsablePaint": 715.6
+    },
+    {
+      "tWindowCreated": 570.9,
+      "tDomContentLoaded": 614.4,
+      "tFirstUsablePaint": 728.6
+    },
+    {
+      "tWindowCreated": 577.8,
+      "tDomContentLoaded": 623.1,
+      "tFirstUsablePaint": 750.5
+    },
+    {
+      "tWindowCreated": 535.2,
+      "tDomContentLoaded": 580,
+      "tFirstUsablePaint": 699
+    }
+  ],
+  "summary": {
+    "cold": {
+      "tWindowCreated": 596,
+      "tDomContentLoaded": 640.3,
+      "tFirstUsablePaint": 767
+    },
+    "warm": {
+      "median": {
+        "tWindowCreated": 562.8,
+        "tDomContentLoaded": 606.3,
+        "tFirstUsablePaint": 722.1
+      },
+      "p95": {
+        "tWindowCreated": 577.8,
+        "tDomContentLoaded": 623.1,
+        "tFirstUsablePaint": 750.5
+      },
+      "min": {
+        "tWindowCreated": 535.2,
+        "tDomContentLoaded": 580,
+        "tFirstUsablePaint": 699
+      },
+      "max": {
+        "tWindowCreated": 577.8,
+        "tDomContentLoaded": 623.1,
+        "tFirstUsablePaint": 750.5
+      }
+    }
+  }
+}

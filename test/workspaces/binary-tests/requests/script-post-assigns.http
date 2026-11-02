@@ -1,0 +1,8 @@
+# @id 66666666-6666-6666-6666-666666666666
+# @post-response-script
+# fp.request.body = "hijack";
+# @end-script
+POST {{baseUrl}}/post
+Accept: application/json
+
+# @binary-file: 68e656b251e67e8358bef8483ab0d51c6619f3e7a1a9f0e75838d41ff368f728__hello.txt
