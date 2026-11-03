@@ -21,12 +21,23 @@ name: Release
 #          electron-builder skip signing instead of failing on a runner with no
 #          keychain identity.
 # Linux:   AppImage and .deb are conventionally unsigned. Nothing to do.
+#
+# ── Packaging never publishes ───────────────────────────────────────────────
+# Every electron-builder call passes `--publish never`. Run by CI from a tag,
+# electron-builder publishes by default — with no `publish` block in
+# electron-builder.yml it infers GitHub from package.json `repository` — and
+# exits 1 without GH_TOKEN, which no build job has by design. The builds upload
+# artifacts; only the `publish` job creates the release. Guarded by
+# scripts/release-workflow.test.ts.
 
 on:
   push:
     tags:
       - 'v*'
-  # Lets a failed release be re-run without moving the tag.
+  # Lets a failed release be re-run without moving the tag. The workflow file
+  # comes from the branch it is run from, the sources from the tag: a fix to
+  # this file applies to an existing tag; a fix to package.json or
+  # electron-builder.yml does not.
   workflow_dispatch:
     inputs:
       tag:
@@ -114,7 +125,7 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci
-      - run: npm run package:linux
+      - run: npm run package:linux -- --publish never
 
       - uses: actions/upload-artifact@v4
         with:
@@ -151,7 +162,7 @@ jobs:
       # cross-arch build is a pure repack, so this costs one extra pass and no
       # correctness risk.
       - name: Package (x64 + arm64, unsigned)
-        run: npm run build && npx electron-builder --mac --x64 --arm64
+        run: npm run build && npx electron-builder --mac --x64 --arm64 --publish never
         env:
           # Without this, electron-builder hunts for a Developer ID in the
           # runner's keychain, finds none, and fails the build. Setting it to
@@ -199,7 +210,7 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - run: npm ci
-      - run: npm run package:win
+      - run: npm run package:win -- --publish never
 
       # SignPath signs what this step uploads, addressed by the artifact id it
       # returns — hence the `id`.
