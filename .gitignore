@@ -5,6 +5,8 @@ dist-ssr/
 out/
 .vite/
 *.local
+# `npm pack` output, left in the package dir by the publishability check.
+*.tgz
 
 # Environment & secrets
 .env
