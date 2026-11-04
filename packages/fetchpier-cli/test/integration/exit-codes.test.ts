@@ -170,6 +170,16 @@ describe('exit codes', () => {
     expect(environment.status).toBe(4)
     expect(environment.stderr).toContain("Environment 'default' could not be read")
     expect(environment.stderr).not.toContain('not found')
+
+    // A parseable file with a malformed shape is the same case — never a 255.
+    writeFileSync(
+      join(broken, 'environments', 'default', 'config.json'),
+      JSON.stringify({ id: 'default', variables: {} })
+    )
+    const shapeless = fp(['run', '--workspace', broken])
+    expect(shapeless.status).toBe(4)
+    expect(shapeless.stderr).toContain('"name" must be a non-empty string')
+    expect(shapeless.stderr).not.toContain('This is a bug')
   }, 60000)
 
   it('3 — --proxy together with --no-proxy', () => {

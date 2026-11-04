@@ -40,7 +40,11 @@ change behavior on purpose; they are marked **Behavior change**.
   `.fetchpier/settings.json`, or an unparseable `config.json` for the selected
   environment, exits with code `4` naming the file, instead of running with
   defaults (which dropped the TLS settings) or reporting the environment as
-  missing. `fp env list` warns about unreadable environments. _(Behavior change)_
+  missing. `fp env list` warns about unreadable environments. An environment
+  file that parses but lacks a `name` or `id` (or whose `variables` is not an
+  object) counts as unreadable too: it used to crash every `fp run` and
+  `fp env list` in the workspace with an internal error, even when another
+  environment was selected. _(Behavior change)_
 - The terminal shows the environment by its folder name instead of its internal
   identifier, `-v` / `-vv` / `-vvv` now add detail, and script output (`fp.log`)
   is shown in runs of several files.

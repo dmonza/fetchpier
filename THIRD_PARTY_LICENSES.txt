@@ -2251,8 +2251,8 @@ SOFTWARE.
 
 The following npm packages may be included in this product:
 
- - @fetchpier/cli@0.9.5
- - @fetchpier/core@0.9.5
+ - @fetchpier/cli@0.9.6
+ - @fetchpier/core@0.9.6
 
 These packages each contain the following license:
 

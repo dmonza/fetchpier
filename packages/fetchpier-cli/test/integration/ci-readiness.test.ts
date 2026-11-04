@@ -638,6 +638,35 @@ describe('CLI hardening — signals and output', () => {
     expect(err).toContain('Warning: environment "broken" could not be read:')
   })
 
+  // CLI-116 (malformed shape): a hand-written config.json without a `name` is as
+  // unreadable as a broken one — it used to crash every listing with exit 255.
+  it('a config.json without a name is warned about, and does not break runs on other environments', async () => {
+    await server.forGet('/still-runs').thenReply(200, 'ok')
+    const ws = workspaceWith({ 'ok.http': 'GET {{baseUrl}}/still-runs\n' })
+    mkdirSync(join(ws, 'environments', 'handmade'), { recursive: true })
+    writeFileSync(
+      join(ws, 'environments', 'handmade', 'config.json'),
+      JSON.stringify({ id: 'h', variables: {} })
+    )
+    let out = ''
+    let err = ''
+    await listCommand(
+      { workspace: ws },
+      { env: {}, cwd: ws, write: (s) => (out += s), writeErr: (s) => (err += s) }
+    )
+    expect(out).toBe('default\n')
+    expect(err).toContain('Warning: environment "handmade" could not be read:')
+    expect(err).toContain('"name" must be a non-empty string')
+
+    const { summary } = await run(ws)
+    expect(summary.summary.requests.passed).toBe(1)
+
+    await expect(run(ws, { environment: 'handmade' })).rejects.toMatchObject({
+      exitCode: 4,
+      message: expect.stringContaining("Environment 'handmade' could not be read")
+    })
+  })
+
   // CLI-117
   it('the proxy header names NO_PROXY, and -v says via proxy or direct per request', async () => {
     await server.forGet('http://api.ci-proxy.test/through').thenReply(200, 'proxied')

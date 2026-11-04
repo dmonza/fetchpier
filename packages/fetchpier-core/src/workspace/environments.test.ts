@@ -257,6 +257,52 @@ describe('listEnvironmentsWithErrors (CLI hardening)', () => {
   })
 })
 
+describe('readEnvFile — a parseable file with a malformed shape is unreadable', () => {
+  async function writeRaw(ws: string, folder: string, content: unknown): Promise<string> {
+    const file = join(ws, 'environments', folder, 'config.json')
+    await fs.mkdir(join(ws, 'environments', folder), { recursive: true })
+    await fs.writeFile(file, JSON.stringify(content))
+    return file
+  }
+
+  it.each([
+    ['a missing name', { id: 'x', variables: {} }, '"name"'],
+    ['a non-string name', { id: 'x', name: 42, variables: {} }, '"name"'],
+    ['an empty name', { id: 'x', name: '', variables: {} }, '"name"'],
+    ['a missing id', { name: 'x', variables: {} }, '"id"'],
+    ['non-object variables', { id: 'x', name: 'x', variables: ['a'] }, '"variables"'],
+    ['a top-level array', [1, 2], 'JSON object']
+  ])('%s → WORKSPACE_INVALID naming the file and the field', async (_label, content, field) => {
+    const ws = newWorkspace()
+    const file = await writeRaw(ws, 'handmade', content)
+    await expect(readEnvFile(file)).rejects.toMatchObject({
+      code: 'WORKSPACE_INVALID',
+      message: expect.stringContaining(field)
+    })
+  })
+
+  it('a well-formed file without variables still reads as an empty map', async () => {
+    const ws = newWorkspace()
+    const file = await writeRaw(ws, 'plain', { id: 'p', name: 'plain' })
+    expect((await readEnvFile(file)).variables).toEqual({})
+  })
+
+  it('one malformed environment no longer breaks the listing: it is reported, the rest listed', async () => {
+    const ws = newWorkspace()
+    await writeEnvFile(ws, { id: 'a', folder: 'good', name: 'good', variables: {} })
+    const file = await writeRaw(ws, 'handmade', { id: 'h', variables: {} })
+
+    const { environments, unreadable } = await listEnvironmentsWithErrors(ws)
+
+    expect(environments.map((e) => e.folder)).toEqual(['good'])
+    expect(unreadable).toEqual([
+      { folder: 'handmade', file, reason: expect.stringContaining('"name"') }
+    ])
+    // The plain listing (desktop) skips it instead of throwing.
+    expect((await listEnvironments(ws)).map((e) => e.folder)).toEqual(['good'])
+  })
+})
+
 describe('loadHttpSettingsStrict (CLI hardening)', () => {
   it('a missing file means defaults', async () => {
     const ws = newWorkspace()

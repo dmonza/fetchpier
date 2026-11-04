@@ -45,11 +45,35 @@ export function envConfigPath(workspacePath: string, folderName: string): string
  */
 export async function readEnvFile(filePath: string): Promise<Environment> {
   const raw = await fs.readFile(filePath, 'utf-8')
-  const parsed = JSON.parse(raw) as {
-    id: string
-    name: string
-    variables?: Record<string, string | null>
+  const json: unknown = JSON.parse(raw)
+  // A file that parses but has the wrong shape is as unreadable as one that does
+  // not parse: rejecting it here sends it down the same path (the listing reports
+  // it, the CLI warns or exits 4). Letting it through made a single hand-written
+  // environment without a `name` crash every listing of the workspace.
+  const invalid = (detail: string): CoreError =>
+    new CoreError('WORKSPACE_INVALID', `Environment config "${filePath}": ${detail}`)
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    throw invalid('expected a JSON object')
+  }
+  const parsed = json as {
+    id?: unknown
+    name?: unknown
+    variables?: unknown
     secrets?: unknown
+  }
+  if (typeof parsed.id !== 'string' || parsed.id === '') {
+    throw invalid('"id" must be a non-empty string')
+  }
+  if (typeof parsed.name !== 'string' || parsed.name === '') {
+    throw invalid('"name" must be a non-empty string')
+  }
+  if (
+    parsed.variables !== undefined &&
+    (parsed.variables === null ||
+      typeof parsed.variables !== 'object' ||
+      Array.isArray(parsed.variables))
+  ) {
+    throw invalid('"variables" must be an object')
   }
   if (parsed.secrets !== undefined) {
     throw new CoreError(
@@ -63,7 +87,7 @@ export async function readEnvFile(filePath: string): Promise<Environment> {
   return {
     id: parsed.id,
     name: parsed.name,
-    variables: parsed.variables ?? {},
+    variables: (parsed.variables as Record<string, string | null> | undefined) ?? {},
     // The folder is data that already exists on disk; it is deliberately not a
     // field of the file (§5.2 — a second copy would be a second source of truth).
     folder: basename(dirname(filePath))
