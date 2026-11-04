@@ -5,7 +5,7 @@ All notable changes to Fetchpier are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.6] - Unreleased
+## [0.9.6] - 2026-11-04
 
 The command-line interface becomes reliable in continuous integration, and the
 desktop app gains the engine changes that make that possible. Several of these
@@ -211,5 +211,6 @@ nobody could install.
   every connection originates from your request configuration. No telemetry, no
   background traffic, no remote content in the UI.
 
+[0.9.6]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.6
 [0.9.5]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.5
 [0.9.4]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.4
