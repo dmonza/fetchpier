@@ -6,10 +6,12 @@ import {
   deleteEnvironment,
   listEnvironmentFolders,
   listEnvironments,
+  listEnvironmentsWithErrors,
   readEnvFile,
   saveEnvironment,
   writeEnvFile
 } from './environments'
+import { loadHttpSettings, loadHttpSettingsStrict } from './settings-store'
 import type { Environment } from '@shared/types'
 
 const dirs: string[] = []
@@ -228,5 +230,61 @@ describe('saveEnvironment — merge (F4, REQ-0076/0079/0087)', () => {
     )
     const back = await readEnvFile(join(ws, 'environments', 'dev', 'config.json'))
     expect(back.variables).toEqual({ A: '2', B: '2' })
+  })
+})
+
+describe('listEnvironmentsWithErrors (CLI hardening)', () => {
+  it('lists readable environments and reports an unparseable config.json', async () => {
+    const ws = newWorkspace()
+    await writeEnvFile(ws, { id: 'a', folder: 'good', name: 'good', variables: {} })
+    await fs.mkdir(join(ws, 'environments', 'broken'), { recursive: true })
+    await fs.writeFile(join(ws, 'environments', 'broken', 'config.json'), '{ not json')
+    await fs.mkdir(join(ws, 'environments', 'empty-folder'), { recursive: true })
+
+    const { environments, unreadable } = await listEnvironmentsWithErrors(ws)
+
+    expect(environments.map((e) => e.folder)).toEqual(['good'])
+    // A folder with no config.json is simply not an environment.
+    expect(unreadable).toEqual([
+      {
+        folder: 'broken',
+        file: join(ws, 'environments', 'broken', 'config.json'),
+        reason: expect.stringMatching(/JSON/i)
+      }
+    ])
+    // The plain listing is unchanged.
+    expect((await listEnvironments(ws)).map((e) => e.folder)).toEqual(['good'])
+  })
+})
+
+describe('loadHttpSettingsStrict (CLI hardening)', () => {
+  it('a missing file means defaults', async () => {
+    const ws = newWorkspace()
+    expect((await loadHttpSettingsStrict(ws)).verifySsl).toBe(true)
+  })
+
+  it('reads a valid file like the lenient loader', async () => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, '.fetchpier'), { recursive: true })
+    await fs.writeFile(
+      join(ws, '.fetchpier', 'settings.json'),
+      JSON.stringify({ version: 1, http: { verifySsl: false } })
+    )
+    expect((await loadHttpSettingsStrict(ws)).verifySsl).toBe(false)
+  })
+
+  it.each([
+    ['invalid JSON', '{ nope'],
+    ['a non-object', '[1, 2]']
+  ])('an existing file with %s is WORKSPACE_INVALID naming the file', async (_label, content) => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, '.fetchpier'), { recursive: true })
+    await fs.writeFile(join(ws, '.fetchpier', 'settings.json'), content)
+    await expect(loadHttpSettingsStrict(ws)).rejects.toMatchObject({
+      code: 'WORKSPACE_INVALID',
+      message: expect.stringContaining(join(ws, '.fetchpier', 'settings.json'))
+    })
+    // The desktop's lenient loader still falls back to defaults.
+    expect((await loadHttpSettings(ws)).verifySsl).toBe(true)
   })
 })

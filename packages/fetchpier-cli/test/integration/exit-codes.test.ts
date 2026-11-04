@@ -133,6 +133,45 @@ describe('exit codes', () => {
     expect(r.stderr).toContain('HTTPS_PROXY')
   }, 60000)
 
+  // CLI hardening (CA-12): a timer the runtime cannot honour is refused.
+  it('3 — --timeout above the runtime timer maximum names the maximum', () => {
+    const { status, stderr } = fp([
+      'run',
+      'requests/ok.http',
+      '--workspace',
+      ws,
+      '--timeout',
+      '2147483648'
+    ])
+    expect(status).toBe(3)
+    expect(stderr).toContain('2147483647')
+  }, 60000)
+
+  // CLI hardening (CA-09 / CA-10): corrupt configuration stops the run, named.
+  it('4 — corrupt settings.json, and a corrupt selected environment (not "not found")', () => {
+    const broken = mkdtempSync(join(tmpdir(), 'fp-exit-corrupt-'))
+    mkdirSync(join(broken, '.fetchpier'), { recursive: true })
+    writeFileSync(join(broken, '.fetchpier', 'settings.json'), '{ "version": 1, ')
+    mkdirSync(join(broken, 'environments', 'default'), { recursive: true })
+    writeFileSync(
+      join(broken, 'environments', 'default', 'config.json'),
+      JSON.stringify({ id: 'default', name: 'default', variables: {} })
+    )
+    mkdirSync(join(broken, 'requests'), { recursive: true })
+    writeFileSync(join(broken, 'requests', 'ok.http'), 'GET http://127.0.0.1:1/x\n')
+
+    const settings = fp(['run', '--workspace', broken])
+    expect(settings.status).toBe(4)
+    expect(settings.stderr).toContain('settings.json')
+
+    writeFileSync(join(broken, '.fetchpier', 'settings.json'), JSON.stringify({ version: 1 }))
+    writeFileSync(join(broken, 'environments', 'default', 'config.json'), '{ broken')
+    const environment = fp(['run', '--workspace', broken])
+    expect(environment.status).toBe(4)
+    expect(environment.stderr).toContain("Environment 'default' could not be read")
+    expect(environment.stderr).not.toContain('not found')
+  }, 60000)
+
   it('3 — --proxy together with --no-proxy', () => {
     const { status, stderr } = fp([
       'run',

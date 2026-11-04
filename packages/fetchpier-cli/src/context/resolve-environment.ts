@@ -1,7 +1,7 @@
 import type { Environment } from '@shared/types'
 import { CliError } from '../errors'
 import { EXIT } from '../exit-codes'
-import { listEnvironments } from './list-environments'
+import { listEnvironmentsWithErrors } from './list-environments'
 
 export interface ResolveEnvironmentInput {
   /** `--env` / `-e`. */
@@ -62,8 +62,19 @@ export async function resolveEnvironment(
     source = null
   }
 
-  const envs = await listEnvironments(input.workspacePath)
+  const { environments: envs, unreadable } = await listEnvironmentsWithErrors(input.workspacePath)
   const match = envs.find((e) => e.folder.toLowerCase() === name.toLowerCase())
+  // The folder exists but its config.json cannot be read: say so (exit 4),
+  // instead of reporting an environment the user can see as "not found".
+  const broken = match
+    ? undefined
+    : unreadable.find((u) => u.folder.toLowerCase() === name.toLowerCase())
+  if (broken) {
+    throw new CliError(
+      EXIT.WORKSPACE,
+      `Environment '${broken.folder}' could not be read: ${broken.file}: ${broken.reason}`
+    )
+  }
   if (!match) {
     throw new CliError(EXIT.ENVIRONMENT, environmentNotFoundMessage(name, source), [
       `Available: ${availableList(envs)}.`,

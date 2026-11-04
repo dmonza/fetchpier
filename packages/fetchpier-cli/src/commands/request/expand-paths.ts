@@ -60,8 +60,22 @@ async function suggestionFor(
   if (candidate === abs) return []
   const stat = await statOrNull(candidate)
   if (!stat || !(stat.isDirectory() || candidate.endsWith('.http'))) return []
-  const suggested = relative(cwd, candidate).split('\\').join('/')
+  // Compare real paths: the process's cwd comes back resolved while the
+  // workspace may arrive through a link (macOS's `/var` → `/private/var` temp
+  // dirs, a symlinked checkout), and a relative path between the two spellings
+  // of the same folder walks out to the root and back in.
+  const suggested = relative(await realpathOr(cwd), await realpathOr(candidate))
+    .split('\\')
+    .join('/')
   return [`Did you mean ${suggested}? Paths are relative to the current directory.`]
+}
+
+async function realpathOr(p: string): Promise<string> {
+  try {
+    return await fs.realpath(p)
+  } catch {
+    return p
+  }
 }
 
 /**

@@ -32,6 +32,7 @@ import { sendRequestWithRaw, type ProxyOption } from './client'
 import { openCookieSession, type CookieRejection, type CookieSession } from './cookie-jar'
 import { snapshotFromSetCookie } from './cookie-store'
 import { encodeMultipart } from './multipart-encoder'
+import { readBinary } from './binary-store'
 import type { ResolvedTlsMaterial } from '../tls/resolve'
 import type { SecretMasker } from '../secrets/markers'
 import { CoreError } from '../shared/context'
@@ -238,11 +239,22 @@ export async function execute(
     signal,
     resolveTls,
     onCookiesCaptured,
-    binaryBody,
     workspacePath,
     secrets
   } = options
+  // Bytes an adapter supplied win; otherwise a binary body is read from the
+  // workspace below, by the engine, for every surface (CLI hardening).
+  let binaryBody = options.binaryBody
   const userAgent = options.userAgent ?? FALLBACK_USER_AGENT
+
+  // A `# @binary-file:` reference the parser could not accept: sending the
+  // request bodiless would silently drop the file its author attached.
+  if (request.invalidBinaryRef !== undefined) {
+    return {
+      error: `invalid binary file reference: ${request.invalidBinaryRef}`,
+      notSent: true
+    }
+  }
 
   // Advisories raised by the transport and the TLS resolver while the send is
   // prepared and read. Nothing on the send path writes to the process console.
@@ -300,7 +312,8 @@ export async function execute(
       return {
         scriptResults: maskedScripts(scriptResults, envChanges),
         environmentChanges: envChanges,
-        error: `Pre-request script failed: ${pre.result.error?.message ?? 'unknown error'}`
+        error: `Pre-request script failed: ${pre.result.error?.message ?? 'unknown error'}`,
+        notSent: true
       }
     }
 
@@ -396,7 +409,42 @@ export async function execute(
   )
   // Implicit defaults, decided once on the wire side and applied to both sides so
   // the snapshot reports exactly what was sent.
-  const defaults = implicitDefaultHeaders(wireWithAuthRaw.headers, userAgent)
+  // Binary body (REQ-0065, now engine-owned): read the staged file from the
+  // workspace — where the multipart encoder already reads its parts — so the
+  // desktop and the CLI send the same bytes. A missing file is refused before
+  // anything goes out; it used to leave the command line sending an empty body.
+  let binaryContentType: string | undefined
+  if (
+    binaryBody === undefined &&
+    liveRequest.bodyType === 'binary' &&
+    liveRequest.binaryFile?.ref
+  ) {
+    const file = liveRequest.binaryFile
+    const refuse = (error: string): ExecutedRequestResult => ({
+      scriptResults: maskedScripts(scriptResults, envChanges),
+      environmentChanges: envChanges,
+      error,
+      notSent: true
+    })
+    if (!workspacePath) return refuse('Binary request requires a workspacePath to read the file.')
+    try {
+      binaryBody = await readBinary(workspacePath, file.ref)
+    } catch (err) {
+      return refuse(
+        (err as NodeJS.ErrnoException).code === 'ENOENT'
+          ? `binary file not found: ${file.originalName || file.ref}`
+          : describeError(err)
+      )
+    }
+    if (!hasHeaderNamed(wireWithAuthRaw.headers, 'content-type')) {
+      binaryContentType = file.mimeType || 'application/octet-stream'
+    }
+  }
+
+  const defaults = [
+    ...(binaryContentType ? [{ name: 'Content-Type', value: binaryContentType }] : []),
+    ...implicitDefaultHeaders(wireWithAuthRaw.headers, userAgent)
+  ]
   const withDefaults = <T extends { headers: Record<string, string>; headerList?: HeaderEntry[] }>(
     r: T
   ): T =>
@@ -452,7 +500,8 @@ export async function execute(
         scriptResults: maskedScripts(scriptResults, envChanges),
         environmentChanges: envChanges,
         error:
-          'Multipart request requires a workspacePath in ExecuteOptions to read staged file parts.'
+          'Multipart request requires a workspacePath in ExecuteOptions to read staged file parts.',
+        notSent: true
       }
     }
     try {
@@ -462,7 +511,8 @@ export async function execute(
       return {
         scriptResults: maskedScripts(scriptResults, envChanges),
         environmentChanges: envChanges,
-        error: describeError(err)
+        error: describeError(err),
+        notSent: true
       }
     }
   }

@@ -122,6 +122,18 @@ export interface RequestUnit {
    * version.
    */
   error?: string
+  /**
+   * Present (`true`) when no send was attempted — a file with no request, a
+   * failed pre-request script, a multipart part or binary file that could not
+   * be read. Absent when a send was attempted, even one that failed in
+   * transport. Optional and additive (`schemaVersion` does not move).
+   */
+  notRun?: true
+  /**
+   * Whether the request went through the configured proxy or directly (an
+   * exclusion matched). Present only when the run has a proxy configured.
+   */
+  via?: 'proxy' | 'direct'
   durationMs: number
 }
 

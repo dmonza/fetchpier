@@ -126,6 +126,8 @@ function buildHeaders(headers: Record<string, string>): string[] {
 function buildBodySection(args: {
   headers: Record<string, string>
   body: string | undefined
+  /** The body was decoded from its `Content-Encoding` (CLI hardening). */
+  decoded?: boolean
 }): string {
   const ctHeader = lookupHeader(args.headers, 'content-type')
   const ceHeader = lookupHeader(args.headers, 'content-encoding')
@@ -134,7 +136,8 @@ function buildBodySection(args: {
   const decision = detectBinaryBody({
     contentType: ctHeader,
     contentEncoding: ceHeader,
-    body
+    body,
+    decoded: args.decoded
   })
   if (!decision.isBinary) return body
   return binaryPlaceholder({
@@ -321,7 +324,13 @@ function buildStatusLine(resp: HttpResponse): string {
 
 function buildResponseRaw(resp: HttpResponse): string {
   const lines: string[] = [buildStatusLine(resp), ...buildHeaders(resp.headers ?? {})]
-  const bodyText = buildBodySection({ headers: resp.headers ?? {}, body: resp.body })
+  // A compressed response the engine decoded is recorded as the text it is; the
+  // kept `Content-Encoding` header must not turn it into a binary placeholder.
+  const bodyText = buildBodySection({
+    headers: resp.headers ?? {},
+    body: resp.body,
+    decoded: resp.decodingStatus === 'decoded'
+  })
   const out: string[] = lines.slice()
   out.push('')
   if (bodyText !== '') out.push(bodyText)

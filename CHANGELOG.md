@@ -5,7 +5,99 @@ All notable changes to Fetchpier are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.5] - Unreleased
+## [0.9.6] - Unreleased
+
+The command-line interface becomes reliable in continuous integration, and the
+desktop app gains the engine changes that make that possible. Several of these
+change behavior on purpose; they are marked **Behavior change**.
+
+### Fixed
+
+- **Values set by a script now reach the next request of a run.** A token a login
+  request stores with `fp.environment.set` is used by the authenticated call that
+  follows; `fp.environment.remove` is carried the same way. It was dropped, so the
+  call failed with a 401.
+- **Secrets no longer leak through scripts.** What a script logs, a test's name,
+  a failed assertion's message and a script error now show a secret as
+  `{secret:<name>}` in the terminal, every report, the run history and the
+  desktop's script console — including a value a script itself writes under a
+  secret variable's name.
+- **Binary request bodies are sent by the command line.** A request whose body
+  is an attached file used to go out with an empty body. A missing file, or a
+  reference in the request file that is not valid, now fails that request as
+  "not run" instead of sending it empty. _(Behavior change)_
+- **Compressed responses are decoded** (`gzip`, `deflate`, `br`) on both the
+  desktop and the command line, so assertions and the viewer read the real
+  body. A body that cannot be decoded is kept as received, with a warning, and
+  `fp.response.json()` fails with that cause. The activity log records a decoded
+  compressed text response as text.
+- **Runs that did nothing no longer pass.** A target folder with no request
+  stops the run with exit code `19` _(Behavior change)_.
+- **Values the command line could not honour are refused.** `--timeout` and
+  `--delay` accept whole numbers from `0` to `2147483647`; anything else is a
+  usage error (exit `3`) instead of being ignored. _(Behavior change)_
+- **Unreadable configuration stops the run.** An unparseable
+  `.fetchpier/settings.json`, or an unparseable `config.json` for the selected
+  environment, exits with code `4` naming the file, instead of running with
+  defaults (which dropped the TLS settings) or reporting the environment as
+  missing. `fp env list` warns about unreadable environments. _(Behavior change)_
+- The terminal shows the environment by its folder name instead of its internal
+  identifier, `-v` / `-vv` / `-vvv` now add detail, and script output (`fp.log`)
+  is shown in runs of several files.
+- An expired timeout is reported as `timed out after <limit>` on both surfaces,
+  not as a cancellation.
+- No internal diagnostic lines (`[execute] …`, `[parser] …`) reach the output;
+  they are warnings, also in the JSON report with a stable code.
+- The default `User-Agent` no longer advertises version 0.1.0.
+- The "Did you mean …?" hint for a missing path is correct when the current
+  directory or the workspace is reached through a symbolic link (as macOS's
+  temporary folders are); it used to suggest a path climbing to the root.
+
+### Added
+
+- **Proxy support for the command line:** `HTTPS_PROXY` / `HTTP_PROXY` /
+  `NO_PROXY`, `--proxy <url>` and `--no-proxy`. The header names the proxy and
+  the exclusion list; at `-v` each request says whether it went through the
+  proxy or directly. An unusable proxy URL stops the run (exit `3`).
+- **`--persist-env`** saves script variable changes to the local values exactly
+  as the desktop does. Without it a run writes nothing to the workspace.
+- **Redaction of credentials and cookies** in the command line's terminal output
+  and reports: the API-key auth credential (query or header) and `Cookie` /
+  `Set-Cookie` values, in addition to `Authorization`. `--show-secrets` reveals
+  them. The run history (`--save-history`) is unchanged.
+- A warning when a variable a request uses comes from a `{{$env.NAME}}` that is
+  not defined anywhere, so it was sent empty.
+- Advisories that used to be log lines are now shown: a cookie jar or TLS
+  material that could not be used, an HTTP/2 downgrade, a replaced multipart
+  `Content-Type`, a script write that could not be saved — in the command line's
+  warnings and, on the desktop, in a dismissible notice above the response.
+- The JSON report gains optional fields: `environmentName`, and per response
+  `compressedBytes`, `decompressedBytes` and `decodingStatus`; per request
+  `notRun` and `via`. Its version stays `1.0`. Scripts gain
+  `fp.response.decodingStatus`.
+- The response viewer shows both the received and the decoded size of a
+  compressed response, and flags a body that could not be decoded.
+
+### Changed
+
+- **Default per-request timeout of 30 seconds** on the command line (the
+  desktop's default). `--timeout 0` is the only way to disable it. _(Behavior change)_
+- **`Accept-Encoding: gzip, deflate, br` is sent by default** on both surfaces
+  when a request does not set it. _(Behavior change)_
+- **Default `User-Agent`:** `Fetchpier/<app version>` from the desktop and
+  `Fetchpier-CLI/<CLI version>` from the command line, applied at send time and
+  never written into request files; both defaults show in the headers editor as
+  read-only rows. A value already saved in a file is still sent as written.
+  _(Behavior change)_
+- A request that got no response reads `no response: <reason>` when a send was
+  attempted and `not run: <reason>` when it was not; the JUnit test case is
+  renamed from `request not sent` accordingly. _(Behavior change)_
+- A value a script sets wins over `--env-var` from that point on.
+- The CLI reference documents TLS configuration, missing-variable behavior, the
+  limits of secret masking, that the history keeps cookie values, and that the
+  CLI may align an environment's display name with its folder.
+
+## [0.9.5] - 2026-11-04
 
 Command-line interface fixes and publication readiness for `@fetchpier/cli`.
 

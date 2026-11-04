@@ -227,6 +227,30 @@ export async function resolveEnvReferences(
   variables: Record<string, string>,
   options: ResolveEnvReferencesOptions
 ): Promise<Record<string, string>> {
+  return (await resolveEnvReferencesDetailed(variables, options)).values
+}
+
+export interface ResolvedEnvReferences {
+  /** The variables with every `{{$env.NAME}}` substituted (same as {@link resolveEnvReferences}). */
+  values: Record<string, string>
+  /**
+   * Per variable, the `$env` names it referenced that **no source defines**
+   * (neither `.env` nor the process environment) and that therefore became `""`.
+   * A name defined with an empty value is intended and is not listed. Variables
+   * with no undefined reference are absent.
+   */
+  undefinedByVariable: Record<string, string[]>
+}
+
+/**
+ * {@link resolveEnvReferences}, also reporting which references had no source —
+ * so an adapter can tell a missing credential (`{{$env.API_TOKEN}}` with the
+ * variable not injected) from an intentionally empty one.
+ */
+export async function resolveEnvReferencesDetailed(
+  variables: Record<string, string>,
+  options: ResolveEnvReferencesOptions
+): Promise<ResolvedEnvReferences> {
   // Short-circuit when there is nothing to do — avoid the disk read.
   let needsReadDotenv = false
   for (const value of Object.values(variables)) {
@@ -235,26 +259,32 @@ export async function resolveEnvReferences(
       break
     }
   }
-  if (!needsReadDotenv) return { ...variables }
+  if (!needsReadDotenv) return { values: { ...variables }, undefinedByVariable: {} }
 
   const dotenv = await readDotenv(options.workspacePath)
   const processEnv = options.processEnv ?? process.env
 
-  const lookup = (name: string): string => {
+  const lookup = (name: string): string | undefined => {
     if (dotenv && Object.prototype.hasOwnProperty.call(dotenv, name)) {
       return dotenv[name]
     }
-    const v = processEnv[name]
-    return v ?? ''
+    return processEnv[name]
   }
 
-  const out: Record<string, string> = {}
+  const values: Record<string, string> = {}
+  const undefinedByVariable: Record<string, string[]> = {}
   for (const [k, v] of Object.entries(variables)) {
     if (typeof v !== 'string') {
-      out[k] = v
+      values[k] = v
       continue
     }
-    out[k] = v.replace(ENV_REF_PATTERN, (_match, name: string) => lookup(name))
+    values[k] = v.replace(ENV_REF_PATTERN, (_match, name: string) => {
+      const found = lookup(name)
+      if (found !== undefined) return found
+      const list = (undefinedByVariable[k] ??= [])
+      if (!list.includes(name)) list.push(name)
+      return ''
+    })
   }
-  return out
+  return { values, undefinedByVariable }
 }

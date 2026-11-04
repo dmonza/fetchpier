@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Command } from 'commander'
-import { addRunOptions, toRunOptions } from './run-options'
+import { addRunOptions, MAX_TIMER_MS, toRunOptions } from './run-options'
 import { CliError } from '../errors'
 import { EXIT } from '../exit-codes'
 
@@ -83,6 +83,19 @@ describe('toRunOptions — CI-safe flags', () => {
 
   it('--timeout 0 is the only way to disable the timeout', () => {
     expect(toRunOptions([], { timeout: '0' }).timeoutMs).toBe(0)
+  })
+
+  it('accepts the runtime timer maximum and refuses anything above it, naming the maximum', () => {
+    expect(toRunOptions([], { timeout: String(MAX_TIMER_MS) }).timeoutMs).toBe(2147483647)
+    let err: unknown
+    try {
+      toRunOptions([], { timeout: '2147483648' })
+    } catch (e) {
+      err = e
+    }
+    expect((err as CliError).exitCode).toBe(EXIT.USAGE)
+    expect((err as CliError).message).toContain('2147483647')
+    expect(() => toRunOptions([], { delay: '9999999999' })).toThrow(/--delay/)
   })
 
   it('--delay 0 means no wait', () => {

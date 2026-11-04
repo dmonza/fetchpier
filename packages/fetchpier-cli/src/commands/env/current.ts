@@ -4,6 +4,8 @@ export interface EnvCommandDeps {
   cwd?: string
   env?: NodeJS.ProcessEnv
   write?: (s: string) => void
+  /** stderr sink — injectable for tests. */
+  writeErr?: (s: string) => void
 }
 
 /**

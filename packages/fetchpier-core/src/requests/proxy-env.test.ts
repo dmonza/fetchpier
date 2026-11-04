@@ -67,6 +67,15 @@ describe('resolveProxyRouting', () => {
     expect(resolveProxyRouting({ flag: 'http://f:1', env }).proxyFor(HTTPS)).toBeUndefined()
   })
 
+  it('the description carries the exclusion list when there is one', () => {
+    expect(
+      resolveProxyRouting({ env: { HTTPS_PROXY: 'http://p:1', NO_PROXY: '.internal.test' } }).active
+    ).toEqual({ display: 'http://p:1', source: 'HTTPS_PROXY', noProxy: '.internal.test' })
+    expect(resolveProxyRouting({ env: { HTTPS_PROXY: 'http://p:1' } }).active).not.toHaveProperty(
+      'noProxy'
+    )
+  })
+
   it('noProxy ignores all three variables', () => {
     const r = resolveProxyRouting({ noProxy: true, env: { HTTPS_PROXY: 'http://p:1' } })
     expect(r.proxyFor(HTTPS)).toBeUndefined()

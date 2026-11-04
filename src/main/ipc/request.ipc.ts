@@ -138,39 +138,13 @@ export function registerRequestHandlers(): void {
       )
 
       let effectiveRequest = request
-      let binaryBody: Buffer | undefined
       let workspacePathForCore: string | undefined
       if (activeWorkspacePath) workspacePathForCore = activeWorkspacePath
+      // Binary bodies are the engine's: it reads the staged file from the
+      // workspace, derives Content-Type, and refuses a missing file before
+      // anything goes out — the same path the command line uses.
       if (request.bodyType === 'binary' && request.binaryFile?.ref) {
-        try {
-          const handle = requireActiveWorkspaceHandle()
-          workspacePathForCore = handle.path
-          binaryBody = await handle.binary.read(request.binaryFile.ref)
-        } catch (err) {
-          clearTimeout(timeoutId)
-          if (executionId) inFlightControllers.delete(executionId)
-          const message =
-            (err as NodeJS.ErrnoException).code === 'ENOENT'
-              ? `Binary file not found: ${request.binaryFile.ref}`
-              : err instanceof Error
-                ? err.message
-                : String(err)
-          return { error: message }
-        }
-        const hasContentType = Object.keys(request.headers).some(
-          (k) => k.toLowerCase() === 'content-type'
-        )
-        if (!hasContentType) {
-          const ct = request.binaryFile.mimeType || 'application/octet-stream'
-          effectiveRequest = {
-            ...request,
-            headers: { ...request.headers, 'Content-Type': ct },
-            // Keep the authoritative ordered list in sync with the record.
-            headerList: request.headerList
-              ? [...request.headerList, { name: 'Content-Type', value: ct }]
-              : undefined
-          }
-        }
+        workspacePathForCore = requireActiveWorkspaceHandle().path
       }
 
       // REQ-0066 multipart: validate that every file part's staged file
@@ -269,7 +243,6 @@ export function registerRequestHandlers(): void {
               ...(onWarning ? { onWarning } : {})
             }),
           onCookiesCaptured: (envId) => broadcastCookiesChanged(envId),
-          binaryBody,
           workspacePath: workspacePathForCore,
           secrets: prepared?.masker
         })
@@ -288,6 +261,12 @@ export function registerRequestHandlers(): void {
       } finally {
         clearTimeout(timeoutId)
         if (executionId) inFlightControllers.delete(executionId)
+      }
+
+      // Advisories known before the send (an undefined `{{$env.*}}` behind a used
+      // variable) travel with the result like the engine's own.
+      if (prepared && prepared.warnings.length > 0) {
+        result = { ...result, warnings: [...prepared.warnings, ...(result.warnings ?? [])] }
       }
 
       // REQ-0074: persist script-written environment changes to the LOCAL layer

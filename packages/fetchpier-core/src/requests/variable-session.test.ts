@@ -69,6 +69,61 @@ describe('createVariableSession — layering', () => {
   })
 })
 
+describe('createVariableSession — undefined {{$env.*}} advisory (CLI hardening)', () => {
+  const uses = (v: string): HttpRequest => ({
+    method: 'GET',
+    url: 'https://x/',
+    headers: { Authorization: `Bearer {{${v}}}` }
+  })
+
+  it('advises a used variable whose $env source is undefined, naming both', async () => {
+    await writeEnv({ token: '{{$env.API_TOKEN}}', other: '{{$env.ALSO_MISSING}}' })
+    const s = await session({ processEnv: {} })
+    const prepared = await s.prepare(uses('token'))
+    expect(prepared.request.variables?.token).toBe('')
+    expect(prepared.warnings).toEqual([
+      { code: 'UNDEFINED_ENV_REFERENCE', name: 'token', envName: 'API_TOKEN' }
+    ])
+  })
+
+  it('stays silent for variables the request does not use', async () => {
+    await writeEnv({ token: '{{$env.API_TOKEN}}' })
+    const s = await session({ processEnv: {} })
+    expect((await s.prepare(get('https://x/'))).warnings).toEqual([])
+  })
+
+  it('an empty-but-defined source is intended and not advised', async () => {
+    await writeEnv({ token: '{{$env.API_TOKEN}}' })
+    await fs.writeFile(join(ws, '.env'), 'API_TOKEN=\n')
+    const s = await session({ processEnv: {} })
+    expect((await s.prepare(uses('token'))).warnings).toEqual([])
+    await writeEnv({ token: '{{$env.OTHER}}' })
+    const fromProcess = await session({ processEnv: { OTHER: '' } })
+    expect((await fromProcess.prepare(uses('token'))).warnings).toEqual([])
+    // …while the same reference with no source at all is advised.
+    const missing = await session({ processEnv: {} })
+    expect((await missing.prepare(uses('token'))).warnings).toHaveLength(1)
+  })
+
+  it('no advisory once a local value, an override or a script write replaced the value', async () => {
+    await writeEnv({ token: '{{$env.API_TOKEN}}' })
+    expect(
+      (await (await session({ overrides: { token: 'x' } })).prepare(uses('token'))).warnings
+    ).toEqual([])
+    const scripted = await session()
+    await scripted.apply({ set: { token: 'jwt' }, removed: [] })
+    expect((await scripted.prepare(uses('token'))).warnings).toEqual([])
+    await writeLocalValues(ws, 'dev', { version: 1, variables: { token: 'local' } })
+    expect((await (await session()).prepare(uses('token'))).warnings).toEqual([])
+  })
+
+  it('lists each undefined reference of a composed value once', async () => {
+    await writeEnv({ token: '{{$env.A}}-{{$env.B}}-{{$env.A}}' })
+    const warnings = (await (await session()).prepare(uses('token'))).warnings
+    expect(warnings.map((w) => w.envName)).toEqual(['A', 'B'])
+  })
+})
+
 describe('createVariableSession — carry-forward', () => {
   it('a script write reaches every later send', async () => {
     await writeEnv({ baseUrl: 'https://api' })

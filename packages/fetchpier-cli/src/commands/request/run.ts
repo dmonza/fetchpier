@@ -10,7 +10,7 @@ import type {
 } from '@shared/types'
 import { cliUserAgent } from '@shared/types'
 import { CLI_VERSION } from '../../version'
-import { DEFAULT_TIMEOUT_MS } from '../run-options'
+import { DEFAULT_TIMEOUT_MS, MAX_TIMER_MS } from '../run-options'
 import { CliError } from '../../errors'
 import { EXIT } from '../../exit-codes'
 import { resolveWorkspace } from '../../context/resolve-workspace'
@@ -146,6 +146,11 @@ function describeWarning(relPath: string, w: ExecutionWarning): string {
       return `${relPath}: HTTP/2 was requested over plain HTTP; HTTP/1.1 was used.`
     case 'CONTENT_TYPE_REPLACED':
       return `${relPath}: the Content-Type header was replaced by the multipart encoder's own (it owns the boundary).`
+    case 'UNDEFINED_ENV_REFERENCE':
+      return (
+        `${relPath}: variable "${w.name}" comes from {{$env.${w.envName}}}, which is not ` +
+        `defined in .env or the environment; it was sent empty.`
+      )
     case 'ENV_WRITE_NOT_PERSISTED':
       return w.reason === 'KEY_MISSING'
         ? `${relPath}: secret variable "${w.name}" was set by a script but not saved to the local values: ` +
@@ -192,6 +197,12 @@ function assertNonNegativeInteger(name: string, value: number | undefined): void
       `Invalid value for ${name}: ${JSON.stringify(value)} (expected a whole number of milliseconds, 0 or more)`
     )
   }
+  if (value > MAX_TIMER_MS) {
+    throw new CliError(
+      EXIT.USAGE,
+      `Invalid value for ${name}: ${value} (the maximum is ${MAX_TIMER_MS} ms)`
+    )
+  }
 }
 
 function toForwardSlashes(p: string): string {
@@ -231,6 +242,11 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   // writes history when `--save-history` is set).
   const ws = workspace.openWorkspace(workspacePath)
 
+  // Workspace HTTP defaults (the `--insecure` override is applied below). Strict:
+  // an unparseable settings file stops the run (exit 4) instead of silently
+  // running with defaults — which would drop its TLS material and HTTP settings.
+  const workspaceSettings = await ws.settings.loadStrict()
+
   // REQ-0070: the key comes exclusively from FETCHPIER_WORKSPACE_KEY (CI-native,
   // mirrors SOPS_AGE_KEY), validated up front; the core asks for it lazily — a
   // request touching no secret needs none.
@@ -263,8 +279,6 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   // own `requests/` tree — the same from any directory (see `expandPaths`).
   const files = await expandPaths(options.paths, cwd, workspacePath)
 
-  // Workspace HTTP defaults, with the `--insecure` override applied for the run.
-  const workspaceSettings = await ws.settings.load()
   if (options.insecure) workspaceSettings.verifySsl = false
 
   const reporterConfigs: ReporterConfig[] = options.reporters?.length
@@ -356,6 +370,7 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
         scripts: {},
         tests: [],
         error: 'no request found in this file',
+        notRun: true,
         durationMs: 0
       }
       units.push(unit)
@@ -453,7 +468,7 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
       // Non-fatal advisories (REQ-0086 / REQ-0111 / REQ-0115 and the transport,
       // TLS and decoding ones): none moves the exit code. The structured payload
       // rides along for machine-readable reporters.
-      for (const w of result.warnings ?? []) {
+      for (const w of [...prepared.warnings, ...(result.warnings ?? [])]) {
         emit(reporters, (r) => r.warn(describeWarning(relPath, w), w))
       }
 
@@ -472,6 +487,11 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
         showSecrets: options.showSecrets ?? false,
         apiKey: apiKeyCredentialOf(request)
       })
+      // With a proxy configured, record whether this request used it — an
+      // exclusion (`NO_PROXY`) can send it direct.
+      if (proxyRouting.active) {
+        unit.via = proxyRouting.proxyFor(result.request?.url ?? resolved.url) ? 'proxy' : 'direct'
+      }
       units.push(unit)
 
       const hadScriptError =

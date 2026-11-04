@@ -399,6 +399,7 @@ function parseRequestBlock(block: string): HttpRequest | null {
   let auth: AuthConfig | undefined
   let rawSubtype: RawSubtype | undefined
   let binaryFile: BinaryFileAttachment | undefined
+  let invalidBinaryRef: string | undefined
   const disabledRows: DisabledRow[] = []
   const comments: string[] = []
   let normalizedOnLoad = false
@@ -408,6 +409,9 @@ function parseRequestBlock(block: string): HttpRequest | null {
       const originalName = ref.slice(66)
       binaryFile = { ref, originalName, sizeBytes: 0, mimeType: lookupMimeType(originalName) }
     } else {
+      // Recorded on the request so the engine refuses to send it: dropping the
+      // reference alone used to send the request with no body at all.
+      invalidBinaryRef = ref
       parseWarning(`ignoring invalid # @binary-file: ref "${ref}" (expected <64-hex>__<name>)`)
     }
   }
@@ -609,7 +613,8 @@ function parseRequestBlock(block: string): HttpRequest | null {
     rawSubtype,
     bodyType: multipartParts ? 'multipart-form' : binaryFile ? 'binary' : undefined,
     binaryFile,
-    multipartParts
+    multipartParts,
+    ...(invalidBinaryRef !== undefined && !binaryFile ? { invalidBinaryRef } : {})
   }
 }
 

@@ -18,7 +18,12 @@
  * referenced secret must be decrypted or a secret-named write encrypted.
  */
 
-import type { EnvironmentChanges, EnvWriteNotPersistedWarning, HttpRequest } from '@shared/types'
+import type {
+  EnvironmentChanges,
+  EnvWriteNotPersistedWarning,
+  HttpRequest,
+  UndefinedEnvReferenceWarning
+} from '@shared/types'
 import type { Workspace } from '../workspace/handle'
 import {
   classifyLocalWrite,
@@ -56,6 +61,11 @@ export interface PreparedSend {
   masker?: SecretMasker
   /** Every name that is a secret in this environment (for masking script writes). */
   secretNames: string[]
+  /**
+   * Advisories about this send's variables, known before it goes out: a used
+   * variable whose value came from a `{{$env.NAME}}` no source defines.
+   */
+  warnings: UndefinedEnvReferenceWarning[]
   /** Decrypt the secrets a client-certificate passphrase references (lazy). */
   resolvePassphraseSecrets(names: string[]): Promise<Record<string, string>>
 }
@@ -98,10 +108,11 @@ export async function createVariableSession(
       sharedPlain[name] = value
     }
   }
-  const resolvedBase = await ws.dotenv.resolveReferences(
-    options.basePlainVariables ?? sharedPlain,
-    options.processEnv
-  )
+  const { values: resolvedBase, undefinedByVariable: envUndefined } =
+    await ws.dotenv.resolveReferencesDetailed(
+      options.basePlainVariables ?? sharedPlain,
+      options.processEnv
+    )
   const localPlain: Record<string, string> = {}
   for (const [name, value] of Object.entries(local.variables)) {
     if (classifyLocalWrite(name, shared) === 'plain') localPlain[name] = value
@@ -174,15 +185,31 @@ export async function createVariableSession(
         if (!isSecretName(name)) plain[name] = value
       }
 
-      const plaintextByName = await resolveSecretNames(collectReferencedVariableNames(request))
+      const referenced = collectReferencedVariableNames(request)
+      const plaintextByName = await resolveSecretNames(referenced)
       const masker =
         Object.keys(plaintextByName).length > 0
           ? createSecretMasker({ nonce: mintExecutionNonce(), plaintextByName })
           : undefined
 
+      // A variable the request uses whose value is still the one an undefined
+      // `{{$env.NAME}}` emptied — not replaced by a local value, an override or
+      // a script write. Variables the request does not use stay silent.
+      const warnings: UndefinedEnvReferenceWarning[] = []
+      for (const name of referenced) {
+        const missing = envUndefined[name]
+        if (!missing) continue
+        if (name in localPlain || name in (options.overrides ?? {}) || name in overlaySet) continue
+        if (overlayRemoved.has(name)) continue
+        for (const envName of missing) {
+          warnings.push({ code: 'UNDEFINED_ENV_REFERENCE', name, envName })
+        }
+      }
+
       return {
         request: { ...request, variables: { ...plain, ...(masker?.markerVariables ?? {}) } },
         ...(masker ? { masker } : {}),
+        warnings,
         secretNames,
         resolvePassphraseSecrets: async (names) => {
           if (names.length === 0 || !names.some(isSecretName)) return {}

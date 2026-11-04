@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseDotenv, readDotenv, resolveEnvReferences, MAX_DOTENV_BYTES } from './env-source'
+import {
+  parseDotenv,
+  readDotenv,
+  resolveEnvReferences,
+  resolveEnvReferencesDetailed,
+  MAX_DOTENV_BYTES
+} from './env-source'
 
 describe('parseDotenv', () => {
   it('parses bare KEY=VALUE pairs', () => {
@@ -270,5 +276,33 @@ describe('resolveEnvReferences', () => {
     const input = { x: '{{$env.K}}' }
     await resolveEnvReferences(input, { workspacePath: dir, processEnv: { K: 'v' } })
     expect(input).toEqual({ x: '{{$env.K}}' })
+  })
+})
+
+describe('resolveEnvReferencesDetailed (CLI hardening)', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'core-envref-detail-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('reports references no source defines, per variable, once each', async () => {
+    const { values, undefinedByVariable } = await resolveEnvReferencesDetailed(
+      { token: 'Bearer {{$env.MISSING}}{{$env.MISSING}}', ok: '{{$env.SET}}', plain: 'x' },
+      { workspacePath: dir, processEnv: { SET: 'v' } }
+    )
+    expect(values).toEqual({ token: 'Bearer ', ok: 'v', plain: 'x' })
+    expect(undefinedByVariable).toEqual({ token: ['MISSING'] })
+  })
+
+  it('a name defined empty — in .env or the process — is not undefined', async () => {
+    await fs.writeFile(join(dir, '.env'), 'FROM_FILE=\n', 'utf-8')
+    const { undefinedByVariable } = await resolveEnvReferencesDetailed(
+      { a: '{{$env.FROM_FILE}}', b: '{{$env.FROM_PROCESS}}' },
+      { workspacePath: dir, processEnv: { FROM_PROCESS: '' } }
+    )
+    expect(undefinedByVariable).toEqual({})
   })
 })

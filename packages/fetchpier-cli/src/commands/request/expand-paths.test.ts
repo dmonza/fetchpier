@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { CliError } from '../../errors'
@@ -117,6 +117,24 @@ describe('expandPaths — explicit paths', () => {
     expect(err.message).toBe('Path not found: requests/auth')
     expect(err.hints).toEqual([
       `Did you mean ${basename(ws)}/requests/auth? Paths are relative to the current directory.`
+    ])
+  })
+})
+
+describe('expandPaths — suggestion through a symlinked path (macOS temp dirs)', () => {
+  // On macOS the temp directory is a symlink (`/var` → `/private/var`): the
+  // process's cwd comes back in its real form while `--workspace` arrives in the
+  // linked form. The suggestion must not walk out through the root and back.
+  it('suggests the short cwd-relative path when the workspace is given through a link', async () => {
+    const link = join(root, 'linked-root')
+    symlinkSync(root, link, 'junction')
+    const linkedWorkspace = join(link, 'my-api')
+
+    const err = await rejection(expandPaths(['requests/a.http'], root, linkedWorkspace))
+
+    expect(err.exitCode).toBe(EXIT.PATH_NOT_FOUND)
+    expect(err.hints).toEqual([
+      'Did you mean my-api/requests/a.http? Paths are relative to the current directory.'
     ])
   })
 })

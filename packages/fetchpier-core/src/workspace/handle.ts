@@ -64,17 +64,24 @@ import {
   duplicateEnvironment,
   listEnvironmentFolders,
   listEnvironments,
+  listEnvironmentsWithErrors,
   renameEnvironment,
   resolveEnvFolder,
   readEnvFile,
   saveEnvironment,
-  writeEnvFile
+  writeEnvFile,
+  type UnreadableEnvironment
 } from './environments'
-import { readDotenv, resolveEnvReferences } from './env-source'
+import {
+  readDotenv,
+  resolveEnvReferences,
+  resolveEnvReferencesDetailed,
+  type ResolvedEnvReferences
+} from './env-source'
 import * as history from './history'
 import { resolveInsideWorkspace } from './safe-path'
 import { readManifest, secretsManifestPath, writeManifest } from './secrets-store'
-import { loadHttpSettings, updateHttpSettings } from './settings-store'
+import { loadHttpSettings, loadHttpSettingsStrict, updateHttpSettings } from './settings-store'
 import { collectRequestIds, readTree, requestsRootPath } from './tree'
 import {
   checkNameAvailable,
@@ -92,6 +99,8 @@ import {
 /** Workspace HTTP defaults (`.fetchpier/settings.json`). */
 export interface WorkspaceSettingsOps {
   load(): Promise<WorkspaceHttpSettings>
+  /** As `load`, but an existing unparseable file throws `WORKSPACE_INVALID` (CLI). */
+  loadStrict(): Promise<WorkspaceHttpSettings>
   update(partial: Partial<WorkspaceHttpSettings>): Promise<WorkspaceHttpSettings>
 }
 
@@ -120,6 +129,8 @@ export interface WorkspaceEnvironmentsOps {
   duplicate(sourceEnvironmentId: string, newName: string): Promise<Environment>
   /** Every environment with a readable config.json, each carrying its folder. */
   list(): Promise<Environment[]>
+  /** As `list`, also reporting folders whose `config.json` exists but cannot be read. */
+  listWithErrors(): Promise<{ environments: Environment[]; unreadable: UnreadableEnvironment[] }>
   /** Folder names under `environments/` (lightweight; no config read). */
   listFolders(): Promise<string[]>
   /** Remove an environment's whole folder (incl. `.state/`). */
@@ -190,6 +201,11 @@ export interface WorkspaceDotenvOps {
     variables: Record<string, string>,
     processEnv?: NodeJS.ProcessEnv
   ): Promise<Record<string, string>>
+  /** As `resolveReferences`, also reporting the references no source defines. */
+  resolveReferencesDetailed(
+    variables: Record<string, string>,
+    processEnv?: NodeJS.ProcessEnv
+  ): Promise<ResolvedEnvReferences>
 }
 
 /** Cookie jar, scoped per environment (`environments/<id>/.state/cookies.json`). */
@@ -257,6 +273,7 @@ export function openWorkspace(workspacePath: string): Workspace {
 
     settings: {
       load: () => loadHttpSettings(path),
+      loadStrict: () => loadHttpSettingsStrict(path),
       update: (partial) => updateHttpSettings(path, partial)
     },
 
@@ -270,6 +287,7 @@ export function openWorkspace(workspacePath: string): Workspace {
       duplicate: (sourceEnvironmentId, newName) =>
         duplicateEnvironment(path, sourceEnvironmentId, newName),
       list: () => listEnvironments(path),
+      listWithErrors: () => listEnvironmentsWithErrors(path),
       listFolders: () => listEnvironmentFolders(path),
       delete: (environmentId) => deleteEnvironment(path, environmentId),
       save: (env, baseline) => saveEnvironment(path, env, baseline),
@@ -322,6 +340,11 @@ export function openWorkspace(workspacePath: string): Workspace {
       read: () => readDotenv(path),
       resolveReferences: (variables, processEnv) =>
         resolveEnvReferences(
+          variables,
+          processEnv ? { workspacePath: path, processEnv } : { workspacePath: path }
+        ),
+      resolveReferencesDetailed: (variables, processEnv) =>
+        resolveEnvReferencesDetailed(
           variables,
           processEnv ? { workspacePath: path, processEnv } : { workspacePath: path }
         )

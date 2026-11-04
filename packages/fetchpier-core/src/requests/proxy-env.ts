@@ -31,7 +31,7 @@ export interface ProxyRouting {
    * the variables are set, the https one is described (the common CI case),
    * falling back to the http one.
    */
-  active?: { display: string; source: ProxySource }
+  active?: { display: string; source: ProxySource; noProxy?: string }
 }
 
 function readVar(env: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -121,13 +121,17 @@ export function resolveProxyRouting(input: ProxyRoutingInput): ProxyRouting {
     return isHttps ? httpsProxy : httpProxy
   }
 
-  const active: ProxyRouting['active'] = explicit
+  const chosen: ProxyRouting['active'] = explicit
     ? { display: explicit.url, source: '--proxy' }
     : httpsProxy
       ? { display: httpsProxy.url, source: 'HTTPS_PROXY' }
       : httpProxy
         ? { display: httpProxy.url, source: 'HTTP_PROXY' }
         : undefined
+  // The exclusion list is part of what the run will do: without it a
+  // description reads as if every request used the proxy.
+  const active: ProxyRouting['active'] =
+    chosen && noProxyList ? { ...chosen, noProxy: noProxyList } : chosen
 
   return { proxyFor, ...(active ? { active } : {}) }
 }

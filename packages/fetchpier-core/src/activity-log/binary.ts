@@ -108,6 +108,12 @@ export function detectBinaryBody(args: {
   body?: string | Uint8Array | null
   contentType?: string
   contentEncoding?: string
+  /**
+   * The body was decoded from its `Content-Encoding` (the response kept the
+   * header as received). A declared encoding then says nothing about the bytes
+   * in hand, so only the content type and the UTF-8 probe decide.
+   */
+  decoded?: boolean
 }): BinaryDecision {
   const ct = normalizeContentType(
     args.contentType ?? headerLookup(args.headers ?? {}, 'content-type')
@@ -117,7 +123,9 @@ export function detectBinaryBody(args: {
   const ce = (args.contentEncoding ?? headerLookup(args.headers ?? {}, 'content-encoding') ?? '')
     .trim()
     .toLowerCase()
-  if (ce && ce !== 'identity') return { isBinary: true, reason: 'content-encoding' }
+  if (!args.decoded && ce && ce !== 'identity') {
+    return { isBinary: true, reason: 'content-encoding' }
+  }
 
   if (args.body != null) {
     const bytes = bodyToBytes(args.body)

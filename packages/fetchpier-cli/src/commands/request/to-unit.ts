@@ -157,6 +157,7 @@ export function toRequestUnit(args: {
     // Only meaningful when nothing came back: a unit with a response is not a
     // failure to send, whatever else went wrong with it.
     ...(!result.response && result.error ? { error: result.error } : {}),
+    ...(!result.response && result.notSent ? { notRun: true as const } : {}),
     durationMs
   }
 }

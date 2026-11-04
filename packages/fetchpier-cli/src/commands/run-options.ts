@@ -8,6 +8,13 @@ import type { ReporterConfig, RunOptions, Verbosity } from '../types'
 export const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
+ * The largest delay the runtime's timers honour (2³¹ − 1 ms, ~24.8 days). A
+ * larger one is not an error for the runtime — it fires after 1 ms — so it is
+ * refused here instead of silently failing every request.
+ */
+export const MAX_TIMER_MS = 2_147_483_647
+
+/**
  * Attach every `fp run` flag to a commander command. Shared by the canonical
  * `fp request run` and the top-level `fp run` alias so they stay byte-identical.
  */
@@ -85,7 +92,14 @@ function parseNonNegativeInt(flag: string, raw: string | number | undefined): nu
       `Invalid value for ${flag}: ${JSON.stringify(text)} (expected a whole number of milliseconds, 0 or more)`
     )
   }
-  return Number(text)
+  const value = Number(text)
+  if (value > MAX_TIMER_MS) {
+    throw new CliError(
+      EXIT.USAGE,
+      `Invalid value for ${flag}: ${text} (the maximum is ${MAX_TIMER_MS} ms)`
+    )
+  }
+  return value
 }
 
 /** Shape of the options object commander hands to the run action. */

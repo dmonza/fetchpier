@@ -168,7 +168,7 @@ fp run --reporter-junit out.xml               # emit a JUnit report for CI
 fp env list                                   # list environments
 ```
 
-It is installed separately from the desktop app and supports CLI, JSON, JUnit, and HTML reports plus distinct exit codes per outcome for CI. It honours `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` (or `--proxy`), applies a 30 s per-request timeout by default, and redacts credentials and cookie values in its output. Full command and flag reference: [`packages/fetchpier-cli/README.md`](packages/fetchpier-cli/README.md).
+It is installed separately from the desktop app and supports CLI, JSON, JUnit, and HTML reports plus distinct exit codes per outcome for CI. It honours `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` (or `--proxy`), applies a 30 s per-request timeout by default, and redacts credentials and cookie values in its terminal output and reports. Full command and flag reference: [`packages/fetchpier-cli/README.md`](packages/fetchpier-cli/README.md).
 
 **`--persist-env` after a key rotation.** If a teammate rotated the workspace key and you pulled it, your machine's local values are still encrypted with the previous key until you open the workspace in the desktop app with the new key (it re-encrypts them). Until then, `fp run --persist-env`:
 

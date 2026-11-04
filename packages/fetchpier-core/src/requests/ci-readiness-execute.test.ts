@@ -253,7 +253,122 @@ describe('execute() — advisories instead of console lines', () => {
     )
     expect(result.response).toBeUndefined()
     expect(result.error).toBeTruthy()
+    // A send was attempted: not a "not run".
+    expect(result.notSent).toBeUndefined()
     expect(result.environmentChanges?.set.step).toBe('pre')
     expect(result.scriptResults?.preRequest?.logs[0].args).toEqual(['before send'])
+  })
+
+  it('a failed pre-request script is a refusal to send (notSent)', async () => {
+    const result = await execute(
+      {
+        method: 'GET',
+        url: 'http://127.0.0.1:1/never',
+        headers: {},
+        preRequestScript: 'throw new Error("stop")'
+      },
+      base
+    )
+    expect(result.notSent).toBe(true)
+  })
+})
+
+// ── Binary bodies are the engine's (CLI hardening) ────────────────────────────
+
+describe('execute() — binary bodies read from the workspace', () => {
+  const REF = `${'a'.repeat(64)}__payload.bin`
+  const BYTES = Buffer.from([0, 1, 2, 3, 254, 255, 10, 13, 9]) // 9 bytes, not UTF-8 text
+  let ws = ''
+
+  beforeAll(async () => {
+    ws = await fs.mkdtemp(join(tmpdir(), 'binary-exec-'))
+    await fs.mkdir(join(ws, 'requests', '.files'), { recursive: true })
+    await fs.writeFile(join(ws, 'requests', '.files', REF), BYTES)
+  })
+  afterAll(async () => {
+    await fs.rm(ws, { recursive: true, force: true })
+  })
+
+  const binaryRequest = (url: string, over: Partial<HttpRequest> = {}): HttpRequest => ({
+    method: 'POST',
+    url,
+    headers: {},
+    bodyType: 'binary',
+    binaryFile: {
+      ref: REF,
+      originalName: 'payload.bin',
+      sizeBytes: 0,
+      mimeType: 'application/octet-stream'
+    },
+    ...over
+  })
+
+  it('sends exactly the file bytes with the Content-Type of its type', async () => {
+    const endpoint = await server.forPost('/bin').thenReply(200, 'ok')
+    const result = await execute(binaryRequest(`${server.url}/bin`), {
+      ...base,
+      workspacePath: ws
+    })
+    expect(result.response?.status).toBe(200)
+    const [seen] = await endpoint.getSeenRequests()
+    expect(Buffer.from((await seen.body.getDecodedBuffer()) as Buffer)).toEqual(BYTES)
+    expect(seen.headers['content-type']).toBe('application/octet-stream')
+    expect(result.request?.headers['Content-Type']).toBe('application/octet-stream')
+  })
+
+  it('keeps a Content-Type the user set', async () => {
+    const endpoint = await server.forPost('/bin-ct').thenReply(200, 'ok')
+    await execute(
+      binaryRequest(`${server.url}/bin-ct`, { headers: { 'Content-Type': 'image/x-custom' } }),
+      { ...base, workspacePath: ws }
+    )
+    const [seen] = await endpoint.getSeenRequests()
+    expect(seen.headers['content-type']).toBe('image/x-custom')
+  })
+
+  it('a missing file is refused before anything goes out', async () => {
+    const endpoint = await server.forPost('/bin-missing').thenReply(200, 'ok')
+    const result = await execute(
+      binaryRequest(`${server.url}/bin-missing`, {
+        binaryFile: {
+          ref: `${'b'.repeat(64)}__gone.bin`,
+          originalName: 'gone.bin',
+          sizeBytes: 0,
+          mimeType: 'application/octet-stream'
+        }
+      }),
+      { ...base, workspacePath: ws }
+    )
+    expect(result.response).toBeUndefined()
+    expect(result.notSent).toBe(true)
+    expect(result.error).toBe('binary file not found: gone.bin')
+    expect(await endpoint.getSeenRequests()).toHaveLength(0)
+  })
+
+  it('an invalid reference is refused, never sent bodiless', async () => {
+    const endpoint = await server.forPost('/bin-invalid').thenReply(200, 'ok')
+    const result = await execute(
+      {
+        method: 'POST',
+        url: `${server.url}/bin-invalid`,
+        headers: {},
+        invalidBinaryRef: 'not-a-ref'
+      },
+      { ...base, workspacePath: ws }
+    )
+    expect(result.notSent).toBe(true)
+    expect(result.error).toBe('invalid binary file reference: not-a-ref')
+    expect(await endpoint.getSeenRequests()).toHaveLength(0)
+  })
+
+  it('bytes supplied by the adapter still win', async () => {
+    const endpoint = await server.forPost('/bin-supplied').thenReply(200, 'ok')
+    await execute(binaryRequest(`${server.url}/bin-supplied`), {
+      ...base,
+      workspacePath: ws,
+      binaryBody: Buffer.from('xyz')
+    })
+    const [seen] = await endpoint.getSeenRequests()
+    expect(await seen.body.getText()).toBe('xyz')
   })
 })

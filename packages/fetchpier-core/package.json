@@ -1,6 +1,6 @@
 {
   "name": "@fetchpier/core",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Fetchpier business layer — Node-only, Electron-free. Consumed by the desktop app and the future CLI.",
   "private": true,
   "author": "Daniel Monza",

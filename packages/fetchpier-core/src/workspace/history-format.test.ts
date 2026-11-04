@@ -247,3 +247,33 @@ describe('historyEntryToActivityLog — request body faithfulness', () => {
     expect(file.requestRaw).not.toContain('{{who}}')
   })
 })
+
+describe('historyEntryToActivityLog — decoded compressed responses (CLI hardening)', () => {
+  const compressed = (decodingStatus?: 'decoded' | 'unsupported') =>
+    baseEntry({
+      response: {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+        body: '{"items":[1,2,3]}',
+        timingMs: 1,
+        sizeBytes: 17,
+        ...(decodingStatus ? { decodingStatus } : {})
+      }
+    })
+
+  it('records a decoded gzip JSON response as its text', () => {
+    const file = historyEntryToActivityLog(compressed('decoded'))
+    expect(file.responseRaw).toContain('{"items":[1,2,3]}')
+    expect(file.responseRaw).not.toContain('[binary body')
+    // The header is kept as received.
+    expect(file.responseRaw).toMatch(/Content-Encoding: gzip/i)
+  })
+
+  it('still records an undecoded (or pre-decoding) compressed body as a binary placeholder', () => {
+    expect(historyEntryToActivityLog(compressed('unsupported')).responseRaw).toContain(
+      '[binary body'
+    )
+    expect(historyEntryToActivityLog(compressed()).responseRaw).toContain('[binary body')
+  })
+})

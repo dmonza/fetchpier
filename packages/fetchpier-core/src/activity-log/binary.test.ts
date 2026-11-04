@@ -66,6 +66,28 @@ describe('detectBinaryBody', () => {
     expect(decision2.isBinary).toBe(true)
   })
 
+  it('a decoded body is judged by its content, not by the kept Content-Encoding header', () => {
+    expect(
+      detectBinaryBody({
+        headers: { 'content-encoding': 'gzip' },
+        body: '{"ok":true}',
+        decoded: true
+      })
+    ).toEqual({ isBinary: false })
+    // Still binary by content type or by bytes.
+    expect(
+      detectBinaryBody({ contentType: 'image/png', contentEncoding: 'gzip', decoded: true })
+        .isBinary
+    ).toBe(true)
+    expect(
+      detectBinaryBody({
+        contentEncoding: 'br',
+        body: new Uint8Array([0xff, 0xfe, 0x00]),
+        decoded: true
+      }).reason
+    ).toBe('utf8-probe')
+  })
+
   it('Content-Type wins over Content-Encoding / UTF-8 probe (evaluation order)', () => {
     expect(detectBinaryBody({ contentType: 'application/pdf', body: '"json"' }).reason).toBe(
       'content-type'

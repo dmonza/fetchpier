@@ -352,8 +352,22 @@ export interface EnvWriteNotPersistedWarning {
   reason: 'KEY_MISSING' | 'LOCAL_KEY_MISMATCH'
 }
 
+/**
+ * A variable the request uses whose value came from a `{{$env.NAME}}` reference
+ * that neither `.env` nor the process environment defines — so it was sent empty.
+ * A name defined with an empty value is intended and produces none. Names only.
+ */
+export interface UndefinedEnvReferenceWarning {
+  code: 'UNDEFINED_ENV_REFERENCE'
+  /** The environment variable the request uses. */
+  name: string
+  /** The `$env` name it references (`API_TOKEN` for `{{$env.API_TOKEN}}`). */
+  envName: string
+}
+
 /** Non-fatal advisories a send can produce. Consumers switch on `code`. */
 export type ExecutionWarning =
+  | UndefinedEnvReferenceWarning
   | QueryDecodeWarning
   | UnresolvedVariableWarning
   | CookieRejectedWarning
@@ -788,6 +802,13 @@ export interface HttpRequest {
    * metadata region. Drives the modified-with-a-reason mark + advisory (D19/§6.9).
    */
   normalizedOnLoad?: boolean
+  /**
+   * Set by the parser when the file declares a `# @binary-file:` reference that
+   * does not have the expected `<64-hex>__<name>` shape. The reference is not
+   * loaded as a body, and the engine refuses to send the request — sending it
+   * bodiless would silently drop the file the author attached.
+   */
+  invalidBinaryRef?: string
   body?: string
   /** Form field pairs for x-www-form-urlencoded — resolved and URL-encoded in main process */
   formFields?: KeyValuePair[]
@@ -912,6 +933,14 @@ export interface ExecutedRequestResult {
   environmentChanges?: EnvironmentChanges
   /** Populated when the request could not be sent (e.g. pre-request script error). */
   error?: string
+  /**
+   * Set when the engine refused to send before anything went on the wire — a
+   * failed pre-request script, a multipart part that could not be encoded, a
+   * missing or invalid binary file. Absent when a send was attempted (even one
+   * that then failed in transport). Lets every surface say "not run" instead of
+   * "no response" without guessing.
+   */
+  notSent?: true
   /**
    * REQ-0070: contractual error code when the send failed a secret precondition
    * (`SECRETS_KEY_MISSING` / `SECRETS_VALUE_UNSET` / `SECRETS_VALUE_CORRUPT` /

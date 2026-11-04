@@ -419,3 +419,69 @@ describe('CliReporter — multi-request runs and verbosity', () => {
     expect(out).toContain('1KB (8KB decoded)')
   })
 })
+
+// ── CLI hardening: binary bodies, proxy visibility, engine-reported not-run ───
+
+describe('CliReporter — CLI hardening', () => {
+  const single = (u: RequestUnit, extra: Partial<RunMeta> = {}): string =>
+    render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1, ...extra },
+      [u],
+      summaryOf([u], 0, 1)
+    ).out
+
+  it('-vvv prints a binary response body as one placeholder line, never its bytes', () => {
+    const png = String.fromCharCode(0x89, 0x50, 0x4e, 0x47, 0, 0, 0xff)
+    const u: RequestUnit = {
+      ...okUnit,
+      response: { ...okUnit.response!, headers: { 'Content-Type': 'image/png' }, body: png }
+    }
+    const out = single(u, { verbosity: 3 })
+    expect(out).toMatch(/<binary body: \d+B, image\/png — use --reporter-json for the full body>/)
+    expect(out).not.toContain('PNG')
+  })
+
+  it('-vvv prints a decoded compressed text body as text despite its Content-Encoding header', () => {
+    const u: RequestUnit = {
+      ...okUnit,
+      response: {
+        ...okUnit.response!,
+        headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+        body: '{"decoded":true}',
+        decodingStatus: 'decoded'
+      }
+    }
+    expect(single(u, { verbosity: 3 })).toContain('{"decoded":true}')
+  })
+
+  it('the proxy header names the NO_PROXY list', () => {
+    const out = single(okUnit, {
+      proxy: { display: 'http://proxy:3128', source: 'HTTPS_PROXY', noProxy: '.internal.test' }
+    })
+    expect(out).toContain('Proxy: http://proxy:3128 (from HTTPS_PROXY; NO_PROXY: .internal.test)')
+  })
+
+  it('-v states via proxy or direct per request; the default level does not', () => {
+    const viaProxy: RequestUnit = { ...okUnit, via: 'proxy' }
+    const direct: RequestUnit = { ...okUnit, path: 'b.http', via: 'direct' }
+    const verbose = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 2, verbosity: 1 },
+      [viaProxy, direct],
+      summaryOf([viaProxy, direct], 0, 1)
+    ).out
+    expect(verbose).toContain('(via proxy)')
+    expect(verbose).toContain('(direct)')
+    expect(single(viaProxy)).not.toContain('(via proxy)')
+  })
+
+  it('a unit the engine marked notRun reads "not run" (e.g. a missing binary file)', () => {
+    const u: RequestUnit = {
+      ...okUnit,
+      response: undefined,
+      tests: [],
+      error: 'binary file not found: photo.png',
+      notRun: true
+    }
+    expect(single(u)).toContain('not run: binary file not found: photo.png')
+  })
+})

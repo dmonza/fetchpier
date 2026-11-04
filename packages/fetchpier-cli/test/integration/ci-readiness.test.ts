@@ -19,6 +19,7 @@ import { gzipSync } from 'node:zlib'
 import { getLocal, type Mockttp } from 'mockttp'
 import { secrets } from '@fetchpier/core'
 import { executeRun } from '../../src/commands/request/run'
+import { listCommand } from '../../src/commands/env/list'
 import { CLI_VERSION } from '../../src/version'
 import type { RunOptions, RunSummary } from '../../src/types'
 
@@ -525,5 +526,150 @@ describe('CLI readiness — signals and output', () => {
     expect(summary.units[0].response?.decodingStatus).toBe('unsupported')
     expect(err).toContain('unsupported content encoding (zstd)')
     expect(summary.units[0].tests[0].error).toMatch(/could not be decoded \(zstd/)
+  })
+})
+
+// ── CLI hardening (CLI-113 … CLI-118) ─────────────────────────────────────────
+
+describe('CLI hardening — binary bodies', () => {
+  const REF = `${'c'.repeat(64)}__payload.bin`
+  const NINE_BYTES = Buffer.from([0x00, 0x01, 0x02, 0xfe, 0xff, 0x0a, 0x0d, 0x09, 0x7f])
+
+  const withStagedFile = (files: Record<string, string>): string => {
+    const ws = workspaceWith(files)
+    mkdirSync(join(ws, 'requests', '.files'), { recursive: true })
+    writeFileSync(join(ws, 'requests', '.files', REF), NINE_BYTES)
+    return ws
+  }
+
+  // CLI-113
+  it('sends the staged file intact, with the Content-Type of its type or the one the user set', async () => {
+    const upload = await server.forPost('/upload').thenReply(200, 'ok')
+    const typed = await server.forPost('/upload-typed').thenReply(200, 'ok')
+    const ws = withStagedFile({
+      '1.http': `# @binary-file: ${REF}\nPOST {{baseUrl}}/upload\n`,
+      '2.http': `# @binary-file: ${REF}\nPOST {{baseUrl}}/upload-typed\nContent-Type: application/x-custom\n`
+    })
+
+    const { summary } = await run(ws)
+
+    expect(summary.summary.requests.failed).toBe(0)
+    const [seen] = await upload.getSeenRequests()
+    expect(Buffer.from(seen.body.buffer)).toEqual(NINE_BYTES)
+    expect(seen.headers['content-type']).toBe('application/octet-stream')
+    const [seenTyped] = await typed.getSeenRequests()
+    expect(Buffer.from(seenTyped.body.buffer)).toEqual(NINE_BYTES)
+    expect(seenTyped.headers['content-type']).toBe('application/x-custom')
+  })
+
+  // CLI-114
+  it('a missing file or an invalid reference is "not run", the next request runs, and the run fails', async () => {
+    const gone = await server.forPost('/gone').thenReply(200, 'ok')
+    const bad = await server.forPost('/bad-ref').thenReply(200, 'ok')
+    const after = await server.forGet('/after').thenReply(200, 'ok')
+    const ws = withStagedFile({
+      '1-gone.http': `# @binary-file: ${'d'.repeat(64)}__deleted.bin\nPOST {{baseUrl}}/gone\n`,
+      '2-bad.http': '# @binary-file: not-a-reference\nPOST {{baseUrl}}/bad-ref\n',
+      '3-after.http': 'GET {{baseUrl}}/after\n'
+    })
+
+    const { summary, out, err } = await run(ws)
+
+    expect(await gone.getSeenRequests()).toHaveLength(0)
+    expect(await bad.getSeenRequests()).toHaveLength(0)
+    expect(await after.getSeenRequests()).toHaveLength(1)
+    expect(summary.summary.requests.failed).toBe(2)
+    expect(summary.units[0]).toMatchObject({
+      notRun: true,
+      error: 'binary file not found: deleted.bin'
+    })
+    expect(summary.units[1]).toMatchObject({
+      notRun: true,
+      error: 'invalid binary file reference: not-a-reference'
+    })
+    expect(out).toContain('not run: binary file not found: deleted.bin')
+    expect(err).toContain('invalid # @binary-file')
+  })
+})
+
+describe('CLI hardening — signals and output', () => {
+  // CLI-115
+  it('a used variable from an undefined {{$env.*}} is a warning (terminal + JSON), and only for that request', async () => {
+    await server.forGet('/uses').thenReply(200, 'ok')
+    await server.forGet('/ignores').thenReply(200, 'ok')
+    const ws = workspaceWith(
+      {
+        '1-uses.http': 'GET {{baseUrl}}/uses\nAuthorization: Bearer {{token}}\n',
+        '2-ignores.http': 'GET {{baseUrl}}/ignores\n'
+      },
+      { token: '{{$env.CI_MISSING_TOKEN}}' }
+    )
+    const json = join(ws, 'r.json')
+
+    const { summary, err } = await run(ws, {
+      reporters: [{ type: 'cli' }, { type: 'json', output: json }]
+    })
+
+    expect(summary.summary.requests.failed).toBe(0)
+    expect(err).toContain(
+      'Warning: requests/1-uses.http: variable "token" comes from {{$env.CI_MISSING_TOKEN}}'
+    )
+    expect(err).not.toContain('2-ignores.http: variable')
+    const warnings = JSON.parse(readFileSync(json, 'utf-8')).warnings
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        detail: { code: 'UNDEFINED_ENV_REFERENCE', name: 'token', envName: 'CI_MISSING_TOKEN' }
+      })
+    )
+  })
+
+  // CLI-116
+  it('fp env list warns about an environment whose config.json cannot be read', async () => {
+    const ws = workspaceWith({})
+    mkdirSync(join(ws, 'environments', 'broken'), { recursive: true })
+    writeFileSync(join(ws, 'environments', 'broken', 'config.json'), '{ not json')
+    let out = ''
+    let err = ''
+    await listCommand(
+      { workspace: ws },
+      { env: {}, cwd: ws, write: (s) => (out += s), writeErr: (s) => (err += s) }
+    )
+    expect(out).toBe('default\n')
+    expect(err).toContain('Warning: environment "broken" could not be read:')
+  })
+
+  // CLI-117
+  it('the proxy header names NO_PROXY, and -v says via proxy or direct per request', async () => {
+    await server.forGet('http://api.ci-proxy.test/through').thenReply(200, 'proxied')
+    await server.forGet('/direct').thenReply(200, 'direct')
+    const ws = workspaceWith({
+      '1.http': 'GET http://api.ci-proxy.test/through\n',
+      '2.http': 'GET {{baseUrl}}/direct\n'
+    })
+    const proxyUrl = server.url.replace('localhost', '127.0.0.1')
+
+    const { out, summary } = await run(
+      ws,
+      { verbosity: 1 },
+      { HTTP_PROXY: proxyUrl, NO_PROXY: 'localhost' }
+    )
+
+    expect(summary.summary.requests.failed).toBe(0)
+    expect(out).toContain('(from HTTP_PROXY; NO_PROXY: localhost)')
+    expect(out).toMatch(/through \(via proxy\)/)
+    expect(out).toMatch(/direct \(direct\)/)
+    expect(summary.units.map((u) => u.via)).toEqual(['proxy', 'direct'])
+  })
+
+  // CLI-118
+  it('-vvv shows a binary response as one placeholder line', async () => {
+    await server
+      .forGet('/image')
+      .thenReply(200, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]), {
+        'content-type': 'image/png'
+      })
+    const ws = workspaceWith({ 'img.http': 'GET {{baseUrl}}/image\n' })
+    const { out } = await run(ws, { verbosity: 3 })
+    expect(out).toMatch(/<binary body: \d+B, image\/png — use --reporter-json for the full body>/)
   })
 })

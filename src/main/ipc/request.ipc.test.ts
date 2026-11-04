@@ -82,6 +82,7 @@ const createVariableSession = vi.hoisted(() =>
       prepare: async (request: HttpRequest) => ({
         request: { ...request, variables },
         secretNames: sessionState.secretNames,
+        warnings: [],
         resolvePassphraseSecrets: async () => ({})
       }),
       apply: async (changes: unknown) => {
@@ -213,6 +214,30 @@ describe('http:send — the reported reason is never derived locally', () => {
     await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-agg-2')
 
     expect(await ipcHandlers.get('http:cancel')!({}, 'exec-agg-2')).toBe(false)
+  })
+})
+
+describe('http:send — binary bodies are the engine’s (CLI hardening, CA-06)', () => {
+  it('does not read the staged file itself; the engine gets the workspace path and no bytes', async () => {
+    const binaryRequest: HttpRequest = {
+      method: 'POST',
+      url: 'https://example.com/upload',
+      headers: {},
+      bodyType: 'binary',
+      binaryFile: {
+        ref: `${'a'.repeat(64)}__photo.png`,
+        originalName: 'photo.png',
+        sizeBytes: 0,
+        mimeType: 'image/png'
+      }
+    }
+    await ipcHandlers.get('http:send')!({}, binaryRequest, 'exec-bin')
+    const options = executeMock.mock.calls[0][1] as Record<string, unknown>
+    expect(options.workspacePath).toBe('/fake/workspace')
+    expect(options).not.toHaveProperty('binaryBody')
+    const sent = executeMock.mock.calls[0][0] as HttpRequest
+    // No Content-Type added here either — the engine derives it.
+    expect(sent.headers).toEqual({})
   })
 })
 

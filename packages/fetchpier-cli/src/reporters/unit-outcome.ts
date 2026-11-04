@@ -1,16 +1,19 @@
 import type { RequestUnit } from '../types'
 
 /**
- * Whether a response-less unit never attempted a send: a file that holds no
- * request (it has no method) or a pre-request script that aborted. Everything
- * else without a response — unreachable host, TLS failure, timeout, proxy
- * failure, interrupt in flight — was attempted and is labelled "no response".
- * Derived here, once, so every reporter labels a unit the same way without the
- * JSON contract growing a field.
+ * Whether a response-less unit never attempted a send. The engine says so
+ * (`RequestUnit.notRun`, from its `notSent`): a failed pre-request script, a
+ * multipart part or binary file that could not be read. A file holding no
+ * request (no method) is not run either. Everything else without a response —
+ * unreachable host, TLS failure, timeout, proxy failure, interrupt in flight —
+ * was attempted and is labelled "no response". Decided here, once, so every
+ * reporter labels a unit the same way.
  */
 export function notRun(unit: RequestUnit): boolean {
   if (unit.response) return false
-  if (unit.request.method === '') return true
+  if (unit.notRun || unit.request.method === '') return true
+  // Units built by an older engine carry no flag; a failed pre-request script
+  // still means nothing was sent.
   return (unit.scripts.preRequest?.errors.length ?? 0) > 0
 }
 

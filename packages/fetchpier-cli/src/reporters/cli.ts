@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import type { ChalkInstance } from 'chalk'
+import { activityLog } from '@fetchpier/core'
 import type { RequestUnit, RunSummary, Verbosity } from '../types'
 import { formatDuration, formatSize, truncateBody } from '../output/formatters'
 import type { GlyphSet } from '../output/glyphs'
@@ -74,7 +75,12 @@ export class CliReporter implements Reporter {
     this.line(`Workspace: ${abbreviateHome(meta.workspace)}`)
     // The folder name is what `--env` accepts; the opaque id says nothing.
     this.line(`Environment: ${meta.environmentName}`)
-    if (meta.proxy) this.line(`Proxy: ${meta.proxy.display} (from ${meta.proxy.source})`)
+    if (meta.proxy) {
+      // The exclusion list is part of the configuration: without it the line
+      // reads as if every request used the proxy. Per-request truth is `-v`.
+      const exclusions = meta.proxy.noProxy ? `; NO_PROXY: ${meta.proxy.noProxy}` : ''
+      this.line(`Proxy: ${meta.proxy.display} (from ${meta.proxy.source}${exclusions})`)
+    }
     this.line()
   }
 
@@ -101,7 +107,9 @@ export class CliReporter implements Reporter {
   private printSingleBlock(unit: RequestUnit): void {
     this.printScriptSection('pre-request script', unit.scripts.preRequest, '  ')
 
-    this.line(`  ${this.g.arrowOut} ${unit.request.method} ${unit.request.url}`)
+    this.line(
+      `  ${this.g.arrowOut} ${unit.request.method} ${unit.request.url}${this.viaText(unit)}`
+    )
     this.printRequestDetails(unit, '    ')
     if (unit.response) {
       this.line(`  ${this.g.arrowIn} ${this.responseLine(unit.response)}`)
@@ -171,7 +179,7 @@ export class CliReporter implements Reporter {
   private printRequestDetails(unit: RequestUnit, indent: string): void {
     if (this.verbosity >= 2) this.printHeaders(unit.request.headers, indent)
     if (this.verbosity >= 3 && unit.request.body !== undefined && unit.request.body !== '') {
-      this.printBody(unit.request.body, indent)
+      this.printBody(unit.request.body, unit.request.headers, false, indent)
     }
   }
 
@@ -179,7 +187,12 @@ export class CliReporter implements Reporter {
     if (!unit.response) return
     if (this.verbosity >= 2) this.printHeaders(unit.response.headers, indent)
     if (this.verbosity >= 3 && unit.response.body !== '') {
-      this.printBody(unit.response.body, indent)
+      this.printBody(
+        unit.response.body,
+        unit.response.headers,
+        unit.response.decodingStatus === 'decoded',
+        indent
+      )
     }
   }
 
@@ -187,7 +200,23 @@ export class CliReporter implements Reporter {
     for (const [k, v] of Object.entries(headers)) this.line(`${indent}${k}: ${v}`)
   }
 
-  private printBody(body: string, indent: string): void {
+  private printBody(
+    body: string,
+    headers: Record<string, string>,
+    decoded: boolean,
+    indent: string
+  ): void {
+    // Binary is never dumped to the terminal (the activity log's rule, with a
+    // decoded body judged by its content): one line saying what it is instead.
+    if (activityLog.detectBinaryBody({ headers, body, decoded }).isBinary) {
+      const type =
+        Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] ??
+        'application/octet-stream'
+      this.line(
+        `${indent}<binary body: ${formatSize(Buffer.byteLength(body, 'utf-8'))}, ${type} — use --reporter-json for the full body>`
+      )
+      return
+    }
     const { text, truncated, totalBytes } = truncateBody(body)
     this.line(`${indent}`)
     for (const l of text.split('\n')) this.line(`${indent}${l}`)
@@ -202,7 +231,9 @@ export class CliReporter implements Reporter {
 
   private printCompact(unit: RequestUnit): void {
     const target = this.verbosity >= 1 ? unit.request.url : urlPath(unit.request.url)
-    const label = `${this.g.bullet} ${unit.request.method} ${target}`.padEnd(COMPACT_LABEL_WIDTH)
+    const label = `${this.g.bullet} ${unit.request.method} ${target}${this.viaText(unit)}`.padEnd(
+      COMPACT_LABEL_WIDTH
+    )
 
     if (!unit.response) {
       const errCount = this.scriptErrorCount(unit)
@@ -320,6 +351,12 @@ export class CliReporter implements Reporter {
    * timeout, proxy, interrupt); `not run: <reason>` when none was (a file with
    * no request, a pre-request script that aborted).
    */
+  /** ` (via proxy)` / ` (direct)` at `-v` and above, when the run has a proxy. */
+  private viaText(unit: RequestUnit): string {
+    if (this.verbosity < 1 || !unit.via) return ''
+    return unit.via === 'proxy' ? ' (via proxy)' : ' (direct)'
+  }
+
   private noResponseText(unit: RequestUnit): string {
     const label = notRun(unit) ? 'not run' : 'no response'
     return `${label}${unit.error ? `: ${unit.error}` : ''}`

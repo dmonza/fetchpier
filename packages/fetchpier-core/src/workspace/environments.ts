@@ -5,6 +5,7 @@ import type { Environment } from '@shared/types'
 import { isReservedVariableName } from '@shared/lib/dynamic-variables'
 import { deriveEnvFolderName } from '@shared/lib/env-folder-name'
 import { CoreError } from '../shared/context'
+import { describeError } from '../shared/describe-error'
 import { isEncryptedValue } from '../secrets/crypto'
 import { assertSafeIdentifier, resolveInsideWorkspace } from './safe-path'
 import { atomicWriteFile } from './atomic-write'
@@ -329,12 +330,37 @@ export async function listEnvironmentFolders(workspacePath: string): Promise<str
  * swallowed and the folder name is still what the caller sees.
  */
 export async function listEnvironments(workspacePath: string): Promise<Environment[]> {
+  return (await listEnvironmentsWithErrors(workspacePath)).environments
+}
+
+/** An environment folder whose `config.json` exists but cannot be read or parsed. */
+export interface UnreadableEnvironment {
+  folder: string
+  /** Absolute path of the unreadable `config.json`. */
+  file: string
+  reason: string
+}
+
+/**
+ * {@link listEnvironments}, also reporting the folders whose `config.json`
+ * exists but cannot be read — so a caller can say "could not be read" instead of
+ * letting the environment look absent. A folder with no `config.json` at all is
+ * not an environment and is not reported. Same repair rule as the plain listing.
+ */
+export async function listEnvironmentsWithErrors(
+  workspacePath: string
+): Promise<{ environments: Environment[]; unreadable: UnreadableEnvironment[] }> {
   const envs: Environment[] = []
+  const unreadable: UnreadableEnvironment[] = []
   for (const folder of await readEnvFolderNames(workspacePath)) {
     let env: Environment
+    const file = envConfigPath(workspacePath, folder)
     try {
-      env = await readEnvFile(envConfigPath(workspacePath, folder))
-    } catch {
+      env = await readEnvFile(file)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        unreadable.push({ folder, file, reason: describeError(err) })
+      }
       continue // Skip folders without a readable config.json.
     }
     // Compare case-insensitively and repair to the folder verbatim: the
@@ -346,7 +372,7 @@ export async function listEnvironments(workspacePath: string): Promise<Environme
     }
     envs.push(env)
   }
-  return envs
+  return { environments: envs, unreadable }
 }
 
 /**

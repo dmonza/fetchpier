@@ -62,6 +62,8 @@ X-Tag: one
     expect(parsed.requests[0].binaryFile).toBeUndefined()
     expect(parsed.requests[0].bodyType).toBeUndefined()
     expect(parsed.warnings?.[0]).toContain('invalid # @binary-file')
+    // Carried on the request so the engine refuses to send it bodiless.
+    expect(parsed.requests[0].invalidBinaryRef).toBe('not-a-valid-ref')
     expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
   })

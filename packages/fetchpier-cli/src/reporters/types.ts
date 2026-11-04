@@ -22,7 +22,7 @@ export interface RunMeta {
   /** The environment's folder name — the readable handle (`--env`). */
   environmentName: string
   /** The proxy in effect for the run, described without credentials. */
-  proxy?: { display: string; source: string }
+  proxy?: { display: string; source: string; noProxy?: string }
   cliVersion: string
   /** ISO timestamp. */
   startedAt: string
