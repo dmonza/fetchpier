@@ -159,11 +159,13 @@ Fetchpier has a companion CLI, **`fp`**, for running requests and inspecting env
 ```bash
 npm install -g @fetchpier/cli
 
-fp run auth/login.http                 # run a request
-fp run ./tests --env staging           # run a folder against an environment
-fp run ./tests --reporter-junit out.xml  # emit a JUnit report for CI
-fp env list                            # list environments
-fp init my-api                         # scaffold a new workspace
+fp init my-api                                # scaffold a new workspace
+cd my-api
+fp run                                        # run every request under requests/
+fp run requests/auth/login.http               # run one request
+fp run requests/auth --env staging            # run a folder against an environment
+fp run --reporter-junit out.xml               # emit a JUnit report for CI
+fp env list                                   # list environments
 ```
 
 It is installed separately from the desktop app and supports CLI, JSON, JUnit, and HTML reports plus distinct exit codes per outcome for CI. Full command and flag reference: [`packages/fetchpier-cli/README.md`](packages/fetchpier-cli/README.md).

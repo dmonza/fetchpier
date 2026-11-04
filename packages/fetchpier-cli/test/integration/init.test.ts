@@ -1,5 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { spawn } from 'node:child_process'
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -8,7 +10,9 @@ import {
   promises as fs
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { getLocal, type Mockttp } from 'mockttp'
 import { initWorkspace } from '../../src/commands/init'
 import { CliError } from '../../src/errors'
 import { EXIT } from '../../src/exit-codes'
@@ -86,6 +90,20 @@ describe('fp init', () => {
     )
   })
 
+  // CLI-014 (hint variants): the follow-up command is one line that works from
+  // the directory `init` ran in.
+  it.each([
+    ['my-api', 'fp run --workspace my-api'],
+    ['my api', 'fp run --workspace "my api"'],
+    [undefined, 'fp run']
+  ])('hints a runnable next command for name %s', async (name, expected) => {
+    const cwd = name ? tmp : join(tmp, 'here')
+    if (!name) mkdirSync(cwd)
+    let out = ''
+    await initWorkspace({ name, cwd, write: (s) => (out += s) })
+    expect(out).toContain(`\n  Next: ${expected}\n`)
+  })
+
   it('uses the graphql starter when asked', async () => {
     const created = await initWorkspace({
       name: 'gql',
@@ -122,4 +140,59 @@ describe('fp init', () => {
     )
     expect(env.variables.baseUrl).toBe('https://example.com')
   })
+})
+
+// CLI-096 — the hint `fp init` prints, run verbatim through a shell from the
+// directory `init` ran in, executes the starter request. The seeded base URL is
+// re-pointed at a local mock (the hint itself is never edited). Spawned
+// asynchronously: the mock lives in this process, so `spawnSync` would deadlock.
+describe('fp init hint through the binary (CLI-096)', () => {
+  const BIN = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist/fp.js')
+  let server: Mockttp
+  let tmp: string
+
+  beforeAll(async () => {
+    if (!existsSync(BIN)) throw new Error(`[cli] CLI bundle missing: ${BIN}`)
+    server = getLocal()
+    await server.start()
+  })
+  afterAll(async () => {
+    await server.stop()
+  })
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'fp-init-hint-'))
+  })
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  function sh(command: string, cwd: string): Promise<{ status: number; output: string }> {
+    return new Promise((resolvePromise, reject) => {
+      const child = spawn(command, { cwd, shell: true })
+      let output = ''
+      child.stdout.on('data', (c: Buffer) => (output += c.toString('utf-8')))
+      child.stderr.on('data', (c: Buffer) => (output += c.toString('utf-8')))
+      child.on('error', reject)
+      child.on('close', (status) => resolvePromise({ status: status ?? -1, output }))
+    })
+  }
+
+  it('prints a next command that runs the starter request as written', async () => {
+    const health = await server.forGet('/health').thenReply(200, 'ok')
+    const fpCmd = `"${process.execPath}" "${BIN}"`
+
+    const init = await sh(`${fpCmd} init my-api`, tmp)
+    expect(init.status).toBe(0)
+    const hint = /Next: (.+)$/m.exec(init.output)?.[1]?.trim()
+    expect(hint).toMatch(/^fp /)
+
+    const envFile = join(tmp, 'my-api', 'environments', 'default', 'config.json')
+    const env = JSON.parse(readFileSync(envFile, 'utf-8'))
+    env.variables.baseUrl = server.url
+    writeFileSync(envFile, JSON.stringify(env))
+
+    const run = await sh(`${fpCmd}${hint!.slice('fp'.length)}`, tmp)
+    expect(run.status, run.output).toBe(0)
+    expect(await health.getSeenRequests()).toHaveLength(1)
+  }, 60000)
 })

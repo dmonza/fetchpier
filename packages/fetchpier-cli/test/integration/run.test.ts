@@ -228,6 +228,62 @@ describe('executeRun (integration)', () => {
     const summary = await executeRun({ paths: ['requests'], workspace: ws, bail: true }, deps(ws))
     expect(summary.summary.requests.total).toBe(1)
   })
+
+  // CLI-009 (unsent variant): a request with no response is a failure for bail
+  // too — the same rule the summary and the exit code already apply.
+  it('stops after a request that could not be sent with bail', async () => {
+    const port = await closedPort()
+    const ws = makeWorkspace(
+      { 'a.http': 'GET {{deadUrl}}/users\n', 'b.http': 'GET {{baseUrl}}/users\n' },
+      { deadUrl: `http://127.0.0.1:${port}` }
+    )
+    const summary = await executeRun({ paths: ['requests'], workspace: ws, bail: true }, deps(ws))
+    expect(summary.summary.requests).toEqual({ total: 1, passed: 0, failed: 1 })
+    expect(summary.units[0].path).toBe('requests/a.http')
+  })
+})
+
+// CLI-095 — the no-path default is the workspace's `requests/` tree, from any
+// current directory and any workspace resolution source. Every other spec in
+// this file runs with cwd = workspace root, which is exactly why this gap went
+// unnoticed.
+describe('executeRun — no-path default from any directory (CLI-095)', () => {
+  const FILES = {
+    'list.http': 'GET {{baseUrl}}/users\n',
+    'auth/login.http': 'GET {{baseUrl}}/users\n'
+  }
+  const ran = (paths: string[]): string[] => [...paths].sort()
+
+  it('runs the whole requests/ tree from a workspace subfolder (discovery)', async () => {
+    const ws = makeWorkspace(FILES)
+    const summary = await executeRun(
+      { paths: [] },
+      { reporterContext: silentCtx, cwd: join(ws, 'requests', 'auth'), env: {} }
+    )
+    expect(summary.workspace).toBe(ws)
+    expect(ran(summary.units.map((u) => u.path))).toEqual([
+      'requests/auth/login.http',
+      'requests/list.http'
+    ])
+  })
+
+  it('runs the whole requests/ tree from outside with the workspace option', async () => {
+    const ws = makeWorkspace(FILES)
+    const summary = await executeRun(
+      { paths: [], workspace: ws },
+      { reporterContext: silentCtx, cwd: tmpdir(), env: {} }
+    )
+    expect(summary.summary.requests).toEqual({ total: 2, passed: 2, failed: 0 })
+  })
+
+  it('runs the whole requests/ tree from outside with the workspace environment variable', async () => {
+    const ws = makeWorkspace(FILES)
+    const summary = await executeRun(
+      { paths: [] },
+      { reporterContext: silentCtx, cwd: tmpdir(), env: { FETCHPIER_WORKSPACE: ws } }
+    )
+    expect(summary.summary.requests).toEqual({ total: 2, passed: 2, failed: 0 })
+  })
 })
 
 // REQ-0111 — a request that cannot be sent is a run outcome, not a fatal

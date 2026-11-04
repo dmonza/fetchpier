@@ -1,4 +1,6 @@
+import { resolve } from 'node:path'
 import { defineConfig } from 'tsup'
+import { bundledLicensesPlugin } from './tooling/bundled-licenses'
 
 export default defineConfig((options) => ({
   // Dual entry: the `fp` binary (gets the shebang from src/fp.ts) and the
@@ -43,6 +45,15 @@ export default defineConfig((options) => ({
   // workspace key" rather than as a missing module.
   external: ['undici', 'fast-xml-parser', 'mime'],
   noExternal: ['commander', 'chalk', '@fetchpier/core'],
+  // Inlining third-party code obliges us to ship its license notices. Written
+  // to dist/ on every build from the exact bundled inputs, so the tarball
+  // (`files: ["dist", …]`) always carries them — see tooling/bundled-licenses.ts.
+  esbuildPlugins: [
+    bundledLicensesPlugin({
+      outFile: resolve('dist', 'THIRD_PARTY_LICENSES.txt'),
+      packageName: '@fetchpier/cli'
+    })
+  ],
   tsconfig: './tsconfig.json',
   banner: {
     js: '/*! Fetchpier — Copyright (c) 2026 Daniel Monza — MIT — https://fetchpier.com */'

@@ -23,5 +23,5 @@
       "@fetchpier/core/runtime-dynamic-deps": ["../fetchpier-core/src/runtime-dynamic-deps.ts"]
     }
   },
-  "include": ["src/**/*", "test/**/*", "tsup.config.ts"]
+  "include": ["src/**/*", "test/**/*", "tooling/**/*", "tsup.config.ts"]
 }

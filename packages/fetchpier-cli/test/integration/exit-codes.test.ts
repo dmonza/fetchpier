@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -33,8 +33,8 @@ beforeAll(() => {
   writeFileSync(join(ws, 'requests', 'ok.http'), 'GET {{baseUrl}}/x\n')
 })
 
-function fp(args: string[]): { status: number; stderr: string } {
-  const r = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf-8', cwd: ws })
+function fp(args: string[], cwd: string = ws): { status: number; stderr: string } {
+  const r = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf-8', cwd })
   return { status: r.status ?? -1, stderr: r.stderr }
 }
 
@@ -49,6 +49,15 @@ describe('exit codes', () => {
     const { status, stderr } = fp(['run', 'requests/missing.http', '--workspace', ws])
     expect(status).toBe(5)
     expect(stderr).toContain('Path not found')
+    // Missing everywhere: nothing to suggest.
+    expect(stderr).not.toContain('Did you mean')
+  }, 60000)
+
+  it('5 — a path relative to the workspace, typed from outside it, gets a suggestion', () => {
+    const { status, stderr } = fp(['run', 'requests/ok.http', '--workspace', ws], dirname(ws))
+    expect(status).toBe(5)
+    expect(stderr).toContain('Path not found: requests/ok.http')
+    expect(stderr).toContain(`Did you mean ${basename(ws)}/requests/ok.http?`)
   }, 60000)
 
   it('6 — environment not found', () => {

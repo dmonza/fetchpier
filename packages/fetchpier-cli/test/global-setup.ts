@@ -39,8 +39,15 @@ const PACKAGE_ROOT = resolve(here, '..')
 const REPO_ROOT = resolve(here, '../../..')
 const CORE_ROOT = resolve(REPO_ROOT, 'packages/fetchpier-core')
 
-/** Both artefacts come out of the same build; the specs use one each. */
-const ARTEFACTS = [resolve(PACKAGE_ROOT, 'dist/fp.js'), resolve(PACKAGE_ROOT, 'dist/index.js')]
+/**
+ * All come out of the same build; the specs use one each. The license notices
+ * count too: a `dist/` from before they existed has fresh bundles and no notices.
+ */
+const ARTEFACTS = [
+  resolve(PACKAGE_ROOT, 'dist/fp.js'),
+  resolve(PACKAGE_ROOT, 'dist/index.js'),
+  resolve(PACKAGE_ROOT, 'dist/THIRD_PARTY_LICENSES.txt')
+]
 
 /**
  * Everything the build reads. Core's sources count because core is bundled
@@ -48,7 +55,8 @@ const ARTEFACTS = [resolve(PACKAGE_ROOT, 'dist/fp.js'), resolve(PACKAGE_ROOT, 'd
  * sources would miss the case where a core edit is what made the bundle stale.
  */
 function buildInputs(): string[] {
-  const roots = [join(PACKAGE_ROOT, 'src'), join(CORE_ROOT, 'src')]
+  // `tooling/` holds the build plugins `tsup.config.ts` imports.
+  const roots = [join(PACKAGE_ROOT, 'src'), join(PACKAGE_ROOT, 'tooling'), join(CORE_ROOT, 'src')]
   const manifests = [PACKAGE_ROOT, CORE_ROOT].flatMap((root) => [
     join(root, 'package.json'),
     join(root, 'tsup.config.ts')

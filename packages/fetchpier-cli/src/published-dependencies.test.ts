@@ -29,6 +29,8 @@ const PACKAGE_ROOT = resolve(here, '..')
 interface Manifest {
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
+  scripts?: Record<string, string>
+  files?: string[]
 }
 
 function manifest(packageRoot: string): Manifest {
@@ -60,4 +62,20 @@ describe('the published dependency set', () => {
       expect(cli.dependencies?.[name]).toBe(core.dependencies?.[name])
     }
   )
+})
+
+// `dist/` is gitignored and `npm pack` / `npm publish` ship whatever it holds,
+// so without a lifecycle build a publish from a clean clone ships no binary and
+// one from a working copy ships whatever the last build left. `prepack` (not
+// `prepublishOnly`) because it also runs for `npm pack --dry-run`, the step
+// where the file list is inspected before publishing.
+describe('the published tarball is built from the current sources', () => {
+  it('runs the build before packing', () => {
+    expect(cli.scripts?.prepack).toBe('npm run build')
+    expect(cli.scripts?.build).toBe('tsup')
+  })
+
+  it('ships dist/, where the build writes the bundle and its license notices', () => {
+    expect(cli.files).toContain('dist')
+  })
 })

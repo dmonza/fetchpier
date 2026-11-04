@@ -240,8 +240,9 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   // lazy — a request touching no secret needs no key.
   const secretContext = await buildSecretContext(resolvedEnv.id, merged.secretsMap, manifest, env)
 
-  const inputPaths = options.paths.length > 0 ? options.paths : ['requests']
-  const files = await expandPaths(inputPaths, cwd)
+  // Explicit paths resolve against cwd; with none, the target is the workspace's
+  // own `requests/` tree — the same from any directory (see `expandPaths`).
+  const files = await expandPaths(options.paths, cwd, workspacePath)
 
   // Workspace HTTP defaults, with the `--insecure` override applied for the run.
   const workspaceSettings = await ws.settings.load()
@@ -463,7 +464,10 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
         await saveHistory(ws, request, unit, result)
       }
 
-      const hadFailure = unit.tests.some((t) => !t.passed) || hadScriptError
+      // Same predicate `buildSummary` uses for a failed request: a request that
+      // produced no response (unreachable host, timeout, TLS) stops a bail run
+      // like a failed assertion does.
+      const hadFailure = unit.tests.some((t) => !t.passed) || hadScriptError || !unit.response
       if (options.bail && hadFailure) bailed = true
       if (options.delay && options.delay > 0 && !bailed) await sleep(options.delay)
     }

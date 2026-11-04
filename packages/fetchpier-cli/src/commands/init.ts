@@ -68,8 +68,21 @@ export async function initWorkspace(options: InitOptions = {}): Promise<string> 
 
   const write = options.write ?? ((s) => process.stdout.write(s))
   write(`Created Fetchpier workspace at ${target}\n`)
-  write(`  Next: fp run requests/${starter.file} --workspace ${options.name ?? '.'}\n`)
+  write(`  Next: ${nextCommand(options.name)}\n`)
   return target
+}
+
+/**
+ * The follow-up hint: one command that works verbatim from the directory `init`
+ * ran in. A no-path run targets the workspace's `requests/` tree from anywhere,
+ * so naming the workspace is enough — a request path here would be resolved
+ * against the caller's directory, one level above the new workspace. Double
+ * quotes are the quoting form every supported shell accepts.
+ */
+function nextCommand(name: string | undefined): string {
+  if (!name) return 'fp run'
+  const arg = /\s/.test(name) ? `"${name}"` : name
+  return `fp run --workspace ${arg}`
 }
 
 /** Register `fp init [name]`. */

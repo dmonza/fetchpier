@@ -5,6 +5,40 @@ All notable changes to Fetchpier are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - Unreleased
+
+Command-line interface fixes and publication readiness for `@fetchpier/cli`.
+
+### Fixed
+
+- `fp run` with no path now runs every request under the workspace's
+  `requests/` folder from any directory — a subfolder of the workspace, or
+  from outside it with `--workspace` or `FETCHPIER_WORKSPACE`. It used to work
+  only from the workspace root and otherwise failed with "Path not found".
+- The command `fp init` suggests at the end (`fp run --workspace <name>`, or
+  `fp run` when initializing the current folder) now works as printed; the
+  previous suggestion failed when copied from the same directory.
+- `--bail` now also stops after a request that got no response (unreachable
+  host, refused connection, timeout, TLS failure), not only after a failed
+  test or script error — the same rule the exit code already applied.
+- The npm package is always built from the sources being packed or published,
+  instead of shipping whatever the last local build left in place.
+
+### Added
+
+- When a path given to `fp run` does not exist in the current directory but
+  does inside the workspace, the error suggests the path to type instead.
+- The npm package ships the license notices of the third-party code bundled
+  into it.
+
+### Changed
+
+- The CLI reference (the package README) was rewritten to match the tool: the
+  real Node.js minimum (22.19), which commands need a workspace, every flag and
+  exit code, the environment variables it reads, using secrets in CI, and CI
+  examples that work as written. The CLI examples in the project README were
+  corrected to match.
+
 ## [0.9.4] - 2026-11-02
 
 First public release. The 0.9.x line was developed privately, so this entry
@@ -81,4 +115,5 @@ nobody could install.
   every connection originates from your request configuration. No telemetry, no
   background traffic, no remote content in the UI.
 
+[0.9.5]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.5
 [0.9.4]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.4
