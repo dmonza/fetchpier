@@ -293,9 +293,78 @@ export interface CookieCrossSiteWarning {
  */
 export type CookieWarning = CookieRejectedWarning | CookieCrossSiteWarning
 
+/**
+ * The cookie jar could not be used for this send: reading the stored cookies
+ * failed (the send went out without them) or persisting the captured ones failed
+ * (the response is unaffected; the cookies are not stored). Carries the reason,
+ * never a cookie value.
+ */
+export interface CookieJarUnavailableWarning {
+  code: 'COOKIE_JAR_UNAVAILABLE'
+  phase: 'read' | 'persist'
+  reason: string
+}
+
+/**
+ * TLS material configured for this send could not be applied — an unreadable CA
+ * or client certificate, a passphrase reference with no value, or a resolution
+ * failure. The send proceeds without that material.
+ */
+export interface TlsMaterialUnavailableWarning {
+  code: 'TLS_MATERIAL_UNAVAILABLE'
+  reason: string
+}
+
+/** The response declared a `Content-Encoding` that failed to decode; the body is kept as received. */
+export interface ResponseDecodingFailedWarning {
+  code: 'RESPONSE_DECODING_FAILED'
+  encoding: string
+  reason: string
+}
+
+/** The response declared a `Content-Encoding` outside the supported set; the body is kept as received. */
+export interface UnsupportedContentEncodingWarning {
+  code: 'UNSUPPORTED_CONTENT_ENCODING'
+  encoding: string
+}
+
+/** HTTP/2 was requested for a plain-HTTP target; the send used HTTP/1.1. */
+export interface Http2DowngradedWarning {
+  code: 'HTTP2_DOWNGRADED'
+}
+
+/** A user-set `Content-Type` was replaced by the multipart encoder's own (it owns the boundary). */
+export interface ContentTypeReplacedWarning {
+  code: 'CONTENT_TYPE_REPLACED'
+}
+
+/**
+ * A script environment write that could not be persisted to the local value
+ * layer. The value is still used for the rest of the run / session.
+ * - `KEY_MISSING`: a secret-named write needs the workspace key and none is available.
+ * - `LOCAL_KEY_MISMATCH`: the local layer is encrypted under a different
+ *   (older) workspace key; writing would make its entries unreadable.
+ * Carries the variable name, never the value.
+ */
+export interface EnvWriteNotPersistedWarning {
+  code: 'ENV_WRITE_NOT_PERSISTED'
+  name: string
+  reason: 'KEY_MISSING' | 'LOCAL_KEY_MISMATCH'
+}
+
 /** Non-fatal advisories a send can produce. Consumers switch on `code`. */
 export type ExecutionWarning =
-  QueryDecodeWarning | UnresolvedVariableWarning | CookieRejectedWarning | CookieCrossSiteWarning
+  | QueryDecodeWarning
+  | UnresolvedVariableWarning
+  | CookieRejectedWarning
+  | CookieCrossSiteWarning
+  | CookieJarUnavailableWarning
+  | TlsMaterialUnavailableWarning
+  | ResponseDecodingFailedWarning
+  | UnsupportedContentEncodingWarning
+  | Http2DowngradedWarning
+  | ContentTypeReplacedWarning
+  | EnvWriteNotPersistedWarning
 
 export type BodyType = 'none' | 'x-www-form-urlencoded' | 'raw' | 'binary' | 'multipart-form'
 
@@ -440,13 +509,33 @@ export interface RequestUiState {
 /** Map persisted in `<workspace>/requests/.state/ui-state.json`. */
 export type RequestUiStateMap = Record<string, RequestUiState>
 
-export const DEFAULT_USER_AGENT = 'Fetchpier/0.1.0'
+/**
+ * Default request headers are **implicit**: applied at send time when the
+ * request carries no enabled header of that name (case-insensitive), shown in
+ * the editor as read-only default rows, and never written into a `.http` file.
+ * A header the user writes is sent as written. Persisting a default froze it at
+ * whatever version wrote it — the reason `Fetchpier/0.1.0` outlived 0.1.0.
+ */
+export const DEFAULT_ACCEPT_ENCODING = 'gzip, deflate, br'
+
+/** Default `User-Agent` sent by the desktop app: `Fetchpier/<app version>`. */
+export function desktopUserAgent(appVersion: string): string {
+  return `Fetchpier/${appVersion}`
+}
+
+/** Default `User-Agent` sent by the command-line runner: `Fetchpier-CLI/<CLI version>`. */
+export function cliUserAgent(cliVersion: string): string {
+  return `Fetchpier-CLI/${cliVersion}`
+}
+
+/** Last-resort `User-Agent` for callers of the HTTP client that supply none. */
+export const FALLBACK_USER_AGENT = 'Fetchpier'
 
 export const DEFAULT_REQUEST_STATE: RequestEditorState = {
   method: 'GET',
   url: '',
   params: [],
-  headers: [{ id: 'h-ua-default', key: 'User-Agent', value: DEFAULT_USER_AGENT, enabled: true }],
+  headers: [],
   bodyType: 'none',
   rawSubtype: 'json',
   body: '',
@@ -873,7 +962,23 @@ export interface ParsedHttpFile {
    * request. Absent for single-request files.
    */
   tail?: string
+  /**
+   * Load-time diagnostics (a malformed `# @auth` block, an invalid
+   * `# @binary-file:` reference, an unknown or invalid `# @settings` entry, …).
+   * Informational: the file still loads. The parser reports here instead of the
+   * process console so an adapter can surface them. Absent when there are none.
+   */
+  warnings?: string[]
 }
+
+/**
+ * Outcome of decoding a response body against its `Content-Encoding`.
+ * - `decoded`: a supported coding was decoded.
+ * - `not-required`: no coding (or `identity`), or no body.
+ * - `unsupported`: a coding outside the supported set; body kept as received.
+ * - `failed`: decoding errored; body kept as received.
+ */
+export type DecodingStatus = 'decoded' | 'not-required' | 'unsupported' | 'failed'
 
 /** Result of an executed HTTP request */
 export interface HttpResponse {
@@ -882,7 +987,14 @@ export interface HttpResponse {
   headers: Record<string, string>
   body: string
   timingMs: number
+  /** Byte length of `body` as read (i.e. after decoding). Unchanged meaning. */
   sizeBytes: number
+  /** Body bytes as received on the wire. Absent on responses rebuilt from history. */
+  compressedBytes?: number
+  /** Body bytes after decoding; equals `compressedBytes` when nothing was decoded. */
+  decompressedBytes?: number
+  /** Absent on responses rebuilt from history (treated as `not-required`). */
+  decodingStatus?: DecodingStatus
 }
 
 // ── Filesystem ─────────────────────────────────────────────────────────────

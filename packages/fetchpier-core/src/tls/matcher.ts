@@ -62,7 +62,9 @@ function portMatches(entry: ClientCertEntry, requestPort: number): boolean {
  */
 export function matchClientCertificate(
   url: URL,
-  candidates: ClientCertCandidate[]
+  candidates: ClientCertCandidate[],
+  /** Receives the same-tier ambiguity notice (the matcher never writes to the console). */
+  onWarning?: (reason: string) => void
 ): ClientCertMatch | null {
   const host = url.hostname
   const port = effectivePort(url)
@@ -89,8 +91,8 @@ export function matchClientCertificate(
       specificityTier(winner.entry) === specificityTier(next.entry) &&
       winner.scope === next.scope
     ) {
-      console.warn(
-        `[tls.matcher] Multiple client certificates match ${host}:${port} at the same tier in scope=${winner.scope}; using "${winner.entry.host}" (first in document order).`
+      onWarning?.(
+        `several client certificates match ${host}:${port} equally in the ${winner.scope} scope; using "${winner.entry.host}" (first in document order)`
       )
     }
   }

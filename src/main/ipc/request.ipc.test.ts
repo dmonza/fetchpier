@@ -13,6 +13,7 @@ type Handler = (event: unknown, ...args: unknown[]) => unknown
 const ipcHandlers = new Map<string, Handler>()
 
 vi.mock('electron', () => ({
+  app: { getVersion: () => '9.8.7' },
   ipcMain: {
     handle: (channel: string, fn: Handler) => ipcHandlers.set(channel, fn)
   },
@@ -33,18 +34,15 @@ vi.mock('../tls/store', () => ({
 }))
 
 vi.mock('../secrets/service', () => ({
-  buildSendMasker: vi.fn(async () => undefined),
-  lockAllSecrets: vi.fn(),
-  resolvePassphraseSecrets: vi.fn(async () => ({}))
+  lockAllSecrets: vi.fn()
+}))
+
+vi.mock('../secrets/keystore', () => ({
+  getWorkspaceKey: vi.fn(async () => null)
 }))
 
 vi.mock('../secrets/local-values', () => ({
-  loadMergedEnvironment: vi.fn(async () => ({
-    merged: { secretsMap: {} },
-    localPlainOverlay: {},
-    orphanNotice: undefined
-  })),
-  persistScriptEnvChanges: vi.fn(async () => {})
+  normalizeLocalLayer: vi.fn(async () => undefined)
 }))
 
 const { resolveReferences } = vi.hoisted(() => ({
@@ -55,9 +53,44 @@ vi.mock('../state/active-workspace', () => ({
   requireActiveWorkspaceHandle: () => ({
     path: '/fake/workspace',
     dotenv: { resolveReferences },
+    secrets: { readManifest: async () => null },
     binary: { read: vi.fn(), stat: vi.fn() }
   })
 }))
+
+// The variable session is the core's (pinned in the core suite). The stand-in
+// keeps the observable seams: `{{$env.*}}` resolution goes through the handle
+// (so its failure path is still exercised), `apply` reports what it could not
+// persist, and `secretNames` drives the renderer-side masking.
+const sessionState = vi.hoisted(() => ({
+  options: undefined as Record<string, unknown> | undefined,
+  secretNames: [] as string[],
+  applyWarnings: [] as unknown[],
+  apply: vi.fn()
+}))
+const createVariableSession = vi.hoisted(() =>
+  vi.fn(async (opts: Record<string, unknown>) => {
+    sessionState.options = opts
+    const ws = opts.workspace as {
+      dotenv: { resolveReferences: (v: Record<string, string>) => Promise<Record<string, string>> }
+    }
+    const variables = await ws.dotenv.resolveReferences(
+      (opts.basePlainVariables as Record<string, string>) ?? {}
+    )
+    return {
+      orphans: [],
+      prepare: async (request: HttpRequest) => ({
+        request: { ...request, variables },
+        secretNames: sessionState.secretNames,
+        resolvePassphraseSecrets: async () => ({})
+      }),
+      apply: async (changes: unknown) => {
+        sessionState.apply(changes)
+        return sessionState.applyWarnings
+      }
+    }
+  })
+)
 
 const executeMock = vi.fn(async (..._args: unknown[]) => ({
   response: { status: 200, statusText: 'OK', headers: {}, body: '', durationMs: 1 },
@@ -77,7 +110,12 @@ const describeErrorMock = vi.hoisted(() =>
 
 vi.mock('@fetchpier/core', () => ({
   describeError: describeErrorMock,
-  requests: { execute: (...args: unknown[]) => executeMock(...args) },
+  requests: {
+    execute: (...args: unknown[]) => executeMock(...args),
+    createVariableSession,
+    timeoutAbortReason: (ms: number) =>
+      Object.assign(new Error(`timed out after ${ms}`), { name: 'TimeoutError' })
+  },
   CoreError: class CoreError extends Error {
     code?: string
     constructor(message: string, code?: string) {
@@ -101,6 +139,9 @@ const BASE_REQUEST: HttpRequest = {
 
 beforeEach(async () => {
   ipcHandlers.clear()
+  sessionState.secretNames = []
+  sessionState.applyWarnings = []
+  sessionState.apply.mockClear()
   resolveReferences.mockReset()
   resolveReferences.mockImplementation(async (vars: Record<string, string>) => vars)
   executeMock.mockClear()
@@ -172,5 +213,55 @@ describe('http:send — the reported reason is never derived locally', () => {
     await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-agg-2')
 
     expect(await ipcHandlers.get('http:cancel')!({}, 'exec-agg-2')).toBe(false)
+  })
+})
+
+describe('http:send — core-governed variables (CLI readiness)', () => {
+  it('builds a persisting session from the variables the renderer sent', async () => {
+    mod.setActiveEnvironmentForCookies('env-1')
+    await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-s1')
+    expect(createVariableSession).toHaveBeenCalledTimes(1)
+    expect(sessionState.options).toMatchObject({
+      environmentId: 'env-1',
+      basePlainVariables: { token: '{{$env.TOKEN}}' },
+      persistence: 'persist'
+    })
+  })
+
+  it('sends the desktop default User-Agent with the app version', async () => {
+    await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-ua')
+    expect(executeMock.mock.calls[0][1]).toMatchObject({ userAgent: 'Fetchpier/9.8.7' })
+  })
+
+  it('applies script writes through the session and surfaces what could not be persisted', async () => {
+    mod.setActiveEnvironmentForCookies('env-1')
+    const changes = { set: { token: 'plaintext-jwt', note: 'n' }, removed: [] }
+    sessionState.secretNames = ['token']
+    sessionState.applyWarnings = [
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'token', reason: 'KEY_MISSING' }
+    ]
+    executeMock.mockResolvedValueOnce({
+      response: { status: 200, statusText: 'OK', headers: {}, body: '', durationMs: 1 },
+      scriptResults: [],
+      environmentChanges: changes,
+      resolvedSettings: {},
+      cookies: { sent: [], received: [] }
+    } as never)
+
+    const result = (await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-apply')) as {
+      environmentChanges: { set: Record<string, string> }
+      warnings: unknown[]
+    }
+
+    // The session received the plaintext it needs to persist…
+    expect(sessionState.apply).toHaveBeenCalledWith(changes)
+    // …and the renderer never does: a secret-named write leaves main masked.
+    expect(result.environmentChanges.set).toEqual({ token: '{secret:token}', note: 'n' })
+    expect(JSON.stringify(result)).not.toContain('plaintext-jwt')
+    expect(result.warnings).toContainEqual({
+      code: 'ENV_WRITE_NOT_PERSISTED',
+      name: 'token',
+      reason: 'KEY_MISSING'
+    })
   })
 })

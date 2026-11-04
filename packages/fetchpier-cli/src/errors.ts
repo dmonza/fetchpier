@@ -44,7 +44,10 @@ const CORE_CODE_TO_EXIT: Record<CoreErrorCode, ExitCode> = {
   // REQ-0089: a save-time validation error (app-global passphrase with a
   // variable). Never thrown during a CLI run, but the map must stay total;
   // classify as a usage error.
-  CLIENT_CERT_PASSPHRASE_VARIABLE_NOT_ALLOWED: EXIT.USAGE
+  CLIENT_CERT_PASSPHRASE_VARIABLE_NOT_ALLOWED: EXIT.USAGE,
+  // An unusable proxy URL (flag or variable) or `--proxy` with `--no-proxy`:
+  // fatal before anything is sent, as a usage error naming its source.
+  PROXY_INVALID: EXIT.USAGE
 }
 
 export interface ResolvedError {

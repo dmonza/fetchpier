@@ -1,12 +1,43 @@
 import { Agent, ProxyAgent, Dispatcher, interceptors, errors as undiciErrors } from 'undici'
 import { Readable } from 'node:stream'
-import type { HttpRequest, HttpResponse, ProxyConfig, WorkspaceHttpSettings } from '@shared/types'
-import { DEFAULT_USER_AGENT } from '@shared/types'
+import type {
+  ExecutionWarning,
+  HttpRequest,
+  HttpResponse,
+  ProxyConfig,
+  WorkspaceHttpSettings
+} from '@shared/types'
+import { FALLBACK_USER_AGENT } from '@shared/types'
 import { hasHeader, headersToUndiciArray, removeHeaders } from '@shared/lib/headers'
 import type { CookieHopHooks } from './cookie-jar'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../workspace/defaults'
 import { CoreError } from '../shared/context'
 import { describeError } from '../shared/describe-error'
+import { decodeBody } from './decode-body'
+
+/** Name of the abort reason an adapter's request timer uses (see {@link timeoutAbortReason}). */
+export const TIMEOUT_ABORT_NAME = 'TimeoutError'
+
+/** `30 s`, `1.5 s`, `200 ms` — how a timeout limit reads in a failure reason. */
+export function formatTimeoutLimit(ms: number): string {
+  if (ms < 1000) return `${ms} ms`
+  const s = ms / 1000
+  return `${Number.isInteger(s) ? s : Number(s.toFixed(1))} s`
+}
+
+/**
+ * The value an adapter passes to `AbortController.abort()` when its request
+ * timer fires. The client turns an abort carrying it into the failure reason
+ * `timed out after <limit>`, so a timeout is never reported as a cancellation.
+ */
+export function timeoutAbortReason(ms: number): Error {
+  const err = new Error(`timed out after ${formatTimeoutLimit(ms)}`)
+  err.name = TIMEOUT_ABORT_NAME
+  return err
+}
+
+/** A proxy for the whole send, or a per-target resolver (`NO_PROXY`, per-scheme proxies). */
+export type ProxyOption = ProxyConfig | ((url: string) => ProxyConfig | undefined)
 
 /**
  * Methods for which RFC 9110 / RFC 7231 say a payload body is expected.
@@ -92,8 +123,19 @@ export interface ResolvedTlsMaterial {
 export interface SendOptions {
   /** AbortController signal for cancellation. */
   signal?: AbortSignal
-  /** Optional proxy configuration. Used only if `proxy.enabled` and `proxy.url` are set. */
-  proxy?: ProxyConfig
+  /**
+   * Optional proxy: a fixed configuration (used only if `enabled` and `url` are
+   * set), or a resolver asked for the target URL.
+   */
+  proxy?: ProxyOption
+  /** `User-Agent` to add when the request carries none. Defaults to {@link FALLBACK_USER_AGENT}. */
+  userAgent?: string
+  /**
+   * Non-fatal advisories raised while preparing or reading the send (an HTTP/2
+   * downgrade, a replaced Content-Type, a body that could not be decoded). The
+   * client never writes to the process console.
+   */
+  onWarning?: (warning: ExecutionWarning) => void
   /** Fully resolved transport settings — applied to the dispatcher and request. */
   settings?: WorkspaceHttpSettings
   /** Optional TLS material (additional CAs and/or client certificate) for this send. */
@@ -300,15 +342,14 @@ function buildAgent(
   isHttps: boolean,
   proxy?: ProxyConfig,
   tlsMaterial?: ResolvedTlsMaterial,
-  cookies?: CookieHopHooks
+  cookies?: CookieHopHooks,
+  onWarning?: (warning: ExecutionWarning) => void
 ): Dispatcher {
-  // HTTP/2 is only meaningful over HTTPS. Warn and fall back to HTTP/1.1 for plain HTTP.
+  // HTTP/2 is only meaningful over HTTPS. Advise and fall back to HTTP/1.1 for plain HTTP.
   let allowH2: boolean
   if (settings.httpVersion === 'http2') {
     if (!isHttps) {
-      console.warn(
-        '[http.client] httpVersion=http2 requested over plain HTTP — falling back to HTTP/1.1'
-      )
+      onWarning?.({ code: 'HTTP2_DOWNGRADED' })
       allowH2 = false
     } else {
       allowH2 = true
@@ -406,11 +447,13 @@ export async function sendRequestWithRaw(
   httpRequest: HttpRequest,
   options: SendOptions = {}
 ): Promise<SendResult> {
-  const { signal, proxy, settings = DEFAULT_WORKSPACE_HTTP_SETTINGS } = options
+  const { signal, settings = DEFAULT_WORKSPACE_HTTP_SETTINGS, onWarning } = options
+  const userAgent = options.userAgent ?? FALLBACK_USER_AGENT
 
   const target = buildRequestTarget(httpRequest.url)
   const isHttps = target.protocol === 'https:'
-  const agent = buildAgent(settings, isHttps, proxy, options.tls, options.cookies)
+  const proxy = typeof options.proxy === 'function' ? options.proxy(httpRequest.url) : options.proxy
+  const agent = buildAgent(settings, isHttps, proxy, options.tls, options.cookies, onWarning)
 
   const start = performance.now()
 
@@ -422,15 +465,13 @@ export async function sendRequestWithRaw(
   if (httpRequest.headerList) {
     let list = [...httpRequest.headerList]
     if (!hasHeader(list, 'user-agent')) {
-      list.push({ name: 'User-Agent', value: DEFAULT_USER_AGENT })
+      list.push({ name: 'User-Agent', value: userAgent })
     }
     if (options.multipartBody) {
       // Encoder-generated Content-Type wins; warn + replace a manual one
       // (REQ §5.2 rule 9, REQ §7.2). The encoder owns the boundary header.
       if (hasHeader(list, 'content-type')) {
-        console.warn(
-          '[http.client] Ignoring user-set Content-Type — multipart encoder owns the boundary header.'
-        )
+        onWarning?.({ code: 'CONTENT_TYPE_REPLACED' })
         list = removeHeaders(list, 'content-type')
       }
       list.push({ name: 'Content-Type', value: options.multipartBody.contentType })
@@ -442,16 +483,14 @@ export async function sendRequestWithRaw(
     )
     let record = hasUserAgent
       ? httpRequest.headers
-      : { ...httpRequest.headers, 'User-Agent': DEFAULT_USER_AGENT }
+      : { ...httpRequest.headers, 'User-Agent': userAgent }
 
     if (options.multipartBody) {
       // Find any existing Content-Type variant in the headers map and replace
       // its value with ours — preserving the original key casing for the rest.
       const existingKey = Object.keys(record).find((k) => k.toLowerCase() === 'content-type')
       if (existingKey) {
-        console.warn(
-          '[http.client] Ignoring user-set Content-Type — multipart encoder owns the boundary header.'
-        )
+        onWarning?.({ code: 'CONTENT_TYPE_REPLACED' })
         record = { ...record, [existingKey]: options.multipartBody.contentType }
       } else {
         record = { ...record, 'Content-Type': options.multipartBody.contentType }
@@ -474,8 +513,18 @@ export async function sendRequestWithRaw(
       signal: signal ?? null
     })
 
-    const responseBody = await response.body.text()
+    // Read the bytes exactly as they arrived and decode them against
+    // `Content-Encoding` here, so every consumer sees one decoded body and one
+    // status. A body that cannot be decoded is kept as received.
+    const wire = Buffer.from(await response.body.arrayBuffer())
     const timingMs = performance.now() - start
+    const encodingHeader = response.headers['content-encoding']
+    const decoded = decodeBody(
+      wire,
+      Array.isArray(encodingHeader) ? encodingHeader.join(', ') : encodingHeader
+    )
+    if (decoded.warning) onWarning?.(decoded.warning)
+    const responseBody = decoded.body.toString('utf-8')
     const sizeBytes = Buffer.byteLength(responseBody, 'utf-8')
 
     // Normalise headers: undici returns them as string | string[] per field.
@@ -499,11 +548,20 @@ export async function sendRequestWithRaw(
         headers: normalisedHeaders,
         body: responseBody,
         timingMs: Math.round(timingMs),
-        sizeBytes
+        sizeBytes,
+        compressedBytes: decoded.compressedBytes,
+        decompressedBytes: decoded.decompressedBytes,
+        decodingStatus: decoded.status
       },
       rawSetCookie
     }
   } catch (err) {
+    // The adapter's request timer aborts with a recognizable reason: report the
+    // limit that expired, not a cancellation the user never asked for.
+    const reason: unknown = signal?.aborted ? signal.reason : undefined
+    if (reason instanceof Error && reason.name === TIMEOUT_ABORT_NAME) {
+      throw new Error(reason.message, { cause: err })
+    }
     if (err instanceof undiciErrors.RequestAbortedError) {
       throw new Error('Request cancelled', { cause: err })
     }

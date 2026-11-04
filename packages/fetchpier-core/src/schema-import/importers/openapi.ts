@@ -12,7 +12,7 @@ import type {
   RawSubtype,
   AuthConfig
 } from '@shared/types'
-import { DEFAULT_REQUEST_STATE, DEFAULT_USER_AGENT } from '@shared/types'
+import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import { sanitizeName, sanitizeSegments } from '../sanitize'
 import { generateExampleFromJsonSchema, prettyJson } from '../example-generator'
 
@@ -350,13 +350,8 @@ function buildOperation(args: {
     })
   }
 
-  // User-Agent as per DEFAULT_REQUEST_STATE
-  headers.unshift({
-    id: 'h-ua-default',
-    key: 'User-Agent',
-    value: DEFAULT_USER_AGENT,
-    enabled: true
-  })
+  // No User-Agent row: the default is implicit and applied at send time by the
+  // sending surface (never written into the generated `.http` file).
 
   const security = op['security'] ?? doc['security']
   const auth = detectAuthFromSecurity(doc, security, warnings, location)

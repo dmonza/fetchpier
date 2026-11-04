@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { encryptValue, generateWorkspaceKey } from './crypto'
+import { decryptValue, encryptValue, generateWorkspaceKey } from './crypto'
 import { deriveKeyId } from './key'
 import {
   classifyLocalWrite,
@@ -10,6 +10,7 @@ import {
   isReservedPrefixValue,
   localValuesPath,
   mergeEnvironmentLayers,
+  persistScriptEnvChanges,
   readLocalValues,
   writeLocalValues,
   type LocalValuesFile
@@ -294,5 +295,134 @@ describe('readLocalValues / writeLocalValues', () => {
     expect((await readLocalValues(ws, 'dev')).variables).toEqual({ a: 'original' })
     const siblings = await fs.readdir(join(ws, 'environments', 'dev', '.state'))
     expect(siblings).toEqual(['localvalues.json'])
+  })
+})
+
+// ── persistScriptEnvChanges (CLI readiness: core owns script-write persistence) ──
+
+describe('persistScriptEnvChanges', () => {
+  let ws = ''
+  let key: Uint8Array
+  let keyId = ''
+  const shared = { baseUrl: 'https://api.example.com', token: 'enc:v1:shared', unset: null }
+
+  beforeEach(async () => {
+    ws = await fs.mkdtemp(join(tmpdir(), 'persist-env-test-'))
+    const envDir = join(ws, 'environments', 'dev')
+    await fs.mkdir(envDir, { recursive: true })
+    await fs.writeFile(
+      join(envDir, 'config.json'),
+      JSON.stringify({ id: 'dev', name: 'dev', variables: shared })
+    )
+    key = await generateWorkspaceKey()
+    keyId = deriveKeyId(key)
+  })
+  afterEach(async () => {
+    await fs.rm(ws, { recursive: true, force: true })
+  })
+
+  const persist = (
+    changes: { set: Record<string, string>; removed: string[] } | undefined,
+    opts: { currentKeyId?: string; getKey?: () => Promise<Uint8Array | null> } = {}
+  ): ReturnType<typeof persistScriptEnvChanges> =>
+    persistScriptEnvChanges({
+      workspacePath: ws,
+      environmentId: 'dev',
+      changes,
+      sharedVariables: shared,
+      currentKeyId: 'currentKeyId' in opts ? opts.currentKeyId : keyId,
+      getKey: opts.getKey ?? (async () => key)
+    })
+
+  it('writes a plain value in clear and a secret-named value encrypted under the current key', async () => {
+    const warnings = await persist({
+      set: { baseUrl: 'http://localhost', token: 'jwt' },
+      removed: []
+    })
+    expect(warnings).toEqual([])
+    const back = await readLocalValues(ws, 'dev')
+    expect(back.variables.baseUrl).toBe('http://localhost')
+    expect(back.variables.token.startsWith('enc:')).toBe(true)
+    expect(await decryptValue(key, 'token', back.variables.token)).toBe('jwt')
+    expect(back.keyId).toBe(keyId)
+  })
+
+  it('never asks for the key when no secret-named name is written', async () => {
+    const getKey = vi.fn(async () => key)
+    await persist({ set: { baseUrl: 'x' }, removed: [] }, { getKey })
+    expect(getKey).not.toHaveBeenCalled()
+  })
+
+  it('without a key: skips the secret write with an advisory and still persists plain writes', async () => {
+    const warnings = await persist(
+      { set: { baseUrl: 'http://localhost', token: 'jwt' }, removed: [] },
+      { getKey: async () => null }
+    )
+    expect(warnings).toEqual([
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'token', reason: 'KEY_MISSING' }
+    ])
+    const back = await readLocalValues(ws, 'dev')
+    expect(back.variables).toEqual({ baseUrl: 'http://localhost' })
+  })
+
+  it('without a secrets manifest a secret-named write is KEY_MISSING', async () => {
+    const warnings = await persist(
+      { set: { token: 'jwt' }, removed: [] },
+      { currentKeyId: undefined }
+    )
+    expect(warnings).toEqual([
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'token', reason: 'KEY_MISSING' }
+    ])
+  })
+
+  it('local layer under an older key: secret writes skipped, plain persisted, existing entries byte-identical', async () => {
+    const oldKey = await generateWorkspaceKey()
+    const oldKeyId = deriveKeyId(oldKey)
+    const oldEnc = await encryptValue(oldKey, 'token', 'old-secret')
+    await writeLocalValues(ws, 'dev', local({ token: oldEnc, keep: 'v' }, oldKeyId))
+    const getKey = vi.fn(async () => key)
+
+    const warnings = await persist(
+      { set: { token: 'new-secret', baseUrl: 'http://localhost' }, removed: [] },
+      { getKey }
+    )
+
+    expect(warnings).toEqual([
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'token', reason: 'LOCAL_KEY_MISMATCH' }
+    ])
+    expect(getKey).not.toHaveBeenCalled()
+    const back = await readLocalValues(ws, 'dev')
+    expect(back.keyId).toBe(oldKeyId)
+    expect(back.variables.token).toBe(oldEnc)
+    expect(back.variables.baseUrl).toBe('http://localhost')
+    expect(back.variables.keep).toBe('v')
+  })
+
+  it('a stale keyId with nothing encrypted is not a mismatch', async () => {
+    await writeLocalValues(ws, 'dev', local({ keep: 'v' }, 'deadbeefdeadbeef'))
+    const warnings = await persist({ set: { token: 'jwt' }, removed: [] })
+    expect(warnings).toEqual([])
+    expect((await readLocalValues(ws, 'dev')).keyId).toBe(keyId)
+  })
+
+  it('applies removals', async () => {
+    await writeLocalValues(ws, 'dev', local({ baseUrl: 'a', other: 'b' }))
+    await persist({ set: {}, removed: ['baseUrl'] })
+    expect((await readLocalValues(ws, 'dev')).variables).toEqual({ other: 'b' })
+  })
+
+  it('a no-op when there are no changes', async () => {
+    expect(await persist(undefined)).toEqual([])
+    expect(await persist({ set: {}, removed: [] })).toEqual([])
+    await expect(fs.access(localValuesPath(ws, 'dev'))).rejects.toThrow()
+  })
+
+  it('rejects a reserved `$` name and a plain value claiming the `enc:` prefix', async () => {
+    await expect(persist({ set: { $guid: 'x' }, removed: [] })).rejects.toMatchObject({
+      code: 'RESERVED_VARIABLE_NAME'
+    })
+    await expect(persist({ set: { baseUrl: 'enc:v1:fake' }, removed: [] })).rejects.toMatchObject({
+      code: 'WORKSPACE_INVALID'
+    })
   })
 })

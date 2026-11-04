@@ -277,13 +277,14 @@ describe('mapHttpRequestToEditorState', () => {
     expect(result.binaryFile).toBeUndefined()
   })
 
-  it('injects the default User-Agent when not already present in headers', () => {
+  // The default User-Agent is implicit: applied at send time, shown as a
+  // read-only default row, never inserted as an editable header — inserting it
+  // is what wrote a version into every saved file.
+  it('does not insert a User-Agent header the file does not have', () => {
     const result = mapHttpRequestToEditorState(
       makeRequest({ headers: { Accept: 'application/json' } })
     )
-    const ua = result.headers.find((h) => h.key.toLowerCase() === 'user-agent')
-    expect(ua).toBeDefined()
-    expect(ua?.value).toMatch(/^Fetchpier\//)
+    expect(result.headers.map((h) => h.key)).toEqual(['Accept'])
   })
 
   it('keeps a user-supplied User-Agent and does not duplicate it', () => {

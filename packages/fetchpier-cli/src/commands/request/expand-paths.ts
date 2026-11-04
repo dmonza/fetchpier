@@ -21,6 +21,19 @@ async function collectHttpFiles(dir: string): Promise<string[]> {
   return out
 }
 
+/**
+ * Collect a folder's requests, refusing a folder that contributes none. A run
+ * whose target holds nothing to send used to report "0 requests" and exit 0 —
+ * a green CI step that tested nothing.
+ */
+async function collectNonEmpty(dir: string): Promise<string[]> {
+  const files = await collectHttpFiles(dir)
+  if (files.length === 0) {
+    throw new CliError(EXIT.NO_REQUESTS, `No requests to run in ${dir} (no .http file found)`)
+  }
+  return files
+}
+
 async function statOrNull(abs: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
   try {
     return await fs.stat(abs)
@@ -70,7 +83,7 @@ export async function expandPaths(
     if (!stat?.isDirectory()) {
       throw new CliError(EXIT.PATH_NOT_FOUND, `No requests folder in the workspace: ${requestsDir}`)
     }
-    return collectHttpFiles(requestsDir)
+    return collectNonEmpty(requestsDir)
   }
 
   const files: string[] = []
@@ -85,7 +98,7 @@ export async function expandPaths(
       )
     }
     if (stat.isDirectory()) {
-      files.push(...(await collectHttpFiles(abs)))
+      files.push(...(await collectNonEmpty(abs)))
     } else if (abs.endsWith('.http')) {
       files.push(abs)
     } else {

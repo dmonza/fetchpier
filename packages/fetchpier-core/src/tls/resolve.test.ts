@@ -130,12 +130,18 @@ describe('resolveRequestTls — workspace passphrase resolution (§6.1)', () => 
       { 'client-1234.pfx': 'PFXBYTES' }
     )
     const resolvePassphraseSecrets = vi.fn().mockResolvedValue({})
+    const onWarning = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const material = await resolveRequestTls(
       URL_MATCH,
       {},
-      { workspacePath: ws, resolvePassphraseSecrets }
+      { workspacePath: ws, resolvePassphraseSecrets, onWarning }
     )
     expect(material.passphrase).toBe('{{nope}}')
+    // Reported through the context, never the process console (CLI readiness).
+    expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('"nope"'))
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('lets a local plain override (in the environment) win — secrets are not consulted for it', async () => {

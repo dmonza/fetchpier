@@ -7,7 +7,7 @@ Thanks for taking the time to look. This document explains how to report a vulne
 **Do not open a public issue for security reports.** Use one of these private channels instead:
 
 - **GitHub Security Advisories** (preferred): open a private report at `Security → Advisories → Report a vulnerability` on the repository. This keeps the conversation, the fix, and the eventual CVE in one place.
-- **Email**: `info@sincrum.com`. Use this if you can't use GHSA, or if you'd rather start the conversation off-platform. If the report is sensitive, mention that in the first line and we'll move to encrypted channels before details are exchanged.
+- **Email**: `info@sincrum.com`. Use this if you can't use GHSA, or if you'd rather start the conversation off-platform. If the report is sensitive, mention that in the first line and we'll move the conversation to a private GitHub Security Advisory before details are exchanged.
 
 A useful report includes:
 
@@ -73,7 +73,7 @@ These are intentional design choices or known limitations:
 
 ### Sincrum projects
 
-Fetchpier is a [Sincrum](https://sincrum.com) project. If you'd prefer to report through Sincrum's general channel rather than the Fetchpier-specific addresses above, `info@sincrum.com` reaches the same people. There is no other project under Sincrum covered by this policy; each Sincrum-maintained project publishes its own `SECURITY.md`.
+Fetchpier is a [Sincrum](https://sincrum.com) project. This policy covers only Fetchpier; each Sincrum-maintained project publishes its own `SECURITY.md`.
 
 ## Public disclosure
 

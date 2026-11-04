@@ -6,13 +6,14 @@ import type {
   EnvironmentChanges,
   CookieSnapshot,
   WorkspaceHttpSettings,
-  ProxyConfig,
   HeaderEntry,
   KeyValuePair,
   QueryDecodeWarning,
   ExecutionWarning
 } from '@shared/types'
+import { DEFAULT_ACCEPT_ENCODING, FALLBACK_USER_AGENT } from '@shared/types'
 import { executePreRequest, executePostResponse } from '../scripting'
+import { createValueMask, maskScriptResults } from '../scripting/mask-script-results'
 import {
   applyAuth,
   authFieldTexts,
@@ -27,7 +28,7 @@ import {
   encodeQueryComponentPreservingMasks
 } from '@shared/lib/query-string'
 import { resolveSettings } from './settings-resolver'
-import { sendRequestWithRaw } from './client'
+import { sendRequestWithRaw, type ProxyOption } from './client'
 import { openCookieSession, type CookieRejection, type CookieSession } from './cookie-jar'
 import { snapshotFromSetCookie } from './cookie-store'
 import { encodeMultipart } from './multipart-encoder'
@@ -54,11 +55,31 @@ import { describeError } from '../shared/describe-error'
 export interface ExecuteOptions {
   environmentId: string | null
   workspaceSettings: WorkspaceHttpSettings
-  proxy?: ProxyConfig
+  /** A fixed proxy (desktop app settings) or a per-target resolver (CLI: flag / env / `NO_PROXY`). */
+  proxy?: ProxyOption
   signal?: AbortSignal
+  /**
+   * The sending surface's default `User-Agent` (desktop `Fetchpier/<app>`, CLI
+   * `Fetchpier-CLI/<cli>`), added when the request carries no enabled
+   * `User-Agent` header. Defaults to the version-less fallback.
+   */
+  userAgent?: string
+  /**
+   * Names that are secrets in the environment. A value a script writes under one
+   * of these names during this send is masked in the script output like any
+   * resolved secret. The masker alone only knows the secrets the request
+   * referenced before it ran.
+   */
+  secretNames?: Iterable<string>
+  /**
+   * Adapter-bound TLS resolver. `onWarning` receives a plain-language reason when
+   * configured material cannot be applied; it becomes a `TLS_MATERIAL_UNAVAILABLE`
+   * advisory on the result.
+   */
   resolveTls?: (
     url: string,
-    environment: Record<string, string>
+    environment: Record<string, string>,
+    onWarning?: (reason: string) => void
   ) => Promise<ResolvedTlsMaterial | undefined>
   onCookiesCaptured?: (environmentId: string) => void
   /**
@@ -153,6 +174,29 @@ function toCookieWarnings(res: {
   ]
 }
 
+function hasHeaderNamed(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase()
+  return Object.keys(headers).some((k) => k.toLowerCase() === lower)
+}
+
+/**
+ * The implicit default request headers (User-Agent, Accept-Encoding): added only
+ * when the request carries no enabled header of that name. Applied before the
+ * wire/snapshot split so the snapshot, the activity log and every report show
+ * what actually went out. Never written back into the request file.
+ */
+function implicitDefaultHeaders(
+  headers: Record<string, string>,
+  userAgent: string
+): Array<{ name: string; value: string }> {
+  const out: Array<{ name: string; value: string }> = []
+  if (!hasHeaderNamed(headers, 'user-agent')) out.push({ name: 'User-Agent', value: userAgent })
+  if (!hasHeaderNamed(headers, 'accept-encoding')) {
+    out.push({ name: 'Accept-Encoding', value: DEFAULT_ACCEPT_ENCODING })
+  }
+  return out
+}
+
 function mergeEnvChanges(
   base: EnvironmentChanges | undefined,
   next: EnvironmentChanges | undefined
@@ -198,6 +242,33 @@ export async function execute(
     workspacePath,
     secrets
   } = options
+  const userAgent = options.userAgent ?? FALLBACK_USER_AGENT
+
+  // Advisories raised by the transport and the TLS resolver while the send is
+  // prepared and read. Nothing on the send path writes to the process console.
+  const transportWarnings: ExecutionWarning[] = []
+  const pushTransportWarning = (w: ExecutionWarning): void => {
+    transportWarnings.push(w)
+  }
+
+  // Script output is masked inside the engine, once, for every consumer (desktop
+  // console + activity log, CLI terminal, reports, history). The value set is the
+  // secrets this send resolved plus whatever a script wrote under a secret name.
+  const secretNameSet = new Set<string>([
+    ...(options.secretNames ?? []),
+    ...(secrets ? Object.keys(secrets.scriptEnvironment) : [])
+  ])
+  const maskedScripts = (
+    bundle: ScriptResultsBundle,
+    changes: EnvironmentChanges | undefined
+  ): ScriptResultsBundle | undefined => {
+    if (!bundle.preRequest && !bundle.postResponse) return undefined
+    const values: Record<string, string> = { ...(secrets?.scriptEnvironment ?? {}) }
+    for (const [name, value] of Object.entries(changes?.set ?? {})) {
+      if (secretNameSet.has(name)) values[name] = value
+    }
+    return maskScriptResults(bundle, createValueMask(values))
+  }
 
   const envIn: Record<string, string> = { ...(request.variables ?? {}) }
   // Scripts read secret variables as plaintext (HMAC signing etc., §6.4); the
@@ -227,7 +298,7 @@ export async function execute(
     if (!pre.result.success) {
       envChanges = mergeEnvChanges(envChanges, pre.result.environmentChanges)
       return {
-        scriptResults,
+        scriptResults: maskedScripts(scriptResults, envChanges),
         environmentChanges: envChanges,
         error: `Pre-request script failed: ${pre.result.error?.message ?? 'unknown error'}`
       }
@@ -306,10 +377,6 @@ export async function execute(
     code: 'UNRESOLVED_VARIABLE',
     name
   }))
-  if (resolved.unresolvedVariables.length > 0) {
-    console.warn('[execute] Unresolved variables:', resolved.unresolvedVariables.join(', '))
-  }
-
   // Materialize the credential once per render side. With secrets the resolved
   // auth fields carry markers, and base64 / percent-encoding would bury them, so
   // the credential is built AFTER each side is rendered: plaintext for the wire,
@@ -318,15 +385,30 @@ export async function execute(
   // still appended to the BASE url here (§2.2 unchanged) so it never routes
   // through the structured assembly; the user params are assembled after. The
   // log side keeps its mask legible through the encoder, matching the URL rule.
-  const wireWithAuth = applyAuth(
+  const wireWithAuthRaw = applyAuth(
     wireResolved,
     secrets ? mapAuthStrings(resolvedAuth.auth, secrets.wireRender) : resolvedAuth.auth
   )
-  const logWithAuth = applyAuth(
+  const logWithAuthRaw = applyAuth(
     logResolved,
     secrets ? mapAuthStrings(resolvedAuth.auth, secrets.logRender) : resolvedAuth.auth,
     secrets ? MASK_PRESERVING_MATERIALIZATION : {}
   )
+  // Implicit defaults, decided once on the wire side and applied to both sides so
+  // the snapshot reports exactly what was sent.
+  const defaults = implicitDefaultHeaders(wireWithAuthRaw.headers, userAgent)
+  const withDefaults = <T extends { headers: Record<string, string>; headerList?: HeaderEntry[] }>(
+    r: T
+  ): T =>
+    defaults.length === 0
+      ? r
+      : {
+          ...r,
+          headers: { ...r.headers, ...Object.fromEntries(defaults.map((d) => [d.name, d.value])) },
+          ...(r.headerList ? { headerList: [...r.headerList, ...defaults] } : {})
+        }
+  const wireWithAuth = withDefaults(wireWithAuthRaw)
+  const logWithAuth = withDefaults(logWithAuthRaw)
 
   // Resolve settings early — `encodeUrl` gates the query assembly. Then assemble
   // the final outgoing URL: resolved base (+ any api-key query) plus the resolved
@@ -367,8 +449,7 @@ export async function execute(
   ) {
     if (!workspacePath) {
       return {
-        scriptResults:
-          scriptResults.preRequest || scriptResults.postResponse ? scriptResults : undefined,
+        scriptResults: maskedScripts(scriptResults, envChanges),
         environmentChanges: envChanges,
         error:
           'Multipart request requires a workspacePath in ExecuteOptions to read staged file parts.'
@@ -379,8 +460,7 @@ export async function execute(
       multipartEncoded = { contentType: encoded.contentType, body: encoded.body }
     } catch (err) {
       return {
-        scriptResults:
-          scriptResults.preRequest || scriptResults.postResponse ? scriptResults : undefined,
+        scriptResults: maskedScripts(scriptResults, envChanges),
         environmentChanges: envChanges,
         error: describeError(err)
       }
@@ -428,7 +508,13 @@ export async function execute(
       // recompute it for the real first dispatch, so drop the duplicate.
       cookieSession.sent.length = 0
     } catch (err) {
-      console.error('[execute] cookie jar read failed:', err)
+      // The send still goes out — without stored cookies, which is exactly what
+      // the user needs to be told when the server then answers unauthenticated.
+      pushTransportWarning({
+        code: 'COOKIE_JAR_UNAVAILABLE',
+        phase: 'read',
+        reason: describeError(err)
+      })
       cookieSession = undefined
     }
   }
@@ -439,15 +525,17 @@ export async function execute(
       // TLS cert refs resolve against plaintext (a secret could name a cert
       // path); the result only reads a file, it is never logged.
       const tlsVariables = secrets ? { ...variables, ...secrets.scriptEnvironment } : variables
-      tlsMaterial = await resolveTls(wireUrl, tlsVariables)
+      tlsMaterial = await resolveTls(wireUrl, tlsVariables, (reason) =>
+        pushTransportWarning({ code: 'TLS_MATERIAL_UNAVAILABLE', reason })
+      )
     } catch (err) {
       // REQ-0089: a contractual secret failure resolving the client-cert
       // passphrase (locked / needs-value / corrupt) must surface before the
       // handshake, not be swallowed as an opaque TLS error — re-throw it.
       if (err instanceof CoreError && err.code.startsWith('SECRETS_')) throw err
       // Any other TLS resolution glitch (e.g. an unreadable cert file) never
-      // blocks a send: log and fall through with no extra material.
-      console.error('[execute] TLS resolution failed:', err)
+      // blocks a send: advise and fall through with no extra material.
+      pushTransportWarning({ code: 'TLS_MATERIAL_UNAVAILABLE', reason: describeError(err) })
     }
   }
 
@@ -477,6 +565,8 @@ export async function execute(
       {
         signal,
         proxy,
+        userAgent,
+        onWarning: pushTransportWarning,
         settings: resolvedSettings,
         tls: tlsMaterial,
         binaryBody,
@@ -504,19 +594,32 @@ export async function execute(
         // half-truth, and this is exactly the send they are trying to explain.
         failedCookies = { sent: cookieSession.sent, received: cookieSession.offered }
       } catch (flushErr) {
-        console.error('[execute] cookie jar flush after send failure:', flushErr)
+        pushTransportWarning({
+          code: 'COOKIE_JAR_UNAVAILABLE',
+          phase: 'persist',
+          reason: describeError(flushErr)
+        })
       }
     }
+    const failedWarnings = [
+      ...queryWarnings,
+      ...unresolvedWarnings,
+      ...failedCookieWarnings,
+      ...transportWarnings
+    ]
+    const failedScripts = maskedScripts(scriptResults, envChanges)
     return {
       // Never `err.message`: the failure raised when every address of a
       // multi-address host is refused leaves its own message empty, and an
       // empty reason is indistinguishable from "no error" for every consumer.
       error: describeError(err),
       resolvedSettings,
+      // A pre-request script already ran: its output and its environment writes
+      // are part of the run whatever happened on the wire afterwards.
+      ...(failedScripts ? { scriptResults: failedScripts } : {}),
+      ...(envChanges ? { environmentChanges: envChanges } : {}),
       ...(failedCookies ? { cookies: failedCookies } : {}),
-      ...(queryWarnings.length + unresolvedWarnings.length + failedCookieWarnings.length > 0
-        ? { warnings: [...queryWarnings, ...unresolvedWarnings, ...failedCookieWarnings] }
-        : {})
+      ...(failedWarnings.length > 0 ? { warnings: failedWarnings } : {})
     }
   }
 
@@ -534,7 +637,11 @@ export async function execute(
       cookieWarnings = toCookieWarnings(cookieSession)
       if (wrote) onCookiesCaptured?.(environmentId!)
     } catch (err) {
-      console.error('[execute] cookie jar capture failed:', err)
+      pushTransportWarning({
+        code: 'COOKIE_JAR_UNAVAILABLE',
+        phase: 'persist',
+        reason: describeError(err)
+      })
     }
   } else if (rawSetCookie.length > 0) {
     // The jar did not run for this send — no environment selected, the request
@@ -644,8 +751,7 @@ export async function execute(
 
   return {
     response: maskedResponse,
-    scriptResults:
-      scriptResults.preRequest || scriptResults.postResponse ? scriptResults : undefined,
+    scriptResults: maskedScripts(scriptResults, envChanges),
     environmentChanges: envChanges,
     resolvedSettings,
     cookies: cookiesSummary,
@@ -661,8 +767,21 @@ export async function execute(
     // load — while unresolved references can arise on either.
     // REQ-0115: cookie advisories ride the same channel. Ordered last so the
     // pre-existing kinds keep their position for consumers that read positionally.
-    ...(queryWarnings.length + unresolvedWarnings.length + cookieWarnings.length > 0
-      ? { warnings: [...queryWarnings, ...unresolvedWarnings, ...cookieWarnings] }
+    // CLI readiness: transport/TLS/decoding advisories come after them, for the
+    // same reason.
+    ...(queryWarnings.length +
+      unresolvedWarnings.length +
+      cookieWarnings.length +
+      transportWarnings.length >
+    0
+      ? {
+          warnings: [
+            ...queryWarnings,
+            ...unresolvedWarnings,
+            ...cookieWarnings,
+            ...transportWarnings
+          ]
+        }
       : {})
   }
 }

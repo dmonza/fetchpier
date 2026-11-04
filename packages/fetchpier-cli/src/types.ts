@@ -28,8 +28,17 @@ export interface RunOptions {
   workspace?: string
   /** Environment name. When omitted, resolved from env var / `default`. */
   environment?: string
-  /** Overrides from repeated `--env-var "K=V"`. */
+  /** Overrides from repeated `--env-var "K=V"`. Script writes win over them once made. */
   envVars?: Record<string, string>
+  /**
+   * Persist script environment changes into the local value layer, exactly as
+   * the desktop does (`--persist-env`). Default: changes live for the run only.
+   */
+  persistEnv?: boolean
+  /** Proxy for every request (`--proxy`); wins over `HTTPS_PROXY` / `HTTP_PROXY`. */
+  proxy?: string
+  /** Ignore `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` (`--no-proxy`). */
+  noProxy?: boolean
   bail?: boolean
   /** Milliseconds to wait between requests. */
   delay?: number
@@ -40,11 +49,15 @@ export interface RunOptions {
   noColor?: boolean
   ascii?: boolean
   verbosity?: Verbosity
+  /**
+   * Per-request timeout in milliseconds. `0` disables it. Programmatic callers
+   * that omit it get the binary's default (30 s).
+   */
   timeoutMs?: number
   saveHistory?: boolean
   /** Always exit 0 even when tests fail (still nonzero for fatal errors). */
   suppressExitCode?: boolean
-  /** Do not redact Authorization headers in reporters. */
+  /** Do not redact credentials (Authorization, API-key auth) and cookie values in output. */
   showSecrets?: boolean
   /** Cancellation signal (wired from SIGINT/SIGTERM by the binary). */
   signal?: AbortSignal
@@ -86,7 +99,14 @@ export interface RequestUnit {
     headers: Record<string, string>
     body: string
     timingMs: number
+    /** Byte length of the body as read (after decoding). Unchanged meaning. */
     sizeBytes: number
+    /** Body bytes as received on the wire. Additive (schema stays `1.0`). */
+    compressedBytes?: number
+    /** Body bytes after decoding; equals `compressedBytes` when nothing was decoded. */
+    decompressedBytes?: number
+    /** `decoded` · `not-required` · `unsupported` · `failed`. */
+    decodingStatus?: 'decoded' | 'not-required' | 'unsupported' | 'failed'
   }
   scripts: {
     preRequest?: { logs: ScriptLog[]; errors: ScriptError[]; mutations?: ScriptMutationSummary }
@@ -113,7 +133,13 @@ export interface RunSummary {
   schemaVersion: '1.0'
   fetchpier: { cliVersion: string }
   workspace: string
+  /** The environment's opaque identifier (unchanged). */
   environment: string
+  /**
+   * The environment's folder name — what `--env` accepts and `fp env list`
+   * prints. Optional and additive: `schemaVersion` does not move.
+   */
+  environmentName?: string
   /** ISO timestamp. */
   startedAt: string
   /** ISO timestamp. */

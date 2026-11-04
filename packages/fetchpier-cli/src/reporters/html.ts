@@ -3,6 +3,7 @@ import { escapeHtml } from '../output/escape'
 import { formatDuration, formatSize } from '../output/formatters'
 import type { RequestUnit, RunSummary } from '../types'
 import type { Reporter, RunMeta, UnitStart } from './types'
+import { responselessLabel } from './unit-outcome'
 
 export interface HtmlReporterOptions {
   output: string
@@ -60,7 +61,7 @@ export class HtmlReporter implements Reporter {
   <h1>Fetchpier run report</h1>
   <dl class="meta">
     <div><dt>Workspace</dt><dd>${escapeHtml(s.workspace)}</dd></div>
-    <div><dt>Environment</dt><dd>${escapeHtml(s.environment)}</dd></div>
+    <div><dt>Environment</dt><dd>${escapeHtml(s.environmentName ?? s.environment)}</dd></div>
     <div><dt>Started</dt><dd>${escapeHtml(s.startedAt)}</dd></div>
     <div><dt>Duration</dt><dd>${formatDuration(s.durationMs)}</dd></div>
   </dl>
@@ -88,11 +89,17 @@ ${s.units.map((u) => this.renderUnit(u)).join('\n')}
     const failed = unitFailed(u)
     const status = u.response
       ? `${u.response.status} ${escapeHtml(u.response.statusText)}`
-      : 'not sent'
+      : responselessLabel(u)
     // REQ-0111: when nothing came back, the reason is the only useful thing to
     // show in place of the timing/size metadata.
     const meta = u.response
-      ? `${formatDuration(u.response.timingMs)} · ${formatSize(u.response.sizeBytes)}`
+      ? `${formatDuration(u.response.timingMs)} · ${
+          u.response.decodingStatus === 'decoded' &&
+          u.response.compressedBytes !== undefined &&
+          u.response.decompressedBytes !== undefined
+            ? `${formatSize(u.response.compressedBytes)} (${formatSize(u.response.decompressedBytes)} decoded)`
+            : formatSize(u.response.sizeBytes)
+        }`
       : u.error
         ? escapeHtml(u.error)
         : ''

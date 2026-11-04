@@ -4,7 +4,7 @@ import type {
   ScriptLog as CoreScriptLog
 } from '@shared/types'
 import type { RequestUnit, ScriptError, ScriptLog, ScriptMutationSummary } from '../../types'
-import { redactHeaders } from '../../output/formatters'
+import { redactHeaders, redactUrl, type ApiKeyCredential } from '../../output/formatters'
 
 export interface ResolvedRequestView {
   method: string
@@ -93,8 +93,10 @@ export function toRequestUnit(args: {
   result: ExecutedRequestResult
   durationMs: number
   showSecrets: boolean
+  /** The request's API-key auth credential, redacted in every report unless `showSecrets`. */
+  apiKey?: ApiKeyCredential
 }): RequestUnit {
-  const { path, resolved, result, durationMs, showSecrets } = args
+  const { path, resolved, result, durationMs, showSecrets, apiKey } = args
 
   const pre = mapSection(result.scriptResults?.preRequest)
   const post = mapSection(result.scriptResults?.postResponse)
@@ -112,7 +114,9 @@ export function toRequestUnit(args: {
   // populate `request`.
   const snapshot = result.request
   const reqMethod = snapshot?.method ?? resolved.method
-  const reqUrl = snapshot?.url ?? resolved.url
+  // Redaction happens here, upstream of every reporter, so the terminal and the
+  // JSON / JUnit / HTML reports can never disagree about what they hide.
+  const reqUrl = redactUrl(snapshot?.url ?? resolved.url, apiKey, showSecrets)
   const reqHeaders = snapshot?.headers ?? resolved.headers
   const reqBody = snapshot?.body ?? resolved.body
 
@@ -123,7 +127,7 @@ export function toRequestUnit(args: {
     request: {
       method: reqMethod,
       url: reqUrl,
-      headers: redactHeaders(reqHeaders, showSecrets),
+      headers: redactHeaders(reqHeaders, showSecrets, apiKey),
       ...(reqBody !== undefined ? { body: reqBody } : {})
     },
     response: result.response
@@ -133,7 +137,16 @@ export function toRequestUnit(args: {
           headers: redactHeaders(result.response.headers, showSecrets),
           body: result.response.body,
           timingMs: result.response.timingMs,
-          sizeBytes: result.response.sizeBytes
+          sizeBytes: result.response.sizeBytes,
+          ...(result.response.compressedBytes !== undefined
+            ? { compressedBytes: result.response.compressedBytes }
+            : {}),
+          ...(result.response.decompressedBytes !== undefined
+            ? { decompressedBytes: result.response.decompressedBytes }
+            : {}),
+          ...(result.response.decodingStatus
+            ? { decodingStatus: result.response.decodingStatus }
+            : {})
         }
       : undefined,
     scripts: {

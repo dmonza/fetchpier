@@ -130,19 +130,21 @@ describe('REQ-0083 auth round-trip', () => {
     const text =
       '# @auth\n# type: oauth2\n# token: {{token}}\n# @end-auth\n\n' +
       'GET https://api.example.com\nAuthorization: Bearer {{token}}\n'
-    const parsed = parseHttpFile(text).requests[0]
+    const file = parseHttpFile(text)
+    const parsed = file.requests[0]
     expect(parsed.auth).toBeUndefined()
     expect(parsed.headers['Authorization']).toBe('Bearer {{token}}')
-    expect(warn).toHaveBeenCalled()
+    expect(file.warnings?.some((w) => w.includes('# @auth'))).toBe(true)
+    expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
   })
 
   it('malformed block (missing required field) → warn + none', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const parsed = parseHttpFile('# @auth\n# type: bearer\n# @end-auth\n\nGET https://x\n')
-      .requests[0]
-    expect(parsed.auth).toBeUndefined()
-    expect(warn).toHaveBeenCalled()
+    const file = parseHttpFile('# @auth\n# type: bearer\n# @end-auth\n\nGET https://x\n')
+    expect(file.requests[0].auth).toBeUndefined()
+    expect(file.warnings).toHaveLength(1)
+    expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
   })
 
@@ -158,17 +160,19 @@ describe('REQ-0083 auth round-trip', () => {
     expect(parsed.requests[0].method).toBe('GET')
     expect(parsed.requests[0].url).toBe('https://x/y')
     expect(parsed.requests[0].auth).toBeUndefined()
-    expect(warn).toHaveBeenCalled()
+    expect(parsed.warnings?.[0]).toContain('missing "# @end-auth"')
+    expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
   })
 
   it('malformed block (unknown key) → warn + none', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const parsed = parseHttpFile(
+    const file = parseHttpFile(
       '# @auth\n# type: bearer\n# token: t\n# bogus: x\n# @end-auth\n\nGET https://x\n'
-    ).requests[0]
-    expect(parsed.auth).toBeUndefined()
-    expect(warn).toHaveBeenCalled()
+    )
+    expect(file.requests[0].auth).toBeUndefined()
+    expect(file.warnings).toHaveLength(1)
+    expect(warn).not.toHaveBeenCalled()
     warn.mockRestore()
   })
 

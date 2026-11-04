@@ -292,7 +292,8 @@
     },
     "headers": {
       "keyPlaceholder": "Header",
-      "valuePlaceholder": "Valor"
+      "valuePlaceholder": "Valor",
+      "implicitDefault": "Se envía por defecto — agregá un header con este nombre para enviar tu propio valor"
     },
     "bodyTypes": {
       "none": "ninguno",
@@ -392,6 +393,22 @@
     "collapse": "Colapsar fila"
   },
   "response": {
+    "size": {
+      "decoded": "{{compressed}} ({{decompressed}} descomprimido)",
+      "decodedTitle": "Tamaño recibido por la red y después de descomprimirlo",
+      "unsupported": "Sin decodificar: codificación no soportada ({{encoding}}) — se muestra el body tal como llegó",
+      "failed": "No se pudo decodificar ({{encoding}}) — se muestra el body tal como llegó"
+    },
+    "notices": {
+      "cookieJarRead": "No se pudo leer el cookie jar: el request se envió sin las cookies guardadas ({{reason}}).",
+      "cookieJarPersist": "No se pudo guardar el cookie jar: las cookies de esta respuesta no se almacenaron ({{reason}}).",
+      "tls": "TLS: {{reason}}. El request se envió sin ese material.",
+      "http2Downgraded": "Se pidió HTTP/2 sobre HTTP sin TLS; se usó HTTP/1.1.",
+      "contentTypeReplaced": "Tu header Content-Type se reemplazó por el de multipart (lleva el boundary).",
+      "envWriteKeyMissing": "El script asignó el secreto \"{{name}}\", pero no se pudo guardar: el workspace está bloqueado.",
+      "envWriteKeyMismatch": "El script asignó el secreto \"{{name}}\", pero no se pudo guardar: los valores locales de este environment usan una clave anterior del workspace.",
+      "dismiss": "Descartar"
+    },
     "empty": "Enviá un request para ver la respuesta",
     "emptyTitle": "Listo para enviar",
     "emptyHint": "Presioná <kbd>Ctrl</kbd>+<kbd>Enter</kbd> para enviar el request actual",

@@ -120,3 +120,34 @@ describe('expandPaths — explicit paths', () => {
     ])
   })
 })
+
+describe('expandPaths — a target with nothing to run is fatal (exit 19)', () => {
+  it('an explicit folder with no .http file', async () => {
+    mkdirSync(join(ws, 'requests', 'empty'))
+    const err = await rejection(expandPaths(['requests/empty'], ws, ws))
+    expect(err.exitCode).toBe(EXIT.NO_REQUESTS)
+    expect(err.message).toContain(join(ws, 'requests', 'empty'))
+  })
+
+  it('a folder holding only non-.http files and skipped folders', async () => {
+    mkdirSync(join(ws, 'requests', 'docs', '.runs'), { recursive: true })
+    writeFileSync(join(ws, 'requests', 'docs', 'readme.md'), '# notes\n')
+    writeFileSync(join(ws, 'requests', 'docs', '.runs', 'old.http'), 'GET http://x/\n')
+    const err = await rejection(expandPaths(['requests/docs'], ws, ws))
+    expect(err.exitCode).toBe(EXIT.NO_REQUESTS)
+  })
+
+  it('the workspace requests/ folder when no path is given', async () => {
+    rmSync(join(ws, 'requests'), { recursive: true, force: true })
+    mkdirSync(join(ws, 'requests'))
+    const err = await rejection(expandPaths([], root, ws))
+    expect(err.exitCode).toBe(EXIT.NO_REQUESTS)
+    expect(err.message).toContain(join(ws, 'requests'))
+  })
+
+  it('one empty folder among several paths is enough', async () => {
+    mkdirSync(join(ws, 'requests', 'empty'))
+    const err = await rejection(expandPaths(['requests/a.http', 'requests/empty'], ws, ws))
+    expect(err.exitCode).toBe(EXIT.NO_REQUESTS)
+  })
+})

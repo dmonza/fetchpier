@@ -1,18 +1,66 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { requests, CoreError, describeError } from '@fetchpier/core'
 import { readAppSettings } from './appsettings.ipc'
 import type {
+  EnvironmentChanges,
   HttpRequest,
   ParsedHttpFile,
   ExecutedRequestResult,
   WorkspaceHttpSettings
 } from '../../shared/types'
+import { desktopUserAgent } from '../../shared/types'
 import { getCachedHttpSettings, loadHttpSettings } from '../config/workspace-settings-store'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../config/defaults'
 import { requireActiveWorkspaceHandle } from '../state/active-workspace'
 import { resolveTlsForUrl } from '../tls/store'
-import { buildSendMasker, lockAllSecrets, resolvePassphraseSecrets } from '../secrets/service'
-import { loadMergedEnvironment, persistScriptEnvChanges } from '../secrets/local-values'
+import { lockAllSecrets } from '../secrets/service'
+import { getWorkspaceKey } from '../secrets/keystore'
+import { normalizeLocalLayer } from '../secrets/local-values'
+
+/** Replace the values of secret-named entries with their log mask. */
+function maskChanges(
+  changes: EnvironmentChanges | undefined,
+  secretNames: ReadonlySet<string>
+): EnvironmentChanges | undefined {
+  if (!changes) return changes
+  return {
+    set: Object.fromEntries(
+      Object.entries(changes.set).map(([k, v]) => [k, secretNames.has(k) ? `{secret:${k}}` : v])
+    ),
+    removed: changes.removed
+  }
+}
+
+/**
+ * The send result as the renderer may see it: environment changes a script wrote
+ * under a secret name carry `{secret:<name>}`, never the value (the engine already
+ * masked the script output itself).
+ */
+function maskSecretEnvironmentChanges(
+  result: ExecutedRequestResult,
+  secretNames: string[]
+): ExecutedRequestResult {
+  if (secretNames.length === 0) return result
+  const names = new Set(secretNames)
+  const section = <T extends { environmentChanges?: EnvironmentChanges }>(s: T | undefined) =>
+    s ? { ...s, environmentChanges: maskChanges(s.environmentChanges, names) } : s
+  return {
+    ...result,
+    environmentChanges: maskChanges(result.environmentChanges, names),
+    ...(result.scriptResults
+      ? {
+          scriptResults: {
+            ...(result.scriptResults.preRequest
+              ? { preRequest: section(result.scriptResults.preRequest) }
+              : {}),
+            ...(result.scriptResults.postResponse
+              ? { postResponse: section(result.scriptResults.postResponse) }
+              : {})
+          }
+        }
+      : {})
+  }
+}
 
 let activeEnvironmentId: string | null = null
 
@@ -81,7 +129,13 @@ export function registerRequestHandlers(): void {
 
       const abortController = new AbortController()
       if (executionId) inFlightControllers.set(executionId, abortController)
-      const timeoutId = setTimeout(() => abortController.abort(), requestTimeoutSeconds * 1000)
+      // The abort reason lets the engine report "timed out after N s" rather than
+      // a cancellation the user never asked for.
+      const timeoutMs = requestTimeoutSeconds * 1000
+      const timeoutId = setTimeout(
+        () => abortController.abort(requests.timeoutAbortReason(timeoutMs)),
+        timeoutMs
+      )
 
       let effectiveRequest = request
       let binaryBody: Buffer | undefined
@@ -148,78 +202,51 @@ export function registerRequestHandlers(): void {
         }
       }
 
-      // REQ-0067: resolve `{{$env.NAME}}` references in the environment-supplied
-      // variables before they enter the request pipeline. The resolution always
-      // produces a string (possibly empty) — see the handle's dotenv.resolveReferences.
-      // REQ-0104: guarded like the binary/multipart pre-flight branches above —
-      // any failure here must not leave the execution registered forever.
-      if (workspacePathForCore && effectiveRequest.variables) {
-        try {
-          effectiveRequest = {
-            ...effectiveRequest,
-            variables: await requireActiveWorkspaceHandle().dotenv.resolveReferences(
-              effectiveRequest.variables,
-              process.env
-            )
-          }
-        } catch (err) {
-          clearTimeout(timeoutId)
-          if (executionId) inFlightControllers.delete(executionId)
-          const message = err instanceof Error ? err.message : String(err)
-          return { error: message }
-        }
-      }
-
-      // REQ-0074: resolve the local value layer (`.state/localvalues.json`). Overlay
-      // plain local overrides + local-only names onto the interpolation variables,
-      // and use the merged secret map (local encrypted overrides win) for masking.
-      // Lazy re-wrap / orphan cleanup run inside loadMergedEnvironment. A failure
-      // here degrades to the shared layer rather than blocking the send.
-      let mergedSecretsMap: Record<string, string | null> | undefined
+      // The core owns the send's variables (CLI readiness — the same session the
+      // command line uses): `{{$env.NAME}}` resolution over the variables the
+      // renderer sent, the per-machine local layer, the secrets this request
+      // references (markers seeded, contractual SECRETS_* failures before the
+      // send), and — after the send — the script writes, always persisted to the
+      // local layer. Only the lazy re-wrap / orphan cleanup of that layer stays
+      // here (it needs the key store's retained old key — declared debt).
+      // REQ-0104: every failure here deregisters the execution.
+      let session: requests.VariableSession | undefined
+      let prepared: requests.PreparedSend | undefined
       let localOrphanNotice: { environmentId: string; variables: string[] } | undefined
-      if (workspacePathForCore && activeEnvironmentId) {
-        try {
-          const { merged, localPlainOverlay, orphanNotice } = await loadMergedEnvironment(
-            workspacePathForCore,
-            activeEnvironmentId
-          )
-          mergedSecretsMap = merged.secretsMap
-          localOrphanNotice = orphanNotice
-          if (Object.keys(localPlainOverlay).length > 0) {
-            effectiveRequest = {
-              ...effectiveRequest,
-              variables: { ...(effectiveRequest.variables ?? {}), ...localPlainOverlay }
-            }
-          }
-        } catch (err) {
-          console.error('[request.ipc] local value layer resolution failed:', err)
-        }
-      }
-
-      // REQ-0070: resolve the secrets this request references and seed the
-      // marker variables. Contractual failures (locked / needs-value / corrupt)
-      // surface before the send — no request is emitted.
-      let sendMasker: Awaited<ReturnType<typeof buildSendMasker>>
       if (workspacePathForCore) {
         try {
-          sendMasker = await buildSendMasker(
-            workspacePathForCore,
-            activeEnvironmentId,
-            effectiveRequest,
-            mergedSecretsMap
-          )
+          if (activeEnvironmentId) {
+            try {
+              localOrphanNotice = await normalizeLocalLayer(
+                workspacePathForCore,
+                activeEnvironmentId
+              )
+            } catch (err) {
+              // Degrades to the layer as it is on disk: the merge treats a
+              // stale entry as an orphan, so resolution falls back to shared.
+              console.error('[request.ipc] local value layer normalization failed:', err)
+            }
+          }
+          const handle = requireActiveWorkspaceHandle()
+          session = await requests.createVariableSession({
+            workspace: handle,
+            environmentId: activeEnvironmentId,
+            basePlainVariables: effectiveRequest.variables ?? {},
+            processEnv: process.env,
+            getKey: async () => {
+              const keyId = (await handle.secrets.readManifest())?.encryption.keyId
+              return keyId ? getWorkspaceKey(keyId) : null
+            },
+            persistence: 'persist'
+          })
+          prepared = await session.prepare(effectiveRequest)
+          effectiveRequest = prepared.request
         } catch (err) {
           clearTimeout(timeoutId)
           if (executionId) inFlightControllers.delete(executionId)
           const errorCode = err instanceof CoreError ? err.code : undefined
           const message = err instanceof Error ? err.message : String(err)
-          return { error: message, errorCode }
-        }
-        if (sendMasker) {
-          effectiveRequest = {
-            ...effectiveRequest,
-            variables: { ...(effectiveRequest.variables ?? {}), ...sendMasker.markerVariables }
-          }
+          return errorCode ? { error: message, errorCode } : { error: message }
         }
       }
 
@@ -230,24 +257,21 @@ export function registerRequestHandlers(): void {
           workspaceSettings,
           proxy,
           signal: abortController.signal,
+          userAgent: desktopUserAgent(app.getVersion()),
+          ...(prepared ? { secretNames: prepared.secretNames } : {}),
           // REQ-0089: core owns workspace TLS resolution keyed off the path; the
           // passphrase-secret resolver is bound here so a secret-referencing
           // passphrase decrypts lazily under the unlocked key.
-          resolveTls: (url, env) =>
+          resolveTls: (url, env, onWarning) =>
             resolveTlsForUrl(url, env, {
               workspacePath: workspacePathForCore ?? null,
-              resolvePassphraseSecrets: (names) =>
-                resolvePassphraseSecrets(
-                  workspacePathForCore as string,
-                  activeEnvironmentId,
-                  names,
-                  mergedSecretsMap
-                )
+              ...(prepared ? { resolvePassphraseSecrets: prepared.resolvePassphraseSecrets } : {}),
+              ...(onWarning ? { onWarning } : {})
             }),
           onCookiesCaptured: (envId) => broadcastCookiesChanged(envId),
           binaryBody,
           workspacePath: workspacePathForCore,
-          secrets: sendMasker
+          secrets: prepared?.masker
         })
       } catch (err) {
         // The pipeline surfaces request/script failures in-band; a thrown error
@@ -267,17 +291,17 @@ export function registerRequestHandlers(): void {
       }
 
       // REQ-0074: persist script-written environment changes to the LOCAL layer
-      // (`localvalues.json`), never the shared `config.json` (CA-02). The send already
-      // completed, so a persistence failure is logged, not surfaced as a request
-      // error. Broadcast so an open editor refreshes its Local column.
-      if (workspacePathForCore && activeEnvironmentId) {
+      // (`localvalues.json`), never the shared `config.json` — now through the
+      // core's single writer. A write that cannot be persisted (no key) is an
+      // advisory on the result, not a log line. Broadcast so an open editor
+      // refreshes its Local column.
+      if (session && activeEnvironmentId) {
         if (result.environmentChanges) {
           try {
-            await persistScriptEnvChanges(
-              workspacePathForCore,
-              activeEnvironmentId,
-              result.environmentChanges
-            )
+            const notPersisted = await session.apply(result.environmentChanges)
+            if (notPersisted.length > 0) {
+              result = { ...result, warnings: [...(result.warnings ?? []), ...notPersisted] }
+            }
             broadcastLocalValuesChanged(activeEnvironmentId, localOrphanNotice)
           } catch (err) {
             console.error('[request.ipc] failed to persist local env changes:', err)
@@ -287,7 +311,10 @@ export function registerRequestHandlers(): void {
         }
       }
 
-      return result
+      // The renderer never receives secret plaintext in bulk (§5 renderer
+      // containment): a value a script wrote under a secret name leaves main
+      // masked. The session already consumed the plaintext above.
+      return prepared ? maskSecretEnvironmentChanges(result, prepared.secretNames) : result
     }
   )
 

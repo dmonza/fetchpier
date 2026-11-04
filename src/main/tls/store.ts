@@ -59,12 +59,15 @@ export function resolveTlsForUrl(
   ctx: {
     workspacePath: string | null
     resolvePassphraseSecrets?: (names: string[]) => Promise<Record<string, string>>
+    /** Material that could not be applied — becomes a send advisory. */
+    onWarning?: (reason: string) => void
   }
 ): Promise<coreTls.ResolvedTlsMaterial> {
   return coreTls.resolveRequestTls(url, environment, {
     workspacePath: ctx.workspacePath,
     appGlobal: buildAppGlobalTls(),
-    resolvePassphraseSecrets: ctx.resolvePassphraseSecrets
+    resolvePassphraseSecrets: ctx.resolvePassphraseSecrets,
+    ...(ctx.onWarning ? { onWarning: ctx.onWarning } : {})
   })
 }
 

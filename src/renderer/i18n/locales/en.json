@@ -292,7 +292,8 @@
     },
     "headers": {
       "keyPlaceholder": "Header",
-      "valuePlaceholder": "Value"
+      "valuePlaceholder": "Value",
+      "implicitDefault": "Sent by default — add a header with this name to send your own value"
     },
     "bodyTypes": {
       "none": "none",
@@ -392,6 +393,22 @@
     "collapse": "Collapse row"
   },
   "response": {
+    "size": {
+      "decoded": "{{compressed}} ({{decompressed}} decoded)",
+      "decodedTitle": "Size received over the network, and after decompressing it",
+      "unsupported": "Not decoded: unsupported encoding ({{encoding}}) — showing the body as received",
+      "failed": "Could not be decoded ({{encoding}}) — showing the body as received"
+    },
+    "notices": {
+      "cookieJarRead": "The cookie jar could not be read, so the request was sent without stored cookies ({{reason}}).",
+      "cookieJarPersist": "The cookie jar could not be saved; cookies set by this response were not stored ({{reason}}).",
+      "tls": "TLS: {{reason}}. The request was sent without it.",
+      "http2Downgraded": "HTTP/2 was requested over plain HTTP; HTTP/1.1 was used.",
+      "contentTypeReplaced": "Your Content-Type header was replaced by the multipart one (it carries the boundary).",
+      "envWriteKeyMissing": "The script set secret \"{{name}}\", but it could not be saved: the workspace is locked.",
+      "envWriteKeyMismatch": "The script set secret \"{{name}}\", but it could not be saved: this environment's local values use a previous workspace key.",
+      "dismiss": "Dismiss"
+    },
     "empty": "Send a request to see the response",
     "emptyTitle": "Ready to send",
     "emptyHint": "Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to send the current request",

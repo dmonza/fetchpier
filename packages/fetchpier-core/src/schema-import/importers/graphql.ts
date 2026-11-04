@@ -25,7 +25,7 @@ import type {
   KeyValuePair,
   HttpRequest
 } from '@shared/types'
-import { DEFAULT_REQUEST_STATE, DEFAULT_USER_AGENT } from '@shared/types'
+import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import { sanitizeName } from '../sanitize'
 import { prettyJson } from '../example-generator'
 
@@ -173,7 +173,6 @@ function buildOperation(args: {
   const bodyText = prettyJson(bodyObj)
 
   const headers: KeyValuePair[] = [
-    { id: 'h-ua-default', key: 'User-Agent', value: DEFAULT_USER_AGENT, enabled: true },
     { id: 'h-content-type', key: 'Content-Type', value: 'application/json', enabled: true }
   ]
 
@@ -191,7 +190,6 @@ function buildOperation(args: {
     method: 'POST',
     url: endpointUrl,
     headers: {
-      'User-Agent': DEFAULT_USER_AGENT,
       'Content-Type': 'application/json'
     },
     body: bodyText

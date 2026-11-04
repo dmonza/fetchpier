@@ -1,7 +1,8 @@
 /**
- * REQ-0074/0076 — CLI parity for the local value layer. The CLI is READ-ONLY: it
- * merges `.state/localvalues.json` for resolution but never re-wraps or removes
- * orphans (CI must not mutate the working tree).
+ * REQ-0074/0076 — CLI parity for the local value layer. The CLI merges
+ * `.state/localvalues.json` for resolution but never re-wraps or removes orphans
+ * (CI must not mutate the working tree); it writes script changes there only with
+ * `--persist-env` (covered by CLI-101 / CLI-102 in ci-readiness.test.ts).
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
@@ -119,14 +120,15 @@ describe('CLI local value layer (REQ-0074)', () => {
     writeReq(ws, 'GET {{baseUrl}}/me\nX-Token: {{apiToken}}\n')
     const valuesPath = secrets.localValuesPath(ws, 'default')
     const before = readFileSync(valuesPath, 'utf-8')
-    const stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    let warnings = ''
 
     const summary = await executeRun(
       { paths: ['requests/req.http'], workspace: ws },
       {
         cwd: ws,
         env: { FETCHPIER_WORKSPACE_KEY: fpk } as NodeJS.ProcessEnv,
-        reporterContext: silentCtx
+        // The orphan notice goes through the reporter's warning channel (stderr).
+        reporterContext: { write: () => {}, writeErr: (l: string) => (warnings += l) }
       }
     )
 
@@ -136,9 +138,8 @@ describe('CLI local value layer (REQ-0074)', () => {
     expect(seen[0].headers['x-token']).toBe('SHARED-TOKEN')
     // The local file is untouched (no re-wrap, no cleanup).
     expect(readFileSync(valuesPath, 'utf-8')).toBe(before)
-    // A warning went to stderr.
-    expect(stderrSpy).toHaveBeenCalled()
-    expect(String(stderrSpy.mock.calls[0][0])).toMatch(/apiToken/)
+    // A warning went to stderr, naming the variable.
+    expect(warnings).toMatch(/Warning: .*apiToken/)
   })
 
   // CA-07 boundary: orphan falling back onto a shared `null` is the only fatal case.

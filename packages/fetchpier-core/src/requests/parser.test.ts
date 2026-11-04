@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { parseHttpFile } from './parser'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -549,5 +549,37 @@ describe('REQ-0113 — malformed query parameter names do not abort the parse', 
     // `parseDisabledRow` shares the decode seam and was a third unguarded site.
     const content = ['GET https://api.example.com/x', '# @disabled param 0 %E0=v', ''].join('\n')
     expect(() => parseHttpFile(content)).not.toThrow()
+  })
+})
+
+describe('parseHttpFile — load-time diagnostics (CLI readiness)', () => {
+  it('reports diagnostics in the result instead of the process console', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const parsed = parseHttpFile(
+      [
+        '# @settings',
+        '# bogusKey: 1',
+        '# verifySsl: maybe',
+        '# @end-settings',
+        '',
+        'GET https://x/'
+      ].join('\n')
+    )
+    expect(parsed.requests).toHaveLength(1)
+    expect(parsed.warnings).toEqual([
+      'unknown # @settings key "bogusKey"',
+      expect.stringContaining('invalid # @settings value for "verifySsl"')
+    ])
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('a clean file carries no warnings field', () => {
+    expect(parseHttpFile('GET https://x/\n').warnings).toBeUndefined()
+  })
+
+  it('diagnostics do not leak from one parse into the next', () => {
+    parseHttpFile('# @settings\n# bogusKey: 1\n# @end-settings\n\nGET https://x/\n')
+    expect(parseHttpFile('GET https://x/\n').warnings).toBeUndefined()
   })
 })

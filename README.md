@@ -1,6 +1,6 @@
 # Fetchpier
 
-A desktop and CI/CD API client with the standard `.http` format, MIT — your files keep working in VS Code even if Fetchpier disappears tomorrow.
+A desktop and CI/CD API client, MIT licensed and in public beta. Your requests are plain `.http` files in your own repository.
 
 [![CI](https://github.com/dmonza/fetchpier/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dmonza/fetchpier/actions/workflows/ci.yml)
 [![Nightly](https://github.com/dmonza/fetchpier/actions/workflows/nightly.yml/badge.svg)](https://github.com/dmonza/fetchpier/actions/workflows/nightly.yml)
@@ -19,12 +19,12 @@ Fetchpier is a desktop application for working with HTTP APIs — sending reques
 Three commitments define it:
 
 - **The client is open source under a permissive license, forever.** MIT, all the code, all the features. There is no "Pro", no "Ultimate", no hidden features behind a paywall — and there never will be.
-- **Zero lock-in.** Requests are stored as plain `.http` files — the same format VS Code REST Client and JetBrains HTTP Client understand. If you stop using Fetchpier tomorrow, your collections keep working in any modern editor. There's nothing to "export to leave".
+- **Zero lock-in.** Requests are stored as plain `.http` files you can read in any editor, and simple requests also run in VS Code REST Client and JetBrains HTTP Client once you define their variables there. Environments, scripts and tests are Fetchpier-specific and would need to be recreated. There's nothing to "export to leave". The reverse is narrower: Fetchpier reads its own `.http` dialect and does not support those tools' extensions — file-level `@name = value` variables, a request line without a method, query parameters continued on following lines, a body read from a file with `< path`, `> {% … %}` response handlers, or their own dynamic variables. A file holding several requests separated by `###` runs only its first request.
 - **What gets built, gets built for everyone.** Every feature, fix, and improvement that lands in the client stays available to all users under MIT. No exclusive features for sponsors, no private builds, no tier system on the client.
 
 ## Why it exists
 
-Existing API clients pull in opposite directions. Some require cloud accounts and charge per seat. Some are open-source but keep advanced features behind paid plans. Some are excellent but maintained by a single developer with limited scope.
+Existing API clients pull in opposite directions. Some require cloud accounts and charge per seat. Some are open-source but keep advanced features behind paid plans. Some are excellent but narrower in scope.
 
 Fetchpier sits in a specific position: open-source under a permissive license, no paid tier of the client ever, format compatibility with tools developers already use. The client is fully free and complete — that's the design, not a strategy.
 
@@ -64,9 +64,9 @@ Development is sustained primarily by sponsorship: Sincrum (my studio) is the ma
 - Variables with live resolution feedback
 - Environment files are plain JSON, Git-friendly
 - `{{$env.NAME}}` references in variable values resolve from a workspace `.env` (gitignored by default) or the host shell, so secrets stay out of the repo
-- **Secret variables**: encrypt credentials in place (XChaCha20-Poly1305) with a per-workspace key so the ciphertext is safely committable and shared through Git; masked everywhere Fetchpier writes (activity log, reporters), revealed on demand (Touch ID-gated on macOS), with one-key backup and rotation. The CLI resolves them from `FETCHPIER_WORKSPACE_KEY`.
+- **Secret variables**: encrypt credentials in place (XChaCha20-Poly1305) with a per-workspace key so the ciphertext is safely committable and shared through Git; masked in the URLs, headers and bodies Fetchpier writes to the activity log and reports, and in what a script prints or a failed assertion reports (a value a script transforms — hashes, encodes — cannot be recognized), revealed on demand (Touch ID-gated on macOS), with one-key backup and rotation. The CLI resolves them from `FETCHPIER_WORKSPACE_KEY`.
 - **Workspace keys management**: a settings tab lists the workspace keys held on this machine (metadata only — never revealing the key), shows whether each is still referenced by a known workspace, and lets you delete stale keys or paste a key ahead of cloning its workspace.
-- **Local value overrides**: a per-machine, never-shared layer (shown as a Shared | Local two-column editor) holds personal credentials and script-written values without dirtying the committed team file. A per-variable **Sync** check shows whether each value follows the team or you have diverged — unchecking creates a personal override, re-checking returns it to the shared value. `fp.environment.set()` persists here across restarts; secret-named local values are encrypted like the shared ones, re-wrapped automatically on key rotation. The CLI applies them read-only.
+- **Local value overrides**: a per-machine, never-shared layer (shown as a Shared | Local two-column editor) holds personal credentials and script-written values without dirtying the committed team file. A per-variable **Sync** check shows whether each value follows the team or you have diverged — unchecking creates a personal override, re-checking returns it to the shared value. `fp.environment.set()` persists here across restarts; secret-named local values are encrypted like the shared ones, re-wrapped automatically on key rotation. The CLI applies them, and writes them only when run with `--persist-env`.
 
 **Scripting and testing**
 
@@ -82,7 +82,7 @@ Development is sustained primarily by sponsorship: Sincrum (my studio) is the ma
 - **Dual TLS scoping**: workspace-scope (`.fetchpier/certs/`, travels with Git like `.vscode/`) plus app-scope global. The bundled CA set deliberately ignores the OS trust store — corporate CAs are imported explicitly, which makes MITM proxy environments work predictably instead of failing in mysterious ways.
 - **Authorization-stripping on cross-host redirects** by default. Opt back in only when you actually need it.
 - **Sandbox with regression tests** that verify isolation against `Promise`, `setTimeout`, `SharedArrayBuffer`, `Atomics`, `WebAssembly`, `eval`, `new Function` and host-realm escapes via constructor chains.
-- **OS-level renderer sandbox**: the UI process runs as a pure Chromium process inside the operating system sandbox (no Node runtime, no arbitrary syscalls), with a regression test pinning the setting on. Privileged work happens only in the main process, behind validated IPC that answers only the app's own documents. The UI is refused every browser permission except the clipboard (no notifications, camera, microphone, location or device access), and a Content-Security-Policy refuses inline scripts and `eval`. Release binaries ship with hardened Electron fuses: they cannot be run as a plain Node.js runtime, ignore `NODE_OPTIONS` and debugger flags, and load only an integrity-checked application archive.
+- **OS-level renderer sandbox**: the UI process runs as a pure Chromium process inside the operating system sandbox (no Node runtime, no arbitrary syscalls), with a regression test pinning the setting on. Privileged work happens only in the main process, behind validated IPC that answers only the app's own documents. The UI is refused every browser permission except the clipboard (no notifications, camera, microphone, location or device access), and a Content-Security-Policy refuses inline scripts and `eval`. Release binaries ship with hardened Electron fuses: they cannot be run as a plain Node.js runtime, ignore `NODE_OPTIONS` and debugger flags, and, on Windows and macOS, load only an integrity-checked application archive.
 - **Declared network egress**: Fetchpier opens exactly one connection on its own account — the version check you trigger yourself from the updates panel, an HTTPS `GET` to `https://public.sincrum.com/products.json`. There is no check at startup and nothing runs in the background. Every other connection originates from your request configuration. No telemetry, no remote content in the UI (no web fonts, CDN scripts, or remote images). The renderer and preload boundary is enforced by lint, a build-time bundle audit, an end-to-end test, and a runtime Content-Security-Policy plus navigation guard that block off-origin connections and remote navigation outright — not just stated.
 
 **Schema importing**
@@ -154,7 +154,7 @@ Commit the folder to Git. Share it with your team. Open it in another editor. It
 
 ## Command-line interface
 
-Fetchpier has a companion CLI, **`fp`**, for running requests and inspecting environments from a terminal or CI pipeline. It runs the same engine as the desktop app — same variables, auth, cookies, scripts, and tests — so a request behaves identically whether you send it from the UI or the command line.
+Fetchpier has a companion CLI, **`fp`**, for running requests and inspecting environments from a terminal or CI pipeline. It runs the same engine as the desktop app — same variables, auth, cookies, scripts, and tests — so a single request behaves the same from the UI or the command line. Values set with `fp.environment.set()` reach every later request of the same run (a login's token reaches the next call); by default they live for the run only, and `--persist-env` saves them to the local values exactly as the desktop does.
 
 ```bash
 npm install -g @fetchpier/cli
@@ -168,7 +168,16 @@ fp run --reporter-junit out.xml               # emit a JUnit report for CI
 fp env list                                   # list environments
 ```
 
-It is installed separately from the desktop app and supports CLI, JSON, JUnit, and HTML reports plus distinct exit codes per outcome for CI. Full command and flag reference: [`packages/fetchpier-cli/README.md`](packages/fetchpier-cli/README.md).
+It is installed separately from the desktop app and supports CLI, JSON, JUnit, and HTML reports plus distinct exit codes per outcome for CI. It honours `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` (or `--proxy`), applies a 30 s per-request timeout by default, and redacts credentials and cookie values in its output. Full command and flag reference: [`packages/fetchpier-cli/README.md`](packages/fetchpier-cli/README.md).
+
+**`--persist-env` after a key rotation.** If a teammate rotated the workspace key and you pulled it, your machine's local values are still encrypted with the previous key until you open the workspace in the desktop app with the new key (it re-encrypts them). Until then, `fp run --persist-env`:
+
+- does not save script writes to **secret** variables;
+- prints a warning naming the cause and the fix (open the workspace in the desktop app with the new key);
+- keeps using the value in memory for the rest of the run;
+- saves writes to plain variables normally.
+
+This only happens on a developer machine — a CI checkout has no local values.
 
 ## Agentic engineering, not vibe coding
 
@@ -258,7 +267,7 @@ The client's copyright is personal, which keeps the project's continuity indepen
 - Website: [sincrum.com](https://sincrum.com)
 - LinkedIn: [linkedin.com/in/daniel-monza](https://www.linkedin.com/in/daniel-monza)
 
-If Sincrum ever stops operating, Fetchpier doesn't disappear: the client is MIT, the code is public, anyone can continue. Worst case the pace slows down — and the `.http` files you already have keep working in VS Code and JetBrains regardless.
+If Sincrum ever stops operating, Fetchpier doesn't disappear: the client is MIT, the code is public, anyone can continue. Worst case the pace slows down — and your `.http` files remain plain text in your own repository.
 
 ## Security
 

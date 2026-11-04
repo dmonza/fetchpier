@@ -4,10 +4,15 @@ import { CoreError, describeError, requests, secrets, tls, workspace } from '@fe
 import type {
   CookieRejectionReason,
   ExecutedRequestResult,
+  ExecutionWarning,
   HistoryEntry,
   HttpRequest
 } from '@shared/types'
+import { cliUserAgent } from '@shared/types'
 import { CLI_VERSION } from '../../version'
+import { DEFAULT_TIMEOUT_MS } from '../run-options'
+import { CliError } from '../../errors'
+import { EXIT } from '../../exit-codes'
 import { resolveWorkspace } from '../../context/resolve-workspace'
 import { resolveEnvironment } from '../../context/resolve-environment'
 import { createReporters, type ReporterBuildContext } from '../../reporters'
@@ -15,6 +20,7 @@ import type { Reporter } from '../../reporters/types'
 import type { RequestUnit, ReporterConfig, RunOptions, RunSummary } from '../../types'
 import { expandPaths } from './expand-paths'
 import { toRequestUnit, type ResolvedRequestView } from './to-unit'
+import type { ApiKeyCredential } from '../../output/formatters'
 
 /**
  * Build the post-resolution request view for display (URL, headers, body).
@@ -65,73 +71,88 @@ function resolveForDisplay(
 
 type SecretMasker = secrets.SecretMasker
 
-/**
- * Per-run secret context: the environment's secret map, the manifest, and the
- * workspace key from `FETCHPIER_WORKSPACE_KEY` (validated against the challenge).
- * Built once; `maskerFor` resolves the secrets a single request references.
- */
-interface SecretContext {
-  secretsMap: Record<string, string | null>
-  environmentId: string
-  hasKey: boolean
-  maskerFor(request: HttpRequest): Promise<SecretMasker | undefined>
-  /**
-   * REQ-0089: decrypt the secrets a client-certificate passphrase references,
-   * lazily (invoked only after a workspace cert with a secret passphrase is
-   * matched). Returns plaintext for *secret* names only; throws the contractual
-   * `SECRETS_*` errors. No key needed when no referenced name is a secret.
-   */
-  resolveNames(names: string[]): Promise<Record<string, string>>
+/** The (resolved) name and location of the request's API-key credential, if it has one. */
+function apiKeyCredentialOf(request: HttpRequest): ApiKeyCredential | undefined {
+  if (request.auth?.type !== 'api-key') return undefined
+  const { auth } = requests.resolveAuthConfig(request.auth, request.variables ?? {})
+  if (auth?.type !== 'api-key' || !auth.key) return undefined
+  return { location: auth.location, name: auth.key }
 }
 
-async function buildSecretContext(
-  environmentId: string,
-  secretsMap: Record<string, string | null>,
+/**
+ * The workspace key from `FETCHPIER_WORKSPACE_KEY`, validated against the
+ * workspace challenge up front (a wrong key is fatal before anything is sent).
+ * `null` when the variable is absent or the workspace has no secrets. Custody
+ * stays here; the core asks for it lazily through the variable session.
+ */
+async function loadWorkspaceKey(
   manifest: Awaited<ReturnType<workspace.Workspace['secrets']['readManifest']>>,
   env: NodeJS.ProcessEnv
-): Promise<SecretContext> {
-  let rawKey: Uint8Array | null = null
-
+): Promise<Uint8Array | null> {
   const keyInput = env.FETCHPIER_WORKSPACE_KEY?.trim()
-  if (manifest && keyInput) {
-    // `parseKey` throws SECRETS_KEY_INVALID on a CRC failure (before any
-    // challenge attempt).
-    rawKey = secrets.parseKey(keyInput)
-    if (!(await secrets.verifyKeyAgainstChallenge(rawKey, manifest))) {
-      throw secrets.keyInvalidError(manifest.encryption.keyId)
-    }
+  if (!manifest || !keyInput) return null
+  // `parseKey` throws SECRETS_KEY_INVALID on a CRC failure (before any
+  // challenge attempt).
+  const rawKey = secrets.parseKey(keyInput)
+  if (!(await secrets.verifyKeyAgainstChallenge(rawKey, manifest))) {
+    throw secrets.keyInvalidError(manifest.encryption.keyId)
   }
+  return rawKey
+}
 
-  return {
-    secretsMap,
-    environmentId,
-    hasKey: rawKey !== null,
-    async maskerFor(request: HttpRequest): Promise<SecretMasker | undefined> {
-      const neededNames = secrets.collectReferencedVariableNames(request)
-      const plaintextByName = await secrets.resolveSecrets({
-        environmentId,
-        secretsMap,
-        neededNames,
-        hasKey: rawKey !== null,
-        decrypt: (name, encValue) => secrets.decryptValue(rawKey as Uint8Array, name, encValue)
-      })
-      if (Object.keys(plaintextByName).length === 0) return undefined
-      return secrets.createSecretMasker({ nonce: secrets.mintExecutionNonce(), plaintextByName })
-    },
-    async resolveNames(names: string[]): Promise<Record<string, string>> {
-      if (names.length === 0) return {}
-      const referencesSecret = names.some((n) =>
-        Object.prototype.hasOwnProperty.call(secretsMap, n)
+/**
+ * Spell out a non-fatal engine advisory for a human. The structured payload
+ * travels alongside it (the JSON report carries `code`), so this wording is free
+ * to change. Payloads name variables, cookies and hosts — never values.
+ */
+function describeWarning(relPath: string, w: ExecutionWarning): string {
+  switch (w.code) {
+    case 'MALFORMED_QUERY_ENCODING':
+      return (
+        `${relPath}: query parameter "${w.rawKey}" could not be decoded ` +
+        `(malformed percent-encoding); it was sent literally.`
       )
-      if (!referencesSecret) return {}
-      return secrets.resolveSecrets({
-        environmentId,
-        secretsMap,
-        neededNames: names,
-        hasKey: rawKey !== null,
-        decrypt: (name, encValue) => secrets.decryptValue(rawKey as Uint8Array, name, encValue)
-      })
-    }
+    case 'UNRESOLVED_VARIABLE':
+      // Advisory, not a failure: the reference was sent literally, which the
+      // server will almost certainly reject — saying so is the whole point.
+      return (
+        `${relPath}: variable "${w.name}" has no value in this environment; ` +
+        `the reference was sent literally.`
+      )
+    case 'COOKIE_REJECTED':
+      return `${relPath}: ${describeCookieRejection(w.name, w.host, w.reason)}`
+    case 'COOKIE_CROSS_SITE_INSECURE':
+      return (
+        `${relPath}: cookie "${w.name}" from ${w.host} sets SameSite=None without ` +
+        `Secure; it was stored, but a browser would reject it.`
+      )
+    case 'COOKIE_JAR_UNAVAILABLE':
+      return w.phase === 'read'
+        ? `${relPath}: the cookie jar could not be read; the request was sent without stored cookies (${w.reason}).`
+        : `${relPath}: the cookie jar could not be saved; cookies set by this response were not stored (${w.reason}).`
+    case 'TLS_MATERIAL_UNAVAILABLE':
+      return `${relPath}: TLS: ${w.reason}; the request was sent without it.`
+    case 'RESPONSE_DECODING_FAILED':
+      return (
+        `${relPath}: the response body could not be decoded (${w.encoding}: ${w.reason}); ` +
+        `it is kept as received.`
+      )
+    case 'UNSUPPORTED_CONTENT_ENCODING':
+      return (
+        `${relPath}: the response uses an unsupported content encoding (${w.encoding}); ` +
+        `the body is kept as received.`
+      )
+    case 'HTTP2_DOWNGRADED':
+      return `${relPath}: HTTP/2 was requested over plain HTTP; HTTP/1.1 was used.`
+    case 'CONTENT_TYPE_REPLACED':
+      return `${relPath}: the Content-Type header was replaced by the multipart encoder's own (it owns the boundary).`
+    case 'ENV_WRITE_NOT_PERSISTED':
+      return w.reason === 'KEY_MISSING'
+        ? `${relPath}: secret variable "${w.name}" was set by a script but not saved to the local values: ` +
+            `no workspace key is available (set FETCHPIER_WORKSPACE_KEY). It is still used for the rest of this run.`
+        : `${relPath}: secret variable "${w.name}" was set by a script but not saved: this environment's local ` +
+            `values are encrypted with a previous workspace key. Open the workspace in the desktop app with the ` +
+            `new key so it re-encrypts them. The value is still used for the rest of this run.`
   }
 }
 
@@ -163,6 +184,16 @@ function describeCookieRejection(
   }
 }
 
+function assertNonNegativeInteger(name: string, value: number | undefined): void {
+  if (value === undefined) return
+  if (!Number.isInteger(value) || value < 0) {
+    throw new CliError(
+      EXIT.USAGE,
+      `Invalid value for ${name}: ${JSON.stringify(value)} (expected a whole number of milliseconds, 0 or more)`
+    )
+  }
+}
+
 function toForwardSlashes(p: string): string {
   return p.split('\\').join('/')
 }
@@ -185,6 +216,14 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   const cwd = deps.cwd ?? process.cwd()
   const env = deps.env ?? process.env
 
+  // The programmatic API gets the binary's validation too: a value that cannot
+  // be honoured is refused, never silently ignored.
+  assertNonNegativeInteger('timeoutMs', options.timeoutMs)
+  assertNonNegativeInteger('delay', options.delay)
+  if (options.proxy !== undefined && options.noProxy) {
+    throw new CliError(EXIT.USAGE, 'proxy and noProxy cannot be used together')
+  }
+
   const workspacePath = resolveWorkspace({ flag: options.workspace, env, cwd })
   const resolvedEnv = await resolveEnvironment({ flag: options.environment, env, workspacePath })
   // REQ Core-owned workspace handle (F10): one ephemeral handle per run; all
@@ -192,53 +231,33 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   // writes history when `--save-history` is set).
   const ws = workspace.openWorkspace(workspacePath)
 
-  // REQ-0074/0076: merge the per-machine local value layer (`.state/localvalues.json`).
-  // The CLI is read-only: it never re-wraps or removes orphans (that would mutate
-  // the working tree in CI). Encrypted overrides under a stale keyId are treated
-  // as orphans for this run — a stderr warning, then fall back to shared.
-  const manifest = await ws.secrets.readManifest()
-  const currentKeyId = manifest?.encryption.keyId
-  const localValues = await ws.secrets.readLocalValues(resolvedEnv.id)
-  const merged = secrets.mergeEnvironmentLayers(
-    { variables: resolvedEnv.variables },
-    localValues,
-    currentKeyId
-  )
-  if (merged.orphans.length > 0) {
-    process.stderr.write(
-      `fp: warning: local override(s) ${merged.orphans.join(', ')} in environment ` +
-        `"${resolvedEnv.id}" were written under a different workspace key and are ignored ` +
-        `for this run; resolution falls back to the shared value.\n`
-    )
-  }
+  // REQ-0070: the key comes exclusively from FETCHPIER_WORKSPACE_KEY (CI-native,
+  // mirrors SOPS_AGE_KEY), validated up front; the core asks for it lazily — a
+  // request touching no secret needs none.
+  const rawKey = await loadWorkspaceKey(await ws.secrets.readManifest(), env)
 
-  // REQ-0067: resolve `{{$env.NAME}}` references in the SHARED environment values
-  // BEFORE overlaying local values (literal) and `--env-var` overrides (literal,
-  // highest precedence). Identical ordering to the desktop's `http:send`. REQ-0076:
-  // only the *plain* shared entries are interpolation variables; secret-shaped
-  // (`enc:`/`null`) values resolve through the masker.
-  const sharedPlain: Record<string, string> = {}
-  for (const [name, value] of Object.entries(resolvedEnv.variables)) {
-    if (typeof value === 'string' && !secrets.isEncryptedValue(value)) sharedPlain[name] = value
-  }
-  const envResolvedVars = await ws.dotenv.resolveReferences(sharedPlain, env)
-  const localPlainOverlay: Record<string, string> = {}
-  for (const [name, value] of Object.entries(localValues.variables)) {
-    if (secrets.classifyLocalWrite(name, resolvedEnv.variables) === 'plain') {
-      localPlainOverlay[name] = value
-    }
-  }
-  const variables: Record<string, string> = {
-    ...envResolvedVars,
-    ...localPlainOverlay,
-    ...(options.envVars ?? {})
-  }
+  // The core owns the run's variables: the layering (shared with `{{$env.*}}`
+  // resolved → per-machine local values → `--env-var`) and the carry-forward of
+  // every script write to the requests that follow. By default the changes live
+  // for this run only — a CI run never writes to the workspace and never depends
+  // on what a previous run left behind; `--persist-env` writes them into the
+  // local values exactly as the desktop does.
+  const session = await requests.createVariableSession({
+    workspace: ws,
+    environmentId: resolvedEnv.id,
+    overrides: options.envVars ?? {},
+    processEnv: env,
+    getKey: async () => rawKey,
+    persistence: options.persistEnv ? 'persist' : 'memory'
+  })
 
-  // REQ-0070/0074: secret variables, resolved over the MERGED secret map (local
-  // encrypted overrides win). The key comes exclusively from
-  // FETCHPIER_WORKSPACE_KEY (CI-native, mirrors SOPS_AGE_KEY). Resolution is
-  // lazy — a request touching no secret needs no key.
-  const secretContext = await buildSecretContext(resolvedEnv.id, merged.secretsMap, manifest, env)
+  // Proxy routing from `--proxy` / `--no-proxy` and HTTPS_PROXY / HTTP_PROXY /
+  // NO_PROXY. An unusable URL is fatal here, before anything is sent.
+  const proxyRouting = requests.resolveProxyRouting({
+    flag: options.proxy,
+    noProxy: options.noProxy,
+    env
+  })
 
   // Explicit paths resolve against cwd; with none, the target is the workspace's
   // own `requests/` tree — the same from any directory (see `expandPaths`).
@@ -266,13 +285,30 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   const meta = {
     workspace: workspacePath,
     environment: resolvedEnv.id,
+    environmentName: resolvedEnv.folder,
     cliVersion: CLI_VERSION,
     startedAt: startedAt.toISOString(),
     plannedUnits: await countPlannedUnits(files),
     verbosity: options.verbosity ?? 0,
-    showSecrets: options.showSecrets ?? false
+    showSecrets: options.showSecrets ?? false,
+    ...(proxyRouting.active ? { proxy: proxyRouting.active } : {})
   }
   emit(reporters, (r) => r.runStart(meta))
+
+  // REQ-0074/0076: the CLI never re-wraps or removes orphans (that would mutate
+  // the working tree in CI). Encrypted overrides under a stale keyId are ignored
+  // for this run — resolution falls back to the shared value.
+  if (session.orphans.length > 0) {
+    emit(reporters, (r) =>
+      r.warn(
+        `local override(s) ${session.orphans.join(', ')} in environment ` +
+          `"${resolvedEnv.folder}" were written under a different workspace key and are ignored ` +
+          `for this run; resolution falls back to the shared value.`
+      )
+    )
+  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const userAgent = cliUserAgent(CLI_VERSION)
 
   let bailed = false
   for (const file of files) {
@@ -280,6 +316,10 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
     const content = await fs.readFile(file, 'utf-8')
     const parsed = requests.parseHttpFile(content)
     const relPath = toForwardSlashes(relative(workspacePath, file)) || toForwardSlashes(file)
+
+    // Load-time diagnostics (a malformed `# @auth` block, an invalid binary
+    // reference, an unknown setting) — informational, the file still loads.
+    for (const w of parsed.warnings ?? []) emit(reporters, (r) => r.warn(`${relPath}: ${w}`))
 
     // `.http` round-trip fidelity (D14): a file may hold multiple requests, but
     // both surfaces execute only the first. Surface an informational advisory
@@ -330,12 +370,13 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
     for (const parsedRequest of parsed.requests.slice(0, 1)) {
       if (bailed || options.signal?.aborted) break
 
-      const request: HttpRequest = { ...parsedRequest, variables }
-      // Resolve the secrets this request references (throws contractual
-      // SECRETS_* on failure → mapped to an exit code by the binary).
-      const masker = await secretContext.maskerFor(request)
-      if (masker) request.variables = { ...variables, ...masker.markerVariables }
-      const resolved = resolveForDisplay(request, variables, masker)
+      // The session supplies this request's variables — including everything the
+      // scripts of earlier requests wrote — and resolves the secrets it
+      // references (throws contractual SECRETS_* → mapped to an exit code).
+      const prepared = await session.prepare(parsedRequest)
+      const request: HttpRequest = prepared.request
+      const masker = prepared.masker
+      const resolved = resolveForDisplay(request, request.variables ?? {}, masker)
 
       emit(reporters, (r) =>
         r.unitStart({
@@ -349,9 +390,11 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
       const controller = new AbortController()
       const onAbort = (): void => controller.abort()
       options.signal?.addEventListener('abort', onAbort, { once: true })
+      // `0` is the only way to run without a timeout. The abort reason lets the
+      // engine report "timed out after …" instead of a cancellation.
       const timer =
-        options.timeoutMs && options.timeoutMs > 0
-          ? setTimeout(() => controller.abort(), options.timeoutMs)
+        timeoutMs > 0
+          ? setTimeout(() => controller.abort(requests.timeoutAbortReason(timeoutMs)), timeoutMs)
           : undefined
 
       const t0 = Date.now()
@@ -361,16 +404,20 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
           environmentId: resolvedEnv.id,
           workspaceSettings,
           signal: controller.signal,
+          userAgent,
+          proxy: proxyRouting.proxyFor,
+          secretNames: prepared.secretNames,
           // REQ-0066: multipart parts read from `requests/.files/` inside the
           // workspace. Always pass through; core ignores it for other body modes.
           workspacePath: ws.path,
           // REQ-0089: workspace TLS parity — core composes the workspace client
           // cert + CA bundle from the path and resolves the passphrase like the
           // desktop. No app-global material (it lives outside the workspace).
-          resolveTls: (url, env) =>
-            tls.resolveRequestTls(url, env, {
+          resolveTls: (url, tlsEnv, onWarning) =>
+            tls.resolveRequestTls(url, tlsEnv, {
               workspacePath,
-              resolvePassphraseSecrets: (names) => secretContext.resolveNames(names)
+              resolvePassphraseSecrets: prepared.resolvePassphraseSecrets,
+              ...(onWarning ? { onWarning } : {})
             }),
           // REQ-0070: secret masking for this send (undefined when the request
           // references no secret).
@@ -403,45 +450,18 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
       }
       const durationMs = Date.now() - t0
 
-      // REQ-0086: surface non-fatal load warnings (e.g. a malformed query
-      // parameter kept raw and sent literally). Non-fatal — the exit code is
-      // not affected by this cause; the payload is the raw key and its position.
+      // Non-fatal advisories (REQ-0086 / REQ-0111 / REQ-0115 and the transport,
+      // TLS and decoding ones): none moves the exit code. The structured payload
+      // rides along for machine-readable reporters.
       for (const w of result.warnings ?? []) {
-        if (w.code === 'MALFORMED_QUERY_ENCODING') {
-          emit(reporters, (r) =>
-            r.warn(
-              `${relPath}: query parameter "${w.rawKey}" could not be decoded ` +
-                `(malformed percent-encoding); it was sent literally.`,
-              w
-            )
-          )
-        } else if (w.code === 'UNRESOLVED_VARIABLE') {
-          // Advisory, not a failure: the reference was sent literally, which the
-          // server will almost certainly reject — saying so is the whole point.
-          emit(reporters, (r) =>
-            r.warn(
-              `${relPath}: variable "${w.name}" has no value in this environment; ` +
-                `the reference was sent literally.`,
-              w
-            )
-          )
-        } else if (w.code === 'COOKIE_REJECTED') {
-          // REQ-0115: the jar refused a cookie the server offered. Advisory —
-          // it says something about the response, not about the run, so the
-          // exit code is untouched. The reason is spelled out rather than left
-          // as a specification clause the reader would have to look up.
-          emit(reporters, (r) =>
-            r.warn(`${relPath}: ${describeCookieRejection(w.name, w.host, w.reason)}`, w)
-          )
-        } else if (w.code === 'COOKIE_CROSS_SITE_INSECURE') {
-          emit(reporters, (r) =>
-            r.warn(
-              `${relPath}: cookie "${w.name}" from ${w.host} sets SameSite=None without ` +
-                `Secure; it was stored, but a browser would reject it.`,
-              w
-            )
-          )
-        }
+        emit(reporters, (r) => r.warn(describeWarning(relPath, w), w))
+      }
+
+      // Carry this request's environment writes to every later request (and,
+      // with --persist-env, into the local values). A pre-request script that
+      // failed still contributes what it wrote, as on the desktop.
+      for (const w of await session.apply(result.environmentChanges)) {
+        emit(reporters, (r) => r.warn(describeWarning(relPath, w), w))
       }
 
       const unit = toRequestUnit({
@@ -449,7 +469,8 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
         resolved,
         result,
         durationMs,
-        showSecrets: options.showSecrets ?? false
+        showSecrets: options.showSecrets ?? false,
+        apiKey: apiKeyCredentialOf(request)
       })
       units.push(unit)
 
@@ -477,6 +498,7 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   const summary = buildSummary(units, scriptErrors, {
     workspace: workspacePath,
     environment: resolvedEnv.id,
+    environmentName: resolvedEnv.folder,
     startedAt,
     endedAt
   })
@@ -500,7 +522,13 @@ async function countPlannedUnits(files: string[]): Promise<number> {
 function buildSummary(
   units: RequestUnit[],
   scriptErrors: number,
-  ctx: { workspace: string; environment: string; startedAt: Date; endedAt: Date }
+  ctx: {
+    workspace: string
+    environment: string
+    environmentName: string
+    startedAt: Date
+    endedAt: Date
+  }
 ): RunSummary {
   let testsPassed = 0
   let testsFailed = 0
@@ -524,6 +552,7 @@ function buildSummary(
     fetchpier: { cliVersion: CLI_VERSION },
     workspace: ctx.workspace,
     environment: ctx.environment,
+    environmentName: ctx.environmentName,
     startedAt: ctx.startedAt.toISOString(),
     endedAt: ctx.endedAt.toISOString(),
     durationMs: ctx.endedAt.getTime() - ctx.startedAt.getTime(),

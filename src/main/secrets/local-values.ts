@@ -4,18 +4,20 @@
  * (`@fetchpier/core` `secrets.mergeEnvironmentLayers`) with Electron-side key
  * custody (keystore, reveal gate).
  *
- * Responsibilities the CLI deliberately does NOT share (§2.3): lazy re-wrap after
- * a rotation pulled from elsewhere, orphan cleanup, and persisting script writes.
- * Those mutate the working tree and are desktop-only.
+ * Persisting script writes is the core's (`secrets.persistScriptEnvChanges`,
+ * shared with the CLI's `--persist-env`); this module only supplies the key from
+ * the keystore. Still desktop-only — named debt of the workspace-ownership
+ * invariant: lazy re-wrap after a rotation pulled from elsewhere, orphan cleanup,
+ * the editor's seed/view/reveal, and secrecy propagation.
  */
 
 import { secrets, workspace, CoreError } from '@fetchpier/core'
-import { isReservedVariableName } from '../../shared/lib/dynamic-variables'
 import type {
   Environment,
   EnvironmentChanges,
   EnvironmentLocalView,
-  EnvironmentLocalViewRow
+  EnvironmentLocalViewRow,
+  EnvWriteNotPersistedWarning
 } from '../../shared/types'
 import { getWorkspaceKey } from './keystore'
 import { runRevealGate } from './reveal-gate'
@@ -174,54 +176,36 @@ export async function persistScriptEnvChanges(
   workspacePath: string,
   environmentId: string,
   changes: EnvironmentChanges | undefined
-): Promise<void> {
-  if (!changes) return
-  const setNames = Object.keys(changes.set)
-  if (setNames.length === 0 && changes.removed.length === 0) return
+): Promise<EnvWriteNotPersistedWarning[]> {
+  if (!changes) return []
+  if (Object.keys(changes.set).length === 0 && changes.removed.length === 0) return []
 
+  // The lazy re-wrap / orphan normalization stays desktop-side (it needs the
+  // retained old key from the keystore — declared debt of the workspace-ownership
+  // invariant). The write itself, and its rules, are the core's.
   const env = await readEnvSafe(workspacePath, environmentId)
-  const { local, currentKeyId } = await normalizeLocalValues(workspacePath, environmentId)
-  const nextVariables: Record<string, string> = { ...local.variables }
-  let keyId = local.keyId ?? currentKeyId
-
-  for (const [name, value] of Object.entries(changes.set)) {
-    // REQ-0087: the `$` prefix is the reserved system dynamic-variable namespace.
-    // Guard the local layer too (a script write is already rejected at the sandbox
-    // chokepoint; this also covers a direct local-value editor write).
-    if (isReservedVariableName(name)) {
-      throw new CoreError(
-        'RESERVED_VARIABLE_NAME',
-        `Variable name "${name}" begins with "$", which is reserved for system dynamic variables.`,
-        { environmentId, variable: name }
-      )
-    }
-    if (secrets.classifyLocalWrite(name, env.variables) === 'secret') {
-      if (!currentKeyId) {
-        throw new CoreError('SECRETS_KEY_MISSING', 'This workspace has no secrets key yet.')
-      }
-      const key = await getWorkspaceKey(currentKeyId)
-      if (!key) throw secrets.keyMissingError(name)
-      nextVariables[name] = await secrets.encryptValue(key, name, value)
-      keyId = currentKeyId
-    } else {
-      // REQ-0076: a plain write may not claim the reserved `enc:` prefix.
-      if (secrets.isReservedPrefixValue(value)) {
-        throw new CoreError(
-          'WORKSPACE_INVALID',
-          `Value for "${name}" starts with "enc:", which is reserved for encrypted secrets.`,
-          { environmentId, variable: name }
-        )
-      }
-      nextVariables[name] = value
-    }
-  }
-  for (const name of changes.removed) delete nextVariables[name]
-
-  await secrets.writeLocalValues(workspacePath, environmentId, {
-    version: 1,
-    ...(keyId ? { keyId } : {}),
-    variables: nextVariables
+  const { currentKeyId } = await normalizeLocalValues(workspacePath, environmentId)
+  return secrets.persistScriptEnvChanges({
+    workspacePath,
+    environmentId,
+    changes,
+    sharedVariables: env.variables,
+    currentKeyId,
+    getKey: async () => (currentKeyId ? getWorkspaceKey(currentKeyId) : null)
   })
+}
+
+/**
+ * Normalize an environment's local layer (lazy re-wrap / orphan removal) ahead of
+ * a send, returning the one-time orphan notice when one fired. Exposed for the
+ * send handler, which then lets the core read the (normalized) layers itself.
+ */
+export async function normalizeLocalLayer(
+  workspacePath: string,
+  environmentId: string
+): Promise<OrphanNotice | undefined> {
+  const { orphanNotice } = await normalizeLocalValues(workspacePath, environmentId)
+  return orphanNotice
 }
 
 /** Set or replace a single local value from the editor (sticky secrecy applies). */
@@ -231,10 +215,13 @@ export async function setLocalValue(
   name: string,
   value: string
 ): Promise<void> {
-  await persistScriptEnvChanges(workspacePath, environmentId, {
+  const warnings = await persistScriptEnvChanges(workspacePath, environmentId, {
     set: { [name]: value },
     removed: []
   })
+  // An editor write is a direct user action, not a side effect of a send: an
+  // unpersistable secret is still the error the editor reports and offers to fix.
+  if (warnings.length > 0) throw secrets.keyMissingError(name)
 }
 
 /** Remove a local override/value (resolution falls back to shared, if any). */

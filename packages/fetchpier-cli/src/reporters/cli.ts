@@ -1,9 +1,10 @@
 import { homedir } from 'node:os'
 import type { ChalkInstance } from 'chalk'
-import type { RequestUnit, RunSummary } from '../types'
-import { formatDuration, formatSize } from '../output/formatters'
+import type { RequestUnit, RunSummary, Verbosity } from '../types'
+import { formatDuration, formatSize, truncateBody } from '../output/formatters'
 import type { GlyphSet } from '../output/glyphs'
 import type { Reporter, RunMeta, UnitStart } from './types'
+import { notRun } from './unit-outcome'
 
 export interface CliReporterOptions {
   glyphs: GlyphSet
@@ -34,6 +35,16 @@ function urlPath(url: string): string {
 
 const COMPACT_LABEL_WIDTH = 30
 
+/**
+ * Human output. Verbosity levels are cumulative and identical for single- and
+ * multi-request runs:
+ *  - default: the request line, the response line, script output and (single)
+ *    the test list; multi-request runs show script output under each line;
+ *  - `-v`: the per-request test list in multi-request runs, and full URLs;
+ *  - `-vv`: request and response headers;
+ *  - `-vvv`: request and response bodies, each cut at 64 KB.
+ * Everything printed has already been masked and redacted upstream.
+ */
 export class CliReporter implements Reporter {
   private readonly g: GlyphSet
   private readonly c: ChalkInstance
@@ -42,6 +53,7 @@ export class CliReporter implements Reporter {
   private readonly err: (line: string) => void
 
   private mode: 'single' | 'multi' = 'single'
+  private verbosity: Verbosity = 0
   private readonly failures: RequestUnit[] = []
 
   constructor(opts: CliReporterOptions) {
@@ -58,8 +70,11 @@ export class CliReporter implements Reporter {
 
   runStart(meta: RunMeta): void {
     this.mode = meta.plannedUnits === 1 ? 'single' : 'multi'
+    this.verbosity = meta.verbosity
     this.line(`Workspace: ${abbreviateHome(meta.workspace)}`)
-    this.line(`Environment: ${meta.environment}`)
+    // The folder name is what `--env` accepts; the opaque id says nothing.
+    this.line(`Environment: ${meta.environmentName}`)
+    if (meta.proxy) this.line(`Proxy: ${meta.proxy.display} (from ${meta.proxy.source})`)
     this.line()
   }
 
@@ -84,63 +99,66 @@ export class CliReporter implements Reporter {
   // ── Single-request block ──────────────────────────────────────────────────
 
   private printSingleBlock(unit: RequestUnit): void {
-    this.printScriptSection('pre-request script', unit.scripts.preRequest)
+    this.printScriptSection('pre-request script', unit.scripts.preRequest, '  ')
 
+    this.line(`  ${this.g.arrowOut} ${unit.request.method} ${unit.request.url}`)
+    this.printRequestDetails(unit, '    ')
     if (unit.response) {
-      this.line(`  ${this.g.arrowOut} ${unit.request.method} ${unit.request.url}`)
       this.line(`  ${this.g.arrowIn} ${this.responseLine(unit.response)}`)
+      this.printResponseDetails(unit, '    ')
     } else {
-      this.line(`  ${this.g.arrowOut} ${unit.request.method} ${unit.request.url}`)
-      this.line(`  request not sent${unit.error ? `: ${unit.error}` : ''}`)
+      this.line(`  ${this.noResponseText(unit)}`)
     }
 
-    this.printScriptSection('post-response script', unit.scripts.postResponse)
-    this.printTests(unit)
+    this.printScriptSection('post-response script', unit.scripts.postResponse, '  ')
+    this.printTests(unit, '  ')
   }
 
   private printScriptSection(
     label: string,
-    section?: {
-      logs: { level: string; message: string }[]
-      errors: { message: string; line?: number }[]
-    }
+    section:
+      | {
+          logs: { level: string; message: string }[]
+          errors: { message: string; line?: number }[]
+        }
+      | undefined,
+    indent: string
   ): void {
     if (!section) return
     const { logs, errors } = section
     if (errors.length > 0) {
-      this.line(`  ${label}:`)
+      this.line(`${indent}${label}:`)
+      for (const l of logs) this.line(`${indent}  [${l.level}] ${l.message}`)
       for (const e of errors) {
-        this.line(`    ${this.c.red(this.g.fail)} ${e.message}`)
-        if (e.line != null) this.line(`        at line ${e.line}`)
+        this.line(`${indent}  ${this.c.red(this.g.fail)} ${e.message}`)
+        if (e.line != null) this.line(`${indent}      at line ${e.line}`)
       }
       return
     }
     if (logs.length === 0) {
-      this.line(`  ${label}: ran (no output)`)
+      if (this.mode === 'single') this.line(`${indent}${label}: ran (no output)`)
       return
     }
-    this.line(`  ${label}:`)
-    for (const l of logs) {
-      this.line(`    [${l.level}] ${l.message}`)
-    }
+    this.line(`${indent}${label}:`)
+    for (const l of logs) this.line(`${indent}  [${l.level}] ${l.message}`)
   }
 
-  private printTests(unit: RequestUnit): void {
+  private printTests(unit: RequestUnit, indent: string): void {
     if (unit.tests.length === 0) return
-    this.line(`  Tests:`)
+    this.line(`${indent}Tests:`)
     let passed = 0
     let failed = 0
     for (const t of unit.tests) {
       if (t.passed) {
         passed++
-        this.line(`    ${this.c.green(this.g.pass)} ${t.name}`)
+        this.line(`${indent}  ${this.c.green(this.g.pass)} ${t.name}`)
       } else {
         failed++
-        this.line(`    ${this.c.red(this.g.fail)} ${t.name}`)
-        if (t.error) this.line(`        ${t.error}`)
+        this.line(`${indent}  ${this.c.red(this.g.fail)} ${t.name}`)
+        if (t.error) this.line(`${indent}      ${t.error}`)
       }
     }
-    this.line(`    ${this.testCountSummary(passed, failed)}`)
+    if (this.mode === 'single') this.line(`${indent}  ${this.testCountSummary(passed, failed)}`)
   }
 
   private testCountSummary(passed: number, failed: number): string {
@@ -148,28 +166,71 @@ export class CliReporter implements Reporter {
     return `${passed} passed, ${failed} failed`
   }
 
+  // ── Verbose details (-vv headers, -vvv bodies) ──────────────────────────────
+
+  private printRequestDetails(unit: RequestUnit, indent: string): void {
+    if (this.verbosity >= 2) this.printHeaders(unit.request.headers, indent)
+    if (this.verbosity >= 3 && unit.request.body !== undefined && unit.request.body !== '') {
+      this.printBody(unit.request.body, indent)
+    }
+  }
+
+  private printResponseDetails(unit: RequestUnit, indent: string): void {
+    if (!unit.response) return
+    if (this.verbosity >= 2) this.printHeaders(unit.response.headers, indent)
+    if (this.verbosity >= 3 && unit.response.body !== '') {
+      this.printBody(unit.response.body, indent)
+    }
+  }
+
+  private printHeaders(headers: Record<string, string>, indent: string): void {
+    for (const [k, v] of Object.entries(headers)) this.line(`${indent}${k}: ${v}`)
+  }
+
+  private printBody(body: string, indent: string): void {
+    const { text, truncated, totalBytes } = truncateBody(body)
+    this.line(`${indent}`)
+    for (const l of text.split('\n')) this.line(`${indent}${l}`)
+    if (truncated) {
+      this.line(
+        `${indent}… (truncated: ${formatSize(totalBytes)} total; use --reporter-json for the full body)`
+      )
+    }
+  }
+
   // ── Compact (multi) ─────────────────────────────────────────────────────────
 
   private printCompact(unit: RequestUnit): void {
-    const label = `${this.g.bullet} ${unit.request.method} ${urlPath(unit.request.url)}`.padEnd(
-      COMPACT_LABEL_WIDTH
-    )
+    const target = this.verbosity >= 1 ? unit.request.url : urlPath(unit.request.url)
+    const label = `${this.g.bullet} ${unit.request.method} ${target}`.padEnd(COMPACT_LABEL_WIDTH)
 
     if (!unit.response) {
       const errCount = this.scriptErrorCount(unit)
-      const reason = unit.error ? `: ${unit.error}` : ''
       this.line(
-        `${label} ${this.c.red(`request not sent${reason}`)}${errCount ? ` (${errCount} script error)` : ''}`
+        `${label} ${this.c.red(this.noResponseText(unit))}${errCount ? ` (${errCount} script error)` : ''}`
       )
-      return
+    } else {
+      const total = unit.tests.length
+      const passed = unit.tests.filter((t) => t.passed).length
+      const ok = passed === total && !this.hasScriptError(unit)
+      const testGlyph = ok ? this.c.green(this.g.pass) : this.c.red(this.g.fail)
+      const tests = total > 0 ? ` ${this.g.sep} ${testGlyph} ${passed}/${total} tests` : ''
+      this.line(`${label} ${this.g.arrowIn} ${this.responseLine(unit.response)}${tests}`)
     }
 
-    const total = unit.tests.length
-    const passed = unit.tests.filter((t) => t.passed).length
-    const ok = passed === total && !this.hasScriptError(unit)
-    const testGlyph = ok ? this.c.green(this.g.pass) : this.c.red(this.g.fail)
-    const tests = total > 0 ? ` ${this.g.sep} ${testGlyph} ${passed}/${total} tests` : ''
-    this.line(`${label} ${this.g.arrowIn} ${this.responseLine(unit.response)}${tests}`)
+    // Script output belongs to the request that produced it, at every level —
+    // it used to be invisible whenever a run had more than one file.
+    this.printScriptSection('pre-request script', unit.scripts.preRequest, '    ')
+    if (this.verbosity >= 2) {
+      this.line(`    ${this.g.arrowOut} request`)
+      this.printRequestDetails(unit, '      ')
+      if (unit.response) {
+        this.line(`    ${this.g.arrowIn} response`)
+        this.printResponseDetails(unit, '      ')
+      }
+    }
+    this.printScriptSection('post-response script', unit.scripts.postResponse, '    ')
+    if (this.verbosity >= 1) this.printTests(unit, '    ')
   }
 
   // ── Footer + Failures ─────────────────────────────────────────────────────
@@ -207,11 +268,13 @@ export class CliReporter implements Reporter {
     const dur = `(${formatDuration(summary.durationMs)})`
 
     const parts: string[] = [`${requests.total} ${reqWord}`]
-    // Count what the footer could not otherwise say: a request that never got a
-    // response. A request that failed on an assertion is already described by the
-    // tests part, so a generic "N failed" here would read ambiguously beside it.
-    const notSent = summary.units.filter((u) => !u.response).length
-    if (notSent > 0) parts.push(`${notSent} not sent`)
+    // Count what the footer could not otherwise say: a request that got no
+    // response, split by whether a send was even attempted.
+    const responseless = summary.units.filter((u) => !u.response)
+    const notRunCount = responseless.filter(notRun).length
+    const noResponseCount = responseless.length - notRunCount
+    if (noResponseCount > 0) parts.push(`${noResponseCount} no response`)
+    if (notRunCount > 0) parts.push(`${notRunCount} not run`)
     if (tests.failed > 0) {
       // Single-request runs read more naturally as "1 of 2 tests failed";
       // multi-request runs lead with the passing count, matching the spec.
@@ -252,10 +315,33 @@ export class CliReporter implements Reporter {
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
+  /**
+   * `no response: <reason>` when a send was attempted (unreachable, TLS,
+   * timeout, proxy, interrupt); `not run: <reason>` when none was (a file with
+   * no request, a pre-request script that aborted).
+   */
+  private noResponseText(unit: RequestUnit): string {
+    const label = notRun(unit) ? 'not run' : 'no response'
+    return `${label}${unit.error ? `: ${unit.error}` : ''}`
+  }
+
   private responseLine(r: NonNullable<RequestUnit['response']>): string {
     const status = `${r.status} ${r.statusText}`.trim()
     const colored = r.status >= 400 ? this.c.red(status) : this.c.green(status)
-    return `${colored} ${this.g.sep} ${formatDuration(r.timingMs)} ${this.g.sep} ${formatSize(r.sizeBytes)}`
+    return `${colored} ${this.g.sep} ${formatDuration(r.timingMs)} ${this.g.sep} ${this.sizeText(r)}`
+  }
+
+  /** `1.2KB`, or `1.2KB (8.4KB decoded)` for a compressed response; notes a decoding problem. */
+  private sizeText(r: NonNullable<RequestUnit['response']>): string {
+    const base =
+      r.decodingStatus === 'decoded' &&
+      r.compressedBytes !== undefined &&
+      r.decompressedBytes !== undefined
+        ? `${formatSize(r.compressedBytes)} (${formatSize(r.decompressedBytes)} decoded)`
+        : formatSize(r.sizeBytes)
+    if (r.decodingStatus === 'failed') return `${base} (could not be decoded)`
+    if (r.decodingStatus === 'unsupported') return `${base} (unsupported encoding)`
+    return base
   }
 
   private hasScriptError(unit: RequestUnit): boolean {

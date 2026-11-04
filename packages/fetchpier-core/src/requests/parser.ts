@@ -47,6 +47,18 @@ function extractVariables(text: string): string[] {
  * Returns true if the line is a comment (starts with `#` or `//`).
  * NOTE: `###` separator lines are NOT comments — the caller must handle them first.
  */
+// ── Load-time diagnostics ──────────────────────────────────────────────────
+//
+// The parser never writes to the process console: an adapter cannot read it,
+// and on the command line it surfaced as raw `[parser]` lines in CI logs. It
+// collects into this sink, which `parseHttpFile` installs for the duration of
+// one (synchronous) parse and returns as `ParsedHttpFile.warnings`.
+let warningSink: string[] | null = null
+
+function parseWarning(message: string): void {
+  warningSink?.push(message)
+}
+
 function isComment(line: string): boolean {
   const trimmed = line.trimStart()
   return trimmed.startsWith('#') || trimmed.startsWith('//')
@@ -95,7 +107,7 @@ function parseAuthFieldLine(line: string): [string, string] | null {
  */
 function reconstructAuth(fields: Record<string, string>): AuthConfig | undefined {
   const warn = (reason: string): undefined => {
-    console.warn(`[parser] Invalid @auth block: ${reason}`)
+    parseWarning(`invalid # @auth block: ${reason}; the request loads without auth`)
     return undefined
   }
   const unknownKeys = (allowed: readonly string[]): string | null => {
@@ -157,7 +169,7 @@ function extractAuthBlock(
   while (end < lines.length && !AUTH_END_MARKER.test(lines[end])) end++
 
   if (end >= lines.length) {
-    console.warn('[parser] Invalid @auth block: missing "# @end-auth"; the block is ignored')
+    parseWarning('invalid # @auth block: missing "# @end-auth"; the block is ignored')
     // Consume only the marker line. The field lines that follow are ordinary
     // comments, and the request parses normally.
     return { auth: undefined, nextIdx: startIdx + 1 }
@@ -187,7 +199,7 @@ function parseSettingLine(line: string): [keyof RequestSettings, SettingValue<un
   const raw = body.slice(colon + 1).trim()
 
   const warn = (reason: string): void => {
-    console.warn(`[parser] Invalid @settings value for "${key}": ${reason}`)
+    parseWarning(`invalid # @settings value for "${key}": ${reason}`)
   }
 
   switch (key) {
@@ -217,7 +229,7 @@ function parseSettingLine(line: string): [keyof RequestSettings, SettingValue<un
       return [key, { inherit: false, value: n }]
     }
     default:
-      console.warn(`[parser] Unknown @settings key "${key}"`)
+      parseWarning(`unknown # @settings key "${key}"`)
       return null
   }
 }
@@ -396,9 +408,7 @@ function parseRequestBlock(block: string): HttpRequest | null {
       const originalName = ref.slice(66)
       binaryFile = { ref, originalName, sizeBytes: 0, mimeType: lookupMimeType(originalName) }
     } else {
-      console.warn(
-        `[parser] Ignoring invalid # @binary-file: ref "${ref}" — expected <64-hex>__<name>`
-      )
+      parseWarning(`ignoring invalid # @binary-file: ref "${ref}" (expected <64-hex>__<name>)`)
     }
   }
   const readRawSubtype = (value: string): void => {
@@ -537,7 +547,7 @@ function parseRequestBlock(block: string): HttpRequest | null {
       // Multipart block — recognized only as the first non-blank body line.
       const result = parseMultipartBlock(lines, firstContent)
       multipartParts = result.parts
-      for (const w of result.warnings) console.warn(`[parser] ${w}`)
+      for (const w of result.warnings) parseWarning(w)
     } else if (
       firstContent < lines.length &&
       rawSubtype === undefined &&
@@ -575,8 +585,8 @@ function parseRequestBlock(block: string): HttpRequest | null {
 
   // Collision: a non-empty body alongside `# @binary-file:` — prefer the binary.
   if (binaryFile && body !== undefined && body.trim() !== '') {
-    console.warn(
-      '[parser] `# @binary-file:` is set but the body section is non-empty — sending binary, body discarded'
+    parseWarning(
+      '`# @binary-file:` is set but the body section is non-empty; the binary is sent and the body is discarded'
     )
     body = undefined
   }
@@ -634,6 +644,18 @@ function extractRequestId(content: string): string | undefined {
  * - CRLF and LF line endings are both supported (normalized to LF).
  */
 export function parseHttpFile(content: string): ParsedHttpFile {
+  const outer = warningSink
+  const warnings: string[] = []
+  warningSink = warnings
+  try {
+    const parsed = parseHttpFileInner(content)
+    return warnings.length > 0 ? { ...parsed, warnings } : parsed
+  } finally {
+    warningSink = outer
+  }
+}
+
+function parseHttpFileInner(content: string): ParsedHttpFile {
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const requestId = extractRequestId(normalized)
 

@@ -7,7 +7,6 @@ import type {
   DisabledRow,
   RequestSettings
 } from '../../../shared/types'
-import { DEFAULT_USER_AGENT } from '../../../shared/types'
 import { splitUrlAndParams } from '@shared/lib/http-serializer'
 import { reinterleaveDisabled } from '@shared/lib/disabled-rows'
 import { mapTokenLiterals } from '@shared/lib/token-grammar'
@@ -32,15 +31,9 @@ export function mapHttpRequestToEditorState(first: HttpRequest): RequestEditorSt
     value,
     enabled: true
   }))
-  const hasUserAgent = headerPairs.some((h) => h.key.toLowerCase() === 'user-agent')
-  if (!hasUserAgent) {
-    headerPairs.unshift({
-      id: 'h-ua-default',
-      key: 'User-Agent',
-      value: DEFAULT_USER_AGENT,
-      enabled: true
-    })
-  }
+  // No default User-Agent row is inserted: the default is implicit (applied at
+  // send time, shown read-only by the headers editor) and never saved, so a file
+  // keeps exactly the headers its author wrote.
 
   const contentType = headerPairs.find((h) => h.key.toLowerCase() === 'content-type')?.value ?? ''
 

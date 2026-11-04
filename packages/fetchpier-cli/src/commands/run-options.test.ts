@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { toRunOptions } from './run-options'
+import { Command } from 'commander'
+import { addRunOptions, toRunOptions } from './run-options'
+import { CliError } from '../errors'
+import { EXIT } from '../exit-codes'
 
 describe('toRunOptions', () => {
   it('always includes the CLI reporter and appends file reporters', () => {
@@ -47,8 +50,8 @@ describe('toRunOptions', () => {
       workspace: '/ws',
       env: 'staging',
       bail: true,
-      delay: 100,
-      timeout: 5000,
+      delay: '100',
+      timeout: '5000',
       insecure: true,
       saveHistory: true,
       suppressExitCode: true,
@@ -70,5 +73,83 @@ describe('toRunOptions', () => {
       ascii: true,
       silent: true
     })
+  })
+})
+
+describe('toRunOptions — CI-safe flags', () => {
+  it('defaults the per-request timeout to 30 s, like the desktop', () => {
+    expect(toRunOptions([], {}).timeoutMs).toBe(30000)
+  })
+
+  it('--timeout 0 is the only way to disable the timeout', () => {
+    expect(toRunOptions([], { timeout: '0' }).timeoutMs).toBe(0)
+  })
+
+  it('--delay 0 means no wait', () => {
+    expect(toRunOptions([], { delay: '0' }).delay).toBe(0)
+  })
+
+  it.each(['abc', '-1', '1.5', '', ' ', '1e3', '0x10', 'Infinity'])(
+    'rejects --timeout %j as a usage error naming the flag and the value',
+    (value) => {
+      let err: unknown
+      try {
+        toRunOptions([], { timeout: value })
+      } catch (e) {
+        err = e
+      }
+      expect(err).toBeInstanceOf(CliError)
+      expect((err as CliError).exitCode).toBe(EXIT.USAGE)
+      expect((err as CliError).message).toContain('--timeout')
+      expect((err as CliError).message).toContain(JSON.stringify(value))
+    }
+  )
+
+  it.each(['x', '-5', '2.5'])('rejects --delay %j as a usage error', (value) => {
+    expect(() => toRunOptions([], { delay: value })).toThrow(/--delay/)
+  })
+
+  it('maps --persist-env', () => {
+    expect(toRunOptions([], { persistEnv: true }).persistEnv).toBe(true)
+    expect(toRunOptions([], {}).persistEnv).toBe(false)
+  })
+
+  it('passes --proxy and --no-proxy through', () => {
+    expect(toRunOptions([], { proxyUrl: 'http://p:1', proxyGiven: true }).proxy).toBe('http://p:1')
+    expect(toRunOptions([], { noProxyGiven: true }).noProxy).toBe(true)
+  })
+
+  it('rejects --proxy together with --no-proxy as a usage error', () => {
+    let err: unknown
+    try {
+      toRunOptions([], { proxyUrl: 'http://p:1', proxyGiven: true, noProxyGiven: true })
+    } catch (e) {
+      err = e
+    }
+    expect((err as CliError).exitCode).toBe(EXIT.USAGE)
+    expect((err as CliError).message).toMatch(/--proxy.*--no-proxy/)
+  })
+})
+
+describe('addRunOptions — flag parsing', () => {
+  const parse = (argv: string[]): ReturnType<typeof toRunOptions> => {
+    const cmd = addRunOptions(new Command()).exitOverride()
+    let captured: ReturnType<typeof toRunOptions> | undefined
+    cmd.action((paths: string[], raw: Parameters<typeof toRunOptions>[1]) => {
+      captured = toRunOptions(paths, raw)
+    })
+    cmd.parse(argv, { from: 'user' })
+    return captured!
+  }
+
+  it('records --proxy and --no-proxy independently so a conflict is detectable', () => {
+    expect(parse(['--proxy', 'http://p:1']).proxy).toBe('http://p:1')
+    expect(parse(['--no-proxy']).noProxy).toBe(true)
+    expect(() => parse(['--proxy', 'http://p:1', '--no-proxy'])).toThrow(CliError)
+  })
+
+  it('counts repeated -v', () => {
+    expect(parse(['-vv']).verbosity).toBe(2)
+    expect(parse(['-v', '-v', '-v']).verbosity).toBe(3)
   })
 })

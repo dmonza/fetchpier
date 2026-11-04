@@ -54,6 +54,8 @@ export type CoreErrorCode =
   | 'RESERVED_VARIABLE_NAME'
   /** REQ-0089: save of an app-global client certificate whose passphrase contains a `{{...}}` reference (app-global is literal-only). */
   | 'CLIENT_CERT_PASSPHRASE_VARIABLE_NOT_ALLOWED'
+  /** CLI readiness: a proxy URL (flag or `HTTPS_PROXY`/`HTTP_PROXY`) is not a usable http(s) URL, or the flags conflict. */
+  | 'PROXY_INVALID'
 
 export class CoreError extends Error {
   constructor(

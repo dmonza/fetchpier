@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Lock, Plus } from 'lucide-react'
+import { Info, Lock, Plus } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { applyOrder } from '../ui/sortable-context'
 import { VariableHighlightInput } from '../ui/VariableHighlightInput'
@@ -54,6 +54,13 @@ interface KeyValueEditorProps {
   managedEntries?: ManagedEntry[]
   /** Localized affordance shown on the managed rows pointing to the Auth surface. */
   managedHint?: string
+  /**
+   * Read-only rows for headers the engine adds by default at send time (e.g.
+   * User-Agent, Accept-Encoding). Shown below the managed rows; never saved.
+   */
+  defaultEntries?: ManagedEntry[]
+  /** Localized explanation shown on the default rows. */
+  defaultHint?: string
 }
 
 let pairIdCounter = 1000
@@ -71,31 +78,38 @@ export function KeyValueEditor({
   readOnly = false,
   variables = {},
   managedEntries = [],
-  managedHint
+  managedHint,
+  defaultEntries = [],
+  defaultHint
 }: KeyValueEditorProps): React.JSX.Element {
   const { t } = useTranslation()
   const datalistId = showHeaderAutocomplete ? 'common-headers-list' : undefined
   const hint = managedHint ?? t('request.auth.managedByAuth')
+  const implicitHint = defaultHint ?? t('request.headers.implicitDefault')
 
-  // Read-only rows projected from the active auth scheme (REQ-0083 §6.3). Pinned
-  // above the editable rows via the table's `prefix` slot so they sit outside the
-  // sortable area and never reorder.
-  const managedRows = managedEntries.map((m, idx) => (
+  // Read-only rows projected from the active auth scheme (REQ-0083 §6.3), then
+  // the engine's implicit default headers. Pinned above the editable rows via the
+  // table's `prefix` slot so they sit outside the sortable area and never reorder.
+  const readOnlyRows = [
+    ...managedEntries.map((m) => ({ entry: m, rowHint: hint, Icon: Lock, kind: 'auth' })),
+    ...defaultEntries.map((m) => ({ entry: m, rowHint: implicitHint, Icon: Info, kind: 'default' }))
+  ]
+  const managedRows = readOnlyRows.map(({ entry: m, rowHint, Icon, kind }, idx) => (
     <KvRow
-      key={`auth-managed-${idx}`}
+      key={`${kind}-managed-${idx}`}
       enabled
       readOnly
-      toggleEnabledLabel={hint}
+      toggleEnabledLabel={rowHint}
       leading={
-        <span className="flex h-6 w-5 shrink-0 items-center justify-center" title={hint}>
-          <Lock className="h-3.5 w-3.5 text-muted-foreground" aria-label={hint} />
+        <span className="flex h-6 w-5 shrink-0 items-center justify-center" title={rowHint}>
+          <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-label={rowHint} />
         </span>
       }
     >
       <VariableHighlightInput
         value={m.key}
         readOnly
-        title={hint}
+        title={rowHint}
         variables={variables}
         className="h-7 min-w-0 flex-1 rounded border border-transparent bg-transparent"
         inputClassName="px-2 text-xs text-muted-foreground cursor-default focus:outline-none"
@@ -103,7 +117,7 @@ export function KeyValueEditor({
       <VariableHighlightInput
         value={m.value}
         readOnly
-        title={hint}
+        title={rowHint}
         variables={variables}
         className="h-7 min-w-0 flex-1 rounded border border-transparent bg-transparent"
         inputClassName="px-2 text-xs text-muted-foreground cursor-default focus:outline-none"

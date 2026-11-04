@@ -92,4 +92,58 @@ describe('exit codes', () => {
     ])
     expect(status).toBe(2) // output directory does not exist → exit 2
   }, 60000)
+
+  // CI readiness (CA-16): a target with nothing to run is not a success.
+  it('19 — a folder with no request, even with --suppress-exit-code', () => {
+    mkdirSync(join(ws, 'requests', 'empty'), { recursive: true })
+    const { status, stderr } = fp([
+      'run',
+      'requests/empty',
+      '--workspace',
+      ws,
+      '--suppress-exit-code'
+    ])
+    expect(status).toBe(19)
+    expect(stderr).toContain('No requests to run')
+  }, 60000)
+
+  // CI readiness (CA-17): a value that cannot be honoured is refused, not ignored.
+  it.each([
+    [['--timeout', 'abc'], '--timeout'],
+    [['--timeout', '-1'], '--timeout'],
+    [['--delay', '1.5'], '--delay']
+  ])(
+    '3 — invalid %j',
+    (flags, flag) => {
+      const { status, stderr } = fp(['run', 'requests/ok.http', '--workspace', ws, ...flags])
+      expect(status).toBe(3)
+      expect(stderr).toContain(flag)
+    },
+    60000
+  )
+
+  // CI readiness (CA-14): an unusable proxy is fatal before anything is sent.
+  it('3 — an invalid proxy variable names its source', () => {
+    const r = spawnSync(process.execPath, [BIN, 'run', 'requests/ok.http', '--workspace', ws], {
+      encoding: 'utf-8',
+      cwd: ws,
+      env: { ...process.env, HTTPS_PROXY: 'not a url' }
+    })
+    expect(r.status).toBe(3)
+    expect(r.stderr).toContain('HTTPS_PROXY')
+  }, 60000)
+
+  it('3 — --proxy together with --no-proxy', () => {
+    const { status, stderr } = fp([
+      'run',
+      'requests/ok.http',
+      '--workspace',
+      ws,
+      '--proxy',
+      'http://proxy.test:3128',
+      '--no-proxy'
+    ])
+    expect(status).toBe(3)
+    expect(stderr).toContain('--no-proxy')
+  }, 60000)
 })

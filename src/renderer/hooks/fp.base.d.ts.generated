@@ -211,8 +211,16 @@ interface FpResponse {
   /** Total time from request-start to response-end, in milliseconds. */
   readonly timingMs: number
 
-  /** Size of the response body in bytes. */
+  /** Size of the response body in bytes (after decoding a compressed response). */
   readonly sizeBytes: number
+
+  /**
+   * Outcome of decoding the body against the response's `Content-Encoding`:
+   * `'decoded'`, `'not-required'` (no coding, `identity`, or no body),
+   * `'unsupported'` (a coding the engine cannot decode — the body is as received),
+   * or `'failed'` (decoding errored — the body is as received).
+   */
+  readonly decodingStatus: 'decoded' | 'not-required' | 'unsupported' | 'failed'
 
   /**
    * Parses the response body as JSON.
@@ -222,7 +230,8 @@ interface FpResponse {
    * response shape is unknown at author time, so no member set is asserted —
    * completion offers no suggestions on the result (REQ-0082).
    *
-   * @throws if the body exceeds the 10 MB parse cap or is not valid JSON.
+   * @throws if the body exceeds the 10 MB parse cap or is not valid JSON, or when
+   *   `decodingStatus` is `'failed'` / `'unsupported'` (the body could not be decoded).
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   json(): any
@@ -239,7 +248,8 @@ interface FpResponse {
    * produce no diagnostic, and completion offers no member suggestions on it
    * (REQ-0082).
    *
-   * @throws if the body exceeds the 10 MB parse cap or is not valid XML.
+   * @throws if the body exceeds the 10 MB parse cap or is not valid XML, or when
+   *   `decodingStatus` is `'failed'` / `'unsupported'` (the body could not be decoded).
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   xml2Json(opts?: FpXml2JsonOptions): any

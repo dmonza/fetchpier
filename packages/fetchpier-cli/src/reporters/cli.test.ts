@@ -13,7 +13,8 @@ interface Captured {
 }
 
 function render(
-  meta: Pick<RunMeta, 'workspace' | 'environment' | 'plannedUnits'>,
+  meta: Pick<RunMeta, 'workspace' | 'environment' | 'plannedUnits'> &
+    Partial<Pick<RunMeta, 'environmentName' | 'verbosity' | 'proxy'>>,
   units: RequestUnit[],
   summary: RunSummary,
   ascii = true
@@ -27,10 +28,11 @@ function render(
     writeErr: (l) => (err += l)
   })
   reporter.runStart({
+    environmentName: meta.environment,
+    verbosity: 0,
     ...meta,
     cliVersion: '0.9.0',
     startedAt: '2026-05-22T00:00:00.000Z',
-    verbosity: 0,
     showSecrets: false
   })
   for (const u of units) {
@@ -160,7 +162,7 @@ describe('CliReporter — single request', () => {
     expect(out).toContain('[FAIL] 1 request, 1 of 2 tests failed (104ms)')
   })
 
-  it('renders a pre-request script error with "request not sent"', () => {
+  it('renders a pre-request script error as "not run" — no send was attempted', () => {
     const unit: RequestUnit = {
       type: 'request',
       path: 'users/create.http',
@@ -184,8 +186,9 @@ describe('CliReporter — single request', () => {
     expect(out).toContain('  pre-request script:')
     expect(out).toContain("    [FAIL] Error: cannot read property 'token' of undefined")
     expect(out).toContain('        at line 3')
-    expect(out).toContain('  request not sent')
-    expect(out).toContain('[FAIL] 1 request, 1 not sent, 0 tests, 1 script error (12ms)')
+    expect(out).toContain('  not run')
+    expect(out).not.toContain('request not sent')
+    expect(out).toContain('[FAIL] 1 request, 1 not run, 0 tests, 1 script error (12ms)')
   })
 
   // REQ-0111: a run whose service was unreachable used to print a green tick and
@@ -208,8 +211,8 @@ describe('CliReporter — single request', () => {
       [unit],
       summaryOf([unit], 0, 14)
     )
-    expect(out).toContain('  request not sent: connect ECONNREFUSED 127.0.0.1:9')
-    expect(out).toContain('[FAIL] 1 request, 1 not sent, 0 tests (14ms)')
+    expect(out).toContain('  no response: connect ECONNREFUSED 127.0.0.1:9')
+    expect(out).toContain('[FAIL] 1 request, 1 no response, 0 tests (14ms)')
     expect(out).not.toContain('[PASS] 1 request')
   })
 
@@ -287,5 +290,132 @@ describe('CliReporter — multiple requests', () => {
     expect(out).toContain('        expected undefined to be a string')
     expect(out).toContain('        at users/orders/create.http')
     expect(out).toContain('[FAIL] 2 requests, 3 of 4 tests passed, 1 failed (655ms)')
+  })
+})
+
+// ── CLI readiness: header, script output in multi runs, verbosity levels ──────
+
+const detailUnit = (path: string, body = '{"ok":true}'): RequestUnit => ({
+  ...okUnit,
+  path,
+  request: {
+    method: 'POST',
+    url: 'https://api.example.com/auth/login?x=1',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"user":"a"}'
+  },
+  response: { ...okUnit.response!, headers: { 'X-Trace': 'abc' }, body },
+  scripts: { postResponse: { logs: [{ level: 'log', message: 'captured token' }], errors: [] } }
+})
+
+describe('CliReporter — header', () => {
+  it('shows the environment by folder name and the active proxy without credentials', () => {
+    const { out } = render(
+      {
+        workspace: '/tmp/ws',
+        environment: '6f1c0b2e-0000-4000-8000-000000000000',
+        environmentName: 'staging',
+        plannedUnits: 1,
+        proxy: { display: 'http://proxy:3128', source: 'HTTPS_PROXY' }
+      },
+      [okUnit],
+      summaryOf([okUnit], 0, 158)
+    )
+    expect(out).toContain('Environment: staging\n')
+    expect(out).not.toContain('6f1c0b2e')
+    expect(out).toContain('Proxy: http://proxy:3128 (from HTTPS_PROXY)\n')
+  })
+})
+
+describe('CliReporter — multi-request runs and verbosity', () => {
+  const units = [detailUnit('a.http'), detailUnit('b.http')]
+  const run = (verbosity: 0 | 1 | 2 | 3, u = units): string =>
+    render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 2, verbosity },
+      u,
+      summaryOf(u, 0, 10)
+    ).out
+
+  it('default: script output is indented under each request line, nothing more', () => {
+    const out = run(0)
+    expect(out.match(/ {6}\[log\] captured token/g)).toHaveLength(2)
+    expect(out).toContain('> POST /auth/login?x=1')
+    expect(out).not.toContain('Tests:')
+    expect(out).not.toContain('X-Trace')
+  })
+
+  it('-v: adds the test list and the full URL', () => {
+    const out = run(1)
+    expect(out).toContain('> POST https://api.example.com/auth/login?x=1')
+    expect(out).toContain('    Tests:')
+    expect(out).toContain('      [OK] status is 2xx')
+    expect(out).not.toContain('X-Trace')
+  })
+
+  it('-vv: adds request and response headers, no bodies', () => {
+    const out = run(2)
+    expect(out).toContain('Content-Type: application/json')
+    expect(out).toContain('X-Trace: abc')
+    expect(out).not.toContain('{"user":"a"}')
+  })
+
+  it('-vvv: adds bodies, cut at 64 KB with a notice', () => {
+    expect(run(3)).toContain('{"user":"a"}')
+    const big = [detailUnit('big.http', 'y'.repeat(70 * 1024)), detailUnit('c.http')]
+    const out = run(3, big)
+    expect(out).toContain('… (truncated: 70KB total; use --reporter-json for the full body)')
+    expect(out).not.toContain('y'.repeat(65 * 1024))
+  })
+
+  it('a single-request run shows headers at -vv too', () => {
+    const out = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1, verbosity: 2 },
+      [detailUnit('a.http')],
+      summaryOf([detailUnit('a.http')], 0, 10)
+    ).out
+    expect(out).toContain('    Content-Type: application/json')
+    expect(out).toContain('    X-Trace: abc')
+  })
+
+  it('labels a file with no request "not run" and an unreachable one "no response"', () => {
+    const noRequest: RequestUnit = {
+      type: 'request',
+      path: 'empty.http',
+      name: 'empty.http',
+      request: { method: '', url: 'empty.http', headers: {} },
+      scripts: {},
+      tests: [],
+      error: 'no request found in this file',
+      durationMs: 0
+    }
+    const unreachable: RequestUnit = {
+      ...noRequest,
+      path: 'down.http',
+      request: { method: 'GET', url: 'http://127.0.0.1:9/', headers: {} },
+      error: 'timed out after 30 s'
+    }
+    const out = run(0, [noRequest, unreachable])
+    expect(out).toContain('not run: no request found in this file')
+    expect(out).toContain('no response: timed out after 30 s')
+    expect(out).toContain('1 no response, 1 not run')
+  })
+
+  it('shows compressed and decoded sizes for a decoded response', () => {
+    const u: RequestUnit = {
+      ...okUnit,
+      response: {
+        ...okUnit.response!,
+        sizeBytes: 8192,
+        compressedBytes: 1024,
+        decompressedBytes: 8192,
+        decodingStatus: 'decoded'
+      }
+    }
+    const out = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1 },
+      [u],
+      summaryOf([u], 0, 1)
+    ).out
+    expect(out).toContain('1KB (8KB decoded)')
   })
 })

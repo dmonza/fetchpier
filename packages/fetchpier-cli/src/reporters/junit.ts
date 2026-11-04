@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import { escapeAttr, escapeXml } from '../output/escape'
 import type { RequestUnit, RunSummary } from '../types'
 import type { Reporter, RunMeta, UnitStart } from './types'
+import { responselessLabel } from './unit-outcome'
 
 export interface JunitReporterOptions {
   output: string
@@ -104,11 +105,12 @@ export class JunitReporter implements Reporter {
       `  <testsuite name="${escapeAttr(unit.path)}" tests="${suiteTests}" failures="${failures}" errors="${suiteErrors}" time="${time}">`
     ]
     if (notSent) {
+      // `no response` when a send was attempted, `not run` when none was — the
+      // same label the terminal and the HTML report use.
+      const label = responselessLabel(unit)
+      out.push(`    <testcase name="${label}" classname="${escapeAttr(classname)}" time="${time}">`)
       out.push(
-        `    <testcase name="request not sent" classname="${escapeAttr(classname)}" time="${time}">`
-      )
-      out.push(
-        `      <error message="${escapeAttr(unit.error ?? 'the request produced no response')}" type="TransportError"/>`
+        `      <error message="${escapeAttr(unit.error ?? 'the request produced no response')}" type="${label === 'not run' ? 'NotRun' : 'TransportError'}"/>`
       )
       out.push(`    </testcase>`)
     }

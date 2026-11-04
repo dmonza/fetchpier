@@ -803,6 +803,23 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
     // keep the result in a `const` if you want to reuse it).
     let xmlDefaultCache: { parsed: unknown } | undefined
     const rawBody = response.body
+    // Responses rebuilt from history carry no status: nothing was decoded there.
+    const decodingStatus = response.decodingStatus ?? 'not-required'
+    // A body that could not be decoded is still the bytes as received; parsing it
+    // would fail with a confusing syntax error over compressed data. Fail with
+    // the real cause instead, so a test depending on the body says why.
+    const assertDecoded = (method: string): void => {
+      if (decodingStatus !== 'failed' && decodingStatus !== 'unsupported') return
+      const encoding =
+        Object.entries(response.headers ?? {}).find(
+          ([k]) => k.toLowerCase() === 'content-encoding'
+        )?.[1] ?? 'unknown'
+      throw new Error(
+        decodingStatus === 'unsupported'
+          ? `fp.response.${method}(): response body could not be decoded (${encoding}: unsupported content encoding)`
+          : `fp.response.${method}(): response body could not be decoded (${encoding}: decoding failed)`
+      )
+    }
     responseObj = {
       status: response.status,
       statusText: response.statusText,
@@ -813,7 +830,9 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
         toObject: () => intoSandbox(respHeaders.toObject())
       },
       body: rawBody,
+      decodingStatus,
       json(): unknown {
+        assertDecoded('json')
         if (typeof rawBody !== 'string') {
           throw new Error('fp.response.json(): response body is not a string')
         }
@@ -838,6 +857,7 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
         }
       },
       xml2Json(opts?: Xml2JsonOptions): unknown {
+        assertDecoded('xml2Json')
         const hasOpts = !!opts && Object.keys(opts).length > 0
         if (!hasOpts) {
           if (!xmlDefaultCache) xmlDefaultCache = { parsed: intoSandbox(parseXmlSafe(rawBody)) }

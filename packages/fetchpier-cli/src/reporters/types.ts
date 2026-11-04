@@ -17,7 +17,12 @@ import type { RequestUnit, RunSummary, Verbosity } from '../types'
 
 export interface RunMeta {
   workspace: string
+  /** Opaque environment identifier. */
   environment: string
+  /** The environment's folder name — the readable handle (`--env`). */
+  environmentName: string
+  /** The proxy in effect for the run, described without credentials. */
+  proxy?: { display: string; source: string }
   cliVersion: string
   /** ISO timestamp. */
   startedAt: string

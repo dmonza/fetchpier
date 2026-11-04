@@ -1,6 +1,6 @@
 // Exit-code table — discriminated from day one. Codes 1–9 are generic across
 // domains; 10+ are allocated per feature area in the order the areas landed
-// (10–13 multipart, 14–17 secrets, 18 host runtime); 130 is the Unix SIGINT
+// (10–13 multipart, 14–17 secrets, 18 host runtime, 19 empty run target); 130 is the Unix SIGINT
 // convention; 255 signals an internal bug. An earlier version of this comment
 // reserved 10–19 for a `mock`/`flow` domain that never took the range — those
 // domains will allocate from the next free code like everyone else.
@@ -52,6 +52,12 @@ export const EXIT = Object.freeze({
    * otherwise fail deep inside a dependency.
    */
   UNSUPPORTED_NODE: 18,
+  /**
+   * A run target holds no request to run: an existing folder (explicit, or the
+   * workspace's `requests/`) with no `.http` file. A run that sends nothing is
+   * not a success — CI would read it as green.
+   */
+  NO_REQUESTS: 19,
   /** Run aborted by SIGINT/SIGTERM. */
   SIGINT: 130,
   /** Unexpected internal error (a bug). */

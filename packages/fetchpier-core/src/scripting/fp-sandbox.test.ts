@@ -256,6 +256,45 @@ describe('runFpScript — post-response', () => {
     expect(outcome.result.error?.message).toMatch(/not valid JSON/)
   })
 
+  it('exposes decodingStatus, defaulting to not-required for responses without one', () => {
+    const run = (response: HttpResponse): unknown =>
+      runFpScript({
+        phase: 'post-response',
+        script: `fp.log(fp.response.decodingStatus);`,
+        request: baseRequest(),
+        response,
+        environment: {},
+        variables: {}
+      }).result.logs[0]?.args[0]
+    expect(run(baseResponse)).toBe('not-required')
+    expect(run({ ...baseResponse, decodingStatus: 'decoded' })).toBe('decoded')
+  })
+
+  it.each([
+    ['failed', 'json', /could not be decoded \(gzip: decoding failed\)/],
+    ['unsupported', 'json', /could not be decoded \(zstd: unsupported content encoding\)/],
+    ['failed', 'xml2Json', /xml2Json\(\): response body could not be decoded/]
+  ] as const)(
+    'with decodingStatus=%s, fp.response.%s() fails with the real cause',
+    (status, method, message) => {
+      const encoding = status === 'unsupported' ? 'zstd' : 'gzip'
+      const outcome = runFpScript({
+        phase: 'post-response',
+        script: `fp.response.${method}();`,
+        request: baseRequest(),
+        response: {
+          ...baseResponse,
+          headers: { 'Content-Encoding': encoding },
+          decodingStatus: status
+        },
+        environment: {},
+        variables: {}
+      })
+      expect(outcome.result.success).toBe(false)
+      expect(outcome.result.error?.message).toMatch(message)
+    }
+  )
+
   it('cannot mutate the request in post-response', () => {
     const outcome = runFpScript({
       phase: 'post-response',

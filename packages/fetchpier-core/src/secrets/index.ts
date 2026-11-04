@@ -54,8 +54,10 @@ export {
   readLocalValues,
   writeLocalValues,
   mergeEnvironmentLayers,
+  persistScriptEnvChanges,
   isReservedPrefixValue,
   RESERVED_VALUE_PREFIX,
   type LocalValuesFile,
-  type MergedEnvironment
+  type MergedEnvironment,
+  type PersistScriptEnvChangesInput
 } from './local-values'

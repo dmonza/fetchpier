@@ -25,6 +25,7 @@ import { loadHttpSettings } from '../workspace/settings-store'
 import { extractVariableNames, resolveString } from '../requests/variables'
 import { workspaceCertsDir } from './paths'
 import { matchClientCertificate, type ClientCertCandidate, type ClientCertMatch } from './matcher'
+import { describeError } from '../shared/describe-error'
 
 const EMPTY_TLS: TlsScopeSettings = { caCertificates: [], clientCertificates: [] }
 
@@ -60,6 +61,13 @@ export interface ResolveTlsContext {
    * unset / corrupt. Omitted ⇒ secret passphrases stay unresolved (warn-and-proceed).
    */
   resolvePassphraseSecrets?: (names: string[]) => Promise<Record<string, string>>
+  /**
+   * Receives a plain-language reason whenever configured material cannot be
+   * applied (an unreadable CA or client certificate, a passphrase reference with
+   * no value). The send proceeds without it. The resolver never writes to the
+   * process console — the adapter turns this into an advisory.
+   */
+  onWarning?: (reason: string) => void
 }
 
 function normaliseTls(value: TlsScopeSettings | undefined): TlsScopeSettings {
@@ -114,7 +122,9 @@ async function buildCaBundle(
       try {
         bundle.push(await readCertFile(dir, ca.file))
       } catch (err) {
-        console.warn(`[tls.resolve] skipping CA ${ca.id} (${ca.file}):`, err)
+        ctx.onWarning?.(
+          `CA certificate "${ca.file}" could not be read and was skipped (${describeError(err)})`
+        )
       }
     }
   }
@@ -168,9 +178,10 @@ async function resolvePassphrase(
   }
   const resolved = resolveString(pass, env)
   if (resolved.unresolved.length > 0) {
-    console.warn(
-      `[tls.resolve] client cert ${match.selected.id} passphrase has unresolved variables:`,
-      resolved.unresolved.join(', ')
+    ctx.onWarning?.(
+      `the client certificate passphrase references ${resolved.unresolved
+        .map((n) => `"${n}"`)
+        .join(', ')}, which has no value in this environment`
     )
   }
   return resolved.value
@@ -202,7 +213,11 @@ export async function resolveRequestTls(
 
   const material: ResolvedTlsMaterial = { ca: await buildCaBundle(workspaceScope, appScope, ctx) }
 
-  const match = matchClientCertificate(url, buildClientCandidates(workspaceScope, appScope))
+  const match = matchClientCertificate(
+    url,
+    buildClientCandidates(workspaceScope, appScope),
+    ctx.onWarning
+  )
   if (!match) return material
 
   const dir = scopeCertsDir(match.scope, ctx)
@@ -215,7 +230,9 @@ export async function resolveRequestTls(
       if (match.selected.pfxFile) material.pfx = await readCertFile(dir, match.selected.pfxFile)
     }
   } catch (err) {
-    console.warn(`[tls.resolve] failed to load client cert ${match.selected.id}:`, err)
+    ctx.onWarning?.(
+      `the client certificate for ${url.host} could not be read and was not presented (${describeError(err)})`
+    )
     return material
   }
 

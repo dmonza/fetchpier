@@ -166,31 +166,37 @@ describe('matchClientCertificate', () => {
       expect(result?.selected.id).toBe('first')
     })
 
-    it('logs a warning when same-tier, same-scope ambiguity occurs', () => {
+    it('reports same-tier, same-scope ambiguity through onWarning, not the console', () => {
       const url = new URL('https://api.example.com/v1')
       const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const onWarning = vi.fn()
       try {
         const a = entry({ id: 'a', host: 'api.example.com' })
         const b = entry({ id: 'b', host: 'api.example.com' })
-        matchClientCertificate(url, [candidate(a, 'workspace', 0), candidate(b, 'workspace', 1)])
-        expect(spy).toHaveBeenCalledOnce()
-        expect(spy.mock.calls[0][0]).toContain('Multiple client certificates match')
+        matchClientCertificate(
+          url,
+          [candidate(a, 'workspace', 0), candidate(b, 'workspace', 1)],
+          onWarning
+        )
+        expect(onWarning).toHaveBeenCalledOnce()
+        expect(onWarning.mock.calls[0][0]).toContain('several client certificates match')
+        expect(spy).not.toHaveBeenCalled()
       } finally {
         spy.mockRestore()
       }
     })
 
-    it('does NOT log a warning for cross-scope ties (workspace silently wins)', () => {
+    it('does NOT warn for cross-scope ties (workspace silently wins)', () => {
       const url = new URL('https://api.example.com/v1')
-      const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      try {
-        const ws = entry({ id: 'ws', host: 'api.example.com' })
-        const app = entry({ id: 'app', host: 'api.example.com' })
-        matchClientCertificate(url, [candidate(ws, 'workspace', 0), candidate(app, 'app', 0)])
-        expect(spy).not.toHaveBeenCalled()
-      } finally {
-        spy.mockRestore()
-      }
+      const onWarning = vi.fn()
+      const ws = entry({ id: 'ws', host: 'api.example.com' })
+      const app = entry({ id: 'app', host: 'api.example.com' })
+      matchClientCertificate(
+        url,
+        [candidate(ws, 'workspace', 0), candidate(app, 'app', 0)],
+        onWarning
+      )
+      expect(onWarning).not.toHaveBeenCalled()
     })
   })
 

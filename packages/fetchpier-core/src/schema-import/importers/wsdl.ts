@@ -8,7 +8,7 @@ import type {
   HttpRequest,
   KeyValuePair
 } from '@shared/types'
-import { DEFAULT_REQUEST_STATE, DEFAULT_USER_AGENT } from '@shared/types'
+import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import { sanitizeName, uniqueName } from '../sanitize'
 import {
   asArray,
@@ -292,7 +292,6 @@ export function importWsdl(raw: string): {
     const finalName = uniqueName(sanitizeName(chosen.opName, 'op'), usedNames)
 
     const headers: KeyValuePair[] = [
-      { id: 'h-ua-default', key: 'User-Agent', value: DEFAULT_USER_AGENT, enabled: true },
       {
         id: 'h-content-type',
         key: 'Content-Type',
@@ -316,7 +315,6 @@ export function importWsdl(raw: string): {
       method: 'POST',
       url: chosen.bindingUrl,
       headers: {
-        'User-Agent': DEFAULT_USER_AGENT,
         'Content-Type': 'text/xml; charset=utf-8',
         SOAPAction: chosen.soapAction
       },

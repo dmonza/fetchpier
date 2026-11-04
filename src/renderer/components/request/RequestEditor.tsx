@@ -32,6 +32,7 @@ import { serializeRequest, splitUrlAndParams, computeFullUrl } from '@shared/lib
 import { hashString } from '@shared/lib/hash'
 import { authEcho } from '@shared/lib/auth-echo'
 import { mapHttpRequestToEditorState } from './request-loader'
+import { implicitDefaultHeaderEntries } from './implicit-headers'
 import { serializeTab } from '../../lib/tab-dirty'
 import { buildHttpRequestPayload } from './build-send-payload'
 import { defaultReqTabForMethod } from './req-tab'
@@ -156,6 +157,22 @@ function RequestEditorInner(): React.JSX.Element {
   const cookieJarOverride = request.settings?.disableCookieJar
   const cookieJarDisabled =
     cookieJarOverride && cookieJarOverride.inherit === false && cookieJarOverride.value === true
+
+  // App version for the implicit default User-Agent row (`Fetchpier/<version>`)
+  // — the same value the main process sends when the request carries none.
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    window.api.app
+      .getVersion()
+      .then((v) => {
+        if (alive) setAppVersion(v)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // URL bar editing state — track raw input while focused to avoid cursor jumping
   const [isEditingUrl, setIsEditingUrl] = useState(false)
@@ -942,6 +959,7 @@ function RequestEditorInner(): React.JSX.Element {
             variables={rawActiveVariables}
             readOnly={isReadOnly}
             managedEntries={managedHeaderEntries}
+            defaultEntries={implicitDefaultHeaderEntries(request.headers, appVersion)}
           />
         )}
 

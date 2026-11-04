@@ -17,10 +17,13 @@
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import { isEncryptedValue } from './crypto'
+import type { EnvironmentChanges, EnvWriteNotPersistedWarning } from '@shared/types'
+import { isReservedVariableName } from '@shared/lib/dynamic-variables'
+import { encryptValue, isEncryptedValue } from './crypto'
 import { assertSafeIdentifier } from '../workspace/safe-path'
 import { envFolderPath, resolveEnvFolder } from '../workspace/environments'
 import { atomicWriteFile } from '../workspace/atomic-write'
+import { CoreError } from '../shared/context'
 
 const STATE_DIR = '.state'
 const VALUES_FILE = 'localvalues.json'
@@ -174,6 +177,106 @@ export async function writeLocalValues(
     variables: file.variables
   }
   await atomicWriteFile(filePath, `${JSON.stringify(out, null, 2)}\n`)
+}
+
+export interface PersistScriptEnvChangesInput {
+  workspacePath: string
+  environmentId: string
+  changes: EnvironmentChanges | undefined
+  /** The shared `config.json` variables — the classification source (sticky secrecy). */
+  sharedVariables: Record<string, string | null>
+  /** The workspace manifest's current keyId (`undefined` when the workspace has no secrets). */
+  currentKeyId: string | undefined
+  /**
+   * Lazy provider of the current workspace key. Called at most once, and only
+   * when a secret-named write actually has to be encrypted. Key custody stays
+   * with the adapter (desktop key store / `FETCHPIER_WORKSPACE_KEY`).
+   */
+  getKey: () => Promise<Uint8Array | null>
+}
+
+/**
+ * Persist script-written environment changes into the environment's local value
+ * layer. The single writer for script writes, shared by the desktop (always) and
+ * the CLI (`--persist-env`): the core owns what a workspace contains.
+ *
+ * Rules (unchanged from the desktop's former writer): the shared `config.json` is
+ * never written; a name that is a shared *secret* is stored encrypted under the
+ * current workspace key (sticky secrecy); plain and local-only names are stored in
+ * clear; a reserved `$` name and a plain value claiming the `enc:` prefix are
+ * rejected with a contractual error.
+ *
+ * A write that cannot be persisted does **not** fail — the send already happened
+ * and the caller keeps using the value in memory. It is reported instead:
+ *  - `KEY_MISSING`: a secret-named write and no workspace key is available;
+ *  - `LOCAL_KEY_MISMATCH`: the file holds entries encrypted under a different
+ *    (older) key. Writing a secret would have to move the file's single `keyId`
+ *    and make those entries unreadable for good, so secret writes are skipped and
+ *    the file's existing entries and `keyId` are left untouched. Plain writes and
+ *    removals still apply — they do not depend on the key.
+ */
+export async function persistScriptEnvChanges(
+  input: PersistScriptEnvChangesInput
+): Promise<EnvWriteNotPersistedWarning[]> {
+  const { workspacePath, environmentId, changes, sharedVariables, currentKeyId, getKey } = input
+  if (!changes) return []
+  const setEntries = Object.entries(changes.set)
+  if (setEntries.length === 0 && changes.removed.length === 0) return []
+
+  const local = await readLocalValues(workspacePath, environmentId)
+  const hasEncrypted = Object.values(local.variables).some(isEncryptedValue)
+  const keyMismatch = hasEncrypted && local.keyId !== undefined && local.keyId !== currentKeyId
+
+  const next: Record<string, string> = { ...local.variables }
+  const warnings: EnvWriteNotPersistedWarning[] = []
+  let keyId = keyMismatch ? local.keyId : (local.keyId ?? currentKeyId)
+  let cachedKey: Uint8Array | null | undefined
+  const key = async (): Promise<Uint8Array | null> => {
+    if (cachedKey === undefined) cachedKey = await getKey()
+    return cachedKey
+  }
+
+  for (const [name, value] of setEntries) {
+    // REQ-0087: the `$` prefix is the reserved system dynamic-variable namespace.
+    if (isReservedVariableName(name)) {
+      throw new CoreError(
+        'RESERVED_VARIABLE_NAME',
+        `Variable name "${name}" begins with "$", which is reserved for system dynamic variables.`,
+        { environmentId, variable: name }
+      )
+    }
+    if (classifyLocalWrite(name, sharedVariables) === 'secret') {
+      if (keyMismatch) {
+        warnings.push({ code: 'ENV_WRITE_NOT_PERSISTED', name, reason: 'LOCAL_KEY_MISMATCH' })
+        continue
+      }
+      const k = currentKeyId ? await key() : null
+      if (!currentKeyId || !k) {
+        warnings.push({ code: 'ENV_WRITE_NOT_PERSISTED', name, reason: 'KEY_MISSING' })
+        continue
+      }
+      next[name] = await encryptValue(k, name, value)
+      keyId = currentKeyId
+    } else {
+      // REQ-0076: a plain write may not claim the reserved `enc:` prefix.
+      if (isReservedPrefixValue(value)) {
+        throw new CoreError(
+          'WORKSPACE_INVALID',
+          `Value for "${name}" starts with "enc:", which is reserved for encrypted secrets.`,
+          { environmentId, variable: name }
+        )
+      }
+      next[name] = value
+    }
+  }
+  for (const name of changes.removed) delete next[name]
+
+  await writeLocalValues(workspacePath, environmentId, {
+    version: VALUES_VERSION,
+    ...(keyId ? { keyId } : {}),
+    variables: next
+  })
+  return warnings
 }
 
 /**

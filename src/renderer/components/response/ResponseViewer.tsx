@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { Copy, Check, AlignLeft, Code, Zap } from 'lucide-react'
+import { AlertTriangle, Copy, Check, AlignLeft, Code, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/utils'
 import { useRequestStore } from '../../stores/request'
@@ -10,6 +10,7 @@ import type { HttpResponse, ResponseViewerTab, ScriptResultsBundle } from '../..
 import { prettyPrintJson, prettyPrintXml, sniffLanguage } from '../../lib/format-body'
 import { TestsTab, countTestFailures } from './TestsTab'
 import { CookiesTab, cookieRowCount, cookieWarningsOf } from './CookiesTab'
+import { ExecutionNotices } from './ExecutionNotices'
 
 type ResponseTab = ResponseViewerTab
 
@@ -19,6 +20,46 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * The size indicator: both sizes when a compressed response was decoded, and the
+ * decoding problem when it could not be — the body shown is then the bytes as
+ * received, which the user needs to know before reading it.
+ */
+export function ResponseSize({ response }: { response: HttpResponse }): React.JSX.Element {
+  const { t } = useTranslation()
+  const decoded =
+    response.decodingStatus === 'decoded' &&
+    response.compressedBytes !== undefined &&
+    response.decompressedBytes !== undefined
+  const problem = response.decodingStatus === 'failed' || response.decodingStatus === 'unsupported'
+  const encoding =
+    Object.entries(response.headers).find(([k]) => k.toLowerCase() === 'content-encoding')?.[1] ??
+    ''
+  return (
+    <>
+      <span
+        className="text-xs text-muted-foreground"
+        title={decoded ? t('response.size.decodedTitle') : undefined}
+      >
+        {decoded
+          ? t('response.size.decoded', {
+              compressed: formatSize(response.compressedBytes!),
+              decompressed: formatSize(response.decompressedBytes!)
+            })
+          : formatSize(response.sizeBytes)}
+      </span>
+      {problem && (
+        <span role="status" className="flex items-center gap-1 text-xs text-warning-text">
+          <AlertTriangle className="h-3 w-3" aria-hidden />
+          {response.decodingStatus === 'unsupported'
+            ? t('response.size.unsupported', { encoding })
+            : t('response.size.failed', { encoding })}
+        </span>
+      )}
+    </>
+  )
 }
 
 function formatTiming(ms: number): string {
@@ -361,10 +402,12 @@ export function ResponseViewer(): React.JSX.Element {
               {response.status} {response.statusText}
             </span>
             <span className="text-xs text-muted-foreground">{formatTiming(response.timingMs)}</span>
-            <span className="text-xs text-muted-foreground">{formatSize(response.sizeBytes)}</span>
+            <ResponseSize response={response} />
           </div>
         )}
       </div>
+
+      <ExecutionNotices warnings={activeWorkspaceTab?.warnings} />
 
       {/* Body area */}
       <div className="flex-1 overflow-hidden">

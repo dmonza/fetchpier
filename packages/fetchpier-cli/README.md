@@ -73,30 +73,80 @@ When a command needs a workspace and none is found, it exits with code 4.
 
 **Flags.**
 
-| Flag                            | Effect                                                                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `-w, --workspace <path>`        | Workspace folder. Default: `FETCHPIER_WORKSPACE`, then upward discovery from the current directory.                       |
-| `-e, --env <name>`              | Environment folder name (case-insensitive). Default: `FETCHPIER_ENV`, then `default`.                                     |
-| `--env-var <KEY=VALUE>`         | Override a variable for this run (repeatable; highest precedence).                                                        |
-| `--bail`                        | Stop after the first failed request — failed test, script error, file with no request, or a request that got no response. |
-| `--delay <ms>`                  | Wait between requests.                                                                                                    |
-| `--timeout <ms>`                | Per-request timeout.                                                                                                      |
-| `--insecure`                    | Do not verify TLS certificates for this run.                                                                              |
-| `--reporter-json <file>`        | Write a JSON report. `-` writes it to stdout and silences the terminal reporter.                                          |
-| `--reporter-json-no-body`       | Omit response bodies from the JSON report.                                                                                |
-| `--reporter-junit <file>`       | Write a JUnit XML report.                                                                                                 |
-| `--reporter-html <file>`        | Write a standalone HTML report.                                                                                           |
-| `--reporter-html-only-failures` | Open the HTML report with its "only failures" filter on.                                                                  |
-| `--save-history`                | Record each request that got a response in the workspace history (`requests/.runs/`), like the desktop does.              |
-| `--suppress-exit-code`          | Exit 0 even when requests failed (fatal errors still exit non-zero).                                                      |
-| `--show-secrets`                | Do not redact `Authorization` / `Proxy-Authorization` headers in reports.                                                 |
-| `--ascii`                       | Use ASCII glyphs instead of Unicode.                                                                                      |
-| `--no-color`                    | Disable ANSI colors.                                                                                                      |
-| `--silent`                      | Suppress stdout (errors still go to stderr).                                                                              |
-| `-v, --verbose`                 | Increase verbosity; repeatable (`-v`, `-vv`, `-vvv`).                                                                     |
+| Flag                            | Effect                                                                                                                                                                                                                            |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-w, --workspace <path>`        | Workspace folder. Default: `FETCHPIER_WORKSPACE`, then upward discovery from the current directory.                                                                                                                               |
+| `-e, --env <name>`              | Environment folder name (case-insensitive). Default: `FETCHPIER_ENV`, then `default`.                                                                                                                                             |
+| `--env-var <KEY=VALUE>`         | Override a variable for this run (repeatable). A script that later sets the same variable wins from then on.                                                                                                                      |
+| `--persist-env`                 | Save script variable changes (`fp.environment.set` / `remove`) to the local values, exactly as the desktop does. Default: they apply to the rest of the run only.                                                                 |
+| `--bail`                        | Stop after the first failed request — failed test, script error, file with no request, or a request that got no response.                                                                                                         |
+| `--delay <ms>`                  | Wait between requests (whole number, 0 or more).                                                                                                                                                                                  |
+| `--timeout <ms>`                | Per-request timeout (whole number). Default `30000` (30 s, like the desktop). `0` disables it — the only way to.                                                                                                                  |
+| `--proxy <url>`                 | Send every request through this proxy (`http://user:pass@host:port`). Wins over `HTTPS_PROXY` / `HTTP_PROXY`.                                                                                                                     |
+| `--no-proxy`                    | Ignore `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` for this run. Cannot be combined with `--proxy`.                                                                                                                                 |
+| `--insecure`                    | Do not verify TLS certificates for this run.                                                                                                                                                                                      |
+| `--reporter-json <file>`        | Write a JSON report. `-` writes it to stdout and silences the terminal reporter.                                                                                                                                                  |
+| `--reporter-json-no-body`       | Omit response bodies from the JSON report.                                                                                                                                                                                        |
+| `--reporter-junit <file>`       | Write a JUnit XML report.                                                                                                                                                                                                         |
+| `--reporter-html <file>`        | Write a standalone HTML report.                                                                                                                                                                                                   |
+| `--reporter-html-only-failures` | Open the HTML report with its "only failures" filter on.                                                                                                                                                                          |
+| `--save-history`                | Record each request that got a response in the workspace history (`requests/.runs/`), like the desktop does.                                                                                                                      |
+| `--suppress-exit-code`          | Exit 0 even when requests failed (fatal errors still exit non-zero).                                                                                                                                                              |
+| `--show-secrets`                | Do not redact credentials and cookies in the output: `Authorization` / `Proxy-Authorization`, the API-key auth credential (query or header), `Cookie` and `Set-Cookie` values. Secret variables still print as `{secret:<name>}`. |
+| `--ascii`                       | Use ASCII glyphs instead of Unicode.                                                                                                                                                                                              |
+| `--no-color`                    | Disable ANSI colors.                                                                                                                                                                                                              |
+| `--silent`                      | Suppress stdout (errors still go to stderr).                                                                                                                                                                                      |
+| `-v, --verbose`                 | More detail, repeatable — see below.                                                                                                                                                                                              |
 
 Only the JSON reporter accepts `-`; a report path whose directory does not exist
 is rejected (exit code 2). Several reporters can be combined in one run.
+
+**Verbosity.** Levels add up, and are the same for one or many requests:
+
+| Level   | Adds                                                                                  |
+| ------- | ------------------------------------------------------------------------------------- |
+| default | The request and response lines, and every script's `fp.log` / `warn` / `error` output |
+| `-v`    | Each request's test list, and the full URL instead of its path                        |
+| `-vv`   | Request and response headers                                                          |
+| `-vvv`  | Request and response bodies, each cut at 64 KB (the JSON report has the full body)    |
+
+Redaction and secret masking apply at every level. A request that got no
+response reads `no response: <reason>` (unreachable, TLS, timeout, proxy); one
+that was never attempted reads `not run: <reason>` (a file with no request, a
+pre-request script that failed).
+
+**Variables between requests.** A value a script sets with `fp.environment.set`
+(or removes with `fp.environment.remove`) applies to every later request of the
+same run — a login's token reaches the next call. A value set under a secret
+variable's name stays masked as `{secret:<name>}` everywhere. Without
+`--persist-env` nothing is written to the workspace.
+
+**`--persist-env` after a key rotation.** If a teammate rotated the workspace
+key and you pulled it, your local values stay encrypted with the previous key
+until you open the workspace in the desktop app with the new key (it
+re-encrypts them). Until then, `fp run --persist-env`:
+
+- does not save script writes to **secret** variables;
+- prints a warning naming the cause and the fix (open the workspace in the
+  desktop app with the new key);
+- keeps using the value in memory for the rest of the run;
+- saves writes to plain variables normally.
+
+A CI checkout has no local values, so this only happens on a developer machine.
+
+**Proxy.** `HTTPS_PROXY` applies to https targets and `HTTP_PROXY` to http
+targets (lowercase forms too); `NO_PROXY` excludes hosts, domain suffixes,
+`host:port` entries, or everything (`*`). `--proxy` overrides both variables;
+`--no-proxy` ignores all three. The active proxy is shown in the header without
+credentials. An unusable proxy URL stops the run before anything is sent
+(exit code 3); a proxy that does not answer fails the request in the report.
+
+**Default headers.** When a request does not set them, the CLI sends
+`User-Agent: Fetchpier-CLI/<version>` and `Accept-Encoding: gzip, deflate, br`.
+Compressed responses (`gzip`, `deflate`, `br`) are decoded; the JSON report
+carries `compressedBytes`, `decompressedBytes` and `decodingStatus`. A body
+that cannot be decoded is kept as received, with a warning, and
+`fp.response.json()` fails with the real cause.
 
 A request that received any response — including a 4xx or 5xx — passes unless
 one of its tests fails.
@@ -139,18 +189,21 @@ printed from the same directory.
   case-insensitively against the environment's folder name. The CLI never reads
   the desktop's active-environment preference — predictable in CI.
 - **Variables:** environment values, then per-machine local values, then
-  `--env-var` overrides. `{{$env.NAME}}` references resolve from a `.env` file at
-  the workspace root, then from the process environment.
+  `--env-var` overrides, then whatever earlier scripts of the run set.
+  `{{$env.NAME}}` references resolve from a `.env` file at the workspace root,
+  then from the process environment.
 
 ## Environment variables
 
-| Variable                  | Purpose                                                               |
-| ------------------------- | --------------------------------------------------------------------- |
-| `FETCHPIER_WORKSPACE`     | Workspace folder, when `--workspace` is not given.                    |
-| `FETCHPIER_ENV`           | Environment folder name, when `--env` is not given.                   |
-| `FETCHPIER_WORKSPACE_KEY` | Workspace key (`FPK1-…`) used to decrypt secret variables. See below. |
-| `NO_COLOR`                | Disable colors (same as `--no-color`).                                |
-| `FORCE_COLOR`             | Force colors on when stdout is not a terminal (`0` does not force).   |
+| Variable                     | Purpose                                                               |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `FETCHPIER_WORKSPACE`        | Workspace folder, when `--workspace` is not given.                    |
+| `FETCHPIER_ENV`              | Environment folder name, when `--env` is not given.                   |
+| `FETCHPIER_WORKSPACE_KEY`    | Workspace key (`FPK1-…`) used to decrypt secret variables. See below. |
+| `HTTPS_PROXY` / `HTTP_PROXY` | Proxy for https / http targets (see **Proxy** above).                 |
+| `NO_PROXY`                   | Targets that connect directly.                                        |
+| `NO_COLOR`                   | Disable colors (same as `--no-color`).                                |
+| `FORCE_COLOR`                | Force colors on when stdout is not a terminal (`0` does not force).   |
 
 ## Secrets in CI
 
@@ -158,7 +211,9 @@ Secret environment variables are stored encrypted in the workspace. To use them
 in a run, provide the workspace key through `FETCHPIER_WORKSPACE_KEY` — typically
 injected from your CI provider's secret store. Resolution is lazy: a run that
 touches no secret needs no key. Reports never print decrypted values; they show
-`{secret:<name>}` instead.
+`{secret:<name>}` instead — including in what a script logs or a failed
+assertion prints (a value a script transforms, e.g. hashes, cannot be
+recognized).
 
 A run that needs a secret it cannot resolve stops before sending, with a
 dedicated exit code: 14 (key missing), 15 (key invalid for this workspace),
@@ -171,7 +226,7 @@ dedicated exit code: 14 (key missing), 15 (key invalid for this workspace),
 | 0     | Success.                                                                                                                                       |
 | 1     | A request failed (failed test, script error, no response, or a file with no request), or a usage error (unknown command or option, bare `fp`). |
 | 2     | Report output target invalid (directory missing, or `-` for a reporter other than JSON).                                                       |
-| 3     | Reserved for usage errors.                                                                                                                     |
+| 3     | Invalid flag value (`--timeout`, `--delay`), an unusable proxy URL (flag or variable), or `--proxy` together with `--no-proxy`.                |
 | 4     | Workspace not found or invalid; or `fp init` on a folder that already is a workspace.                                                          |
 | 5     | An input path does not exist or is not a `.http` file/folder; or the workspace has no `requests/` folder.                                      |
 | 6     | Environment not found.                                                                                                                         |
@@ -184,6 +239,7 @@ dedicated exit code: 14 (key missing), 15 (key invalid for this workspace),
 | 16    | A referenced secret value cannot be decrypted.                                                                                                 |
 | 17    | A referenced secret has no value set.                                                                                                          |
 | 18    | Node.js is older than the supported minimum.                                                                                                   |
+| 19    | Nothing to run: a target folder (or the workspace's `requests/`) holds no `.http` file. Not masked by `--suppress-exit-code`.                  |
 | 130   | Aborted by Ctrl-C / SIGTERM (partial reports are still written).                                                                               |
 | 255   | Internal error (a bug — please file an issue).                                                                                                 |
 

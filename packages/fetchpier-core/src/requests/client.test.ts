@@ -64,14 +64,18 @@ import { CoreError } from '../shared/context'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeBodyStream(text: string) {
-  return { text: async () => text }
+function makeBodyStream(body: string | Buffer) {
+  const buf = typeof body === 'string' ? Buffer.from(body, 'utf-8') : body
+  return {
+    text: async () => buf.toString('utf-8'),
+    arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  }
 }
 
 function makeResponse(
   statusCode: number,
   headers: Record<string, string | string[]>,
-  bodyText: string
+  bodyText: string | Buffer
 ) {
   return { statusCode, headers, body: makeBodyStream(bodyText) }
 }
@@ -492,16 +496,16 @@ describe('Dispatcher construction — settings, proxy, TLS material', () => {
     expect(agentConstructorCalls[0]).toMatchObject({ allowH2: false })
   })
 
-  it('warns and falls back to HTTP/1.1 when http2 is requested over plain HTTP', async () => {
+  it('advises and falls back to HTTP/1.1 when http2 is requested over plain HTTP', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const onWarning = vi.fn()
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
     await sendRequest(
       { method: 'GET', url: 'http://x/', headers: {} },
-      { settings: settingsWith({ httpVersion: 'http2', followRedirects: false }) }
+      { settings: settingsWith({ httpVersion: 'http2', followRedirects: false }), onWarning }
     )
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('httpVersion=http2 requested over plain HTTP')
-    )
+    expect(onWarning).toHaveBeenCalledWith({ code: 'HTTP2_DOWNGRADED' })
+    expect(warnSpy).not.toHaveBeenCalled()
     expect(agentConstructorCalls[0]).toMatchObject({ allowH2: false })
     warnSpy.mockRestore()
   })
@@ -743,5 +747,111 @@ describe('ordered, duplicate-capable headers (CA-03)', () => {
     )
     const opts = mockRequest.mock.calls[0][0] as { headers: string[] }
     expect(opts.headers).toContain('User-Agent')
+  })
+})
+
+// ── CLI readiness: default UA, decoding, timeout reason, proxy resolver ───────
+
+describe('sendRequestWithRaw — CLI readiness', () => {
+  it('uses the caller-supplied default User-Agent when the request carries none', async () => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    await sendRequest(
+      { method: 'GET', url: 'https://x/', headers: {} },
+      { userAgent: 'Fetchpier-CLI/9.9.9' }
+    )
+    expect(mockRequest.mock.calls[0][0].headers['User-Agent']).toBe('Fetchpier-CLI/9.9.9')
+  })
+
+  it('decodes a gzip body and reports both sizes and the status, keeping the headers', async () => {
+    const { gzipSync } = await import('node:zlib')
+    const text = 'x'.repeat(2000)
+    const wire = gzipSync(Buffer.from(text))
+    mockRequest.mockResolvedValueOnce(makeResponse(200, { 'content-encoding': 'gzip' }, wire))
+    const r = await sendRequest({ method: 'GET', url: 'https://x/', headers: {} })
+    expect(r.body).toBe(text)
+    expect(r.decodingStatus).toBe('decoded')
+    expect(r.compressedBytes).toBe(wire.length)
+    expect(r.decompressedBytes).toBe(2000)
+    expect(r.sizeBytes).toBe(2000)
+    expect(r.headers['content-encoding']).toBe('gzip')
+  })
+
+  it('keeps an undecodable body as received and advises', async () => {
+    const onWarning = vi.fn()
+    mockRequest.mockResolvedValueOnce(makeResponse(200, { 'content-encoding': 'zstd' }, 'raw'))
+    const r = await sendRequest({ method: 'GET', url: 'https://x/', headers: {} }, { onWarning })
+    expect(r.body).toBe('raw')
+    expect(r.decodingStatus).toBe('unsupported')
+    expect(onWarning).toHaveBeenCalledWith({
+      code: 'UNSUPPORTED_CONTENT_ENCODING',
+      encoding: 'zstd'
+    })
+  })
+
+  it('an uncompressed body is not-required with equal sizes', async () => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, 'plain'))
+    const r = await sendRequest({ method: 'GET', url: 'https://x/', headers: {} })
+    expect(r.decodingStatus).toBe('not-required')
+    expect(r.compressedBytes).toBe(5)
+    expect(r.decompressedBytes).toBe(5)
+  })
+
+  it('reports an expired adapter timer as a timeout naming the limit, not a cancellation', async () => {
+    const { timeoutAbortReason } = await import('./client')
+    const controller = new AbortController()
+    controller.abort(timeoutAbortReason(30000))
+    const { errors } = await import('undici')
+    mockRequest.mockRejectedValueOnce(new errors.RequestAbortedError())
+    await expect(
+      sendRequest({ method: 'GET', url: 'https://x/', headers: {} }, { signal: controller.signal })
+    ).rejects.toThrow('timed out after 30 s')
+  })
+
+  it('a plain abort is still a cancellation', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const { errors } = await import('undici')
+    mockRequest.mockRejectedValueOnce(new errors.RequestAbortedError())
+    await expect(
+      sendRequest({ method: 'GET', url: 'https://x/', headers: {} }, { signal: controller.signal })
+    ).rejects.toThrow('Request cancelled')
+  })
+
+  it('asks a proxy resolver for the target and connects through what it returns', async () => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    const resolver = vi.fn(() => ({
+      enabled: true,
+      url: 'http://proxy:3128',
+      username: '',
+      password: ''
+    }))
+    await sendRequest(
+      { method: 'GET', url: 'https://api.test/x', headers: {} },
+      { proxy: resolver }
+    )
+    expect(resolver).toHaveBeenCalledWith('https://api.test/x')
+    expect(proxyAgentConstructorCalls[0]).toMatchObject({ uri: 'http://proxy:3128' })
+  })
+
+  it('a resolver returning undefined connects directly', async () => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    await sendRequest(
+      { method: 'GET', url: 'https://api.test/x', headers: {} },
+      { proxy: () => undefined }
+    )
+    expect(proxyAgentConstructorCalls).toHaveLength(0)
+    expect(agentConstructorCalls).toHaveLength(1)
+  })
+})
+
+describe('formatTimeoutLimit', () => {
+  it.each([
+    [200, '200 ms'],
+    [1000, '1 s'],
+    [1500, '1.5 s'],
+    [30000, '30 s']
+  ])('%d → %s', async (ms, text) => {
+    const { formatTimeoutLimit } = await import('./client')
+    expect(formatTimeoutLimit(ms)).toBe(text)
   })
 })

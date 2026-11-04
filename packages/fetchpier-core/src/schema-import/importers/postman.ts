@@ -10,7 +10,7 @@ import type {
   RawSubtype,
   AuthConfig
 } from '@shared/types'
-import { DEFAULT_REQUEST_STATE, DEFAULT_USER_AGENT } from '@shared/types'
+import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import { sanitizeName } from '../sanitize'
 
 // ── Types that model the subset of the Postman schema we consume ──────────
@@ -562,13 +562,7 @@ function buildOperation(
       })
     }
   }
-  // User-Agent prefix (consistent with OpenAPI importer)
-  headers.unshift({
-    id: 'h-ua-default',
-    key: 'User-Agent',
-    value: DEFAULT_USER_AGENT,
-    enabled: true
-  })
+  // No User-Agent row: the default is implicit (applied at send time).
 
   // Auth (inheritance: request.auth beats parent; noauth cuts the chain)
   const effectiveAuth = request.auth ?? inheritedAuth ?? null
