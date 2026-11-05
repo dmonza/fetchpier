@@ -40,22 +40,38 @@ function readVar(env: NodeJS.ProcessEnv, name: string): string | undefined {
   return trimmed ? trimmed : undefined
 }
 
+/**
+ * An unusable proxy, named by where it came from. The value is never part of the
+ * message (nor of `details`): it is printed in CI logs, and a proxy URL routinely
+ * carries the username and password.
+ */
+function invalidProxy(source: ProxySource, reason: string): CoreError {
+  return new CoreError('PROXY_INVALID', `Invalid proxy URL from ${source}: ${reason}`, { source })
+}
+
+function decodeCredential(value: string, source: ProxySource): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    // A `URIError` is not a contractual failure: left alone it surfaced as an
+    // internal error (exit 255 with a stack trace) instead of an unusable proxy.
+    throw invalidProxy(source, 'the credentials contain an invalid percent escape')
+  }
+}
+
 function parseProxy(raw: string, source: ProxySource): ProxyConfig {
   let u: URL
   try {
     u = new URL(raw)
   } catch {
-    throw new CoreError('PROXY_INVALID', `Invalid proxy URL from ${source}: "${raw}"`, { source })
+    throw invalidProxy(source, 'not a valid URL')
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-    throw new CoreError(
-      'PROXY_INVALID',
-      `Invalid proxy URL from ${source}: "${u.protocol}" is not supported (use http:// or https://)`,
-      { source }
-    )
+    // The protocol is parsed out of the URL and carries no credential.
+    throw invalidProxy(source, `"${u.protocol}" is not supported (use http:// or https://)`)
   }
-  const username = decodeURIComponent(u.username)
-  const password = decodeURIComponent(u.password)
+  const username = decodeCredential(u.username, source)
+  const password = decodeCredential(u.password, source)
   u.username = ''
   u.password = ''
   return { enabled: true, url: `${u.protocol}//${u.host}`, username, password }

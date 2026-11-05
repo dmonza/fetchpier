@@ -123,15 +123,47 @@ describe('exit codes', () => {
   )
 
   // CI readiness (CA-14): an unusable proxy is fatal before anything is sent.
-  it('3 — an invalid proxy variable names its source', () => {
-    const r = spawnSync(process.execPath, [BIN, 'run', 'requests/ok.http', '--workspace', ws], {
-      encoding: 'utf-8',
-      cwd: ws,
-      env: { ...process.env, HTTPS_PROXY: 'not a url' }
-    })
-    expect(r.status).toBe(3)
-    expect(r.stderr).toContain('HTTPS_PROXY')
-  }, 60000)
+  // CLI-119: and it never prints the value — a proxy URL carries credentials.
+  it.each([
+    ['an invalid proxy variable', [], { HTTPS_PROXY: 'not a url' }, 'HTTPS_PROXY'],
+    [
+      '--proxy with credentials and an invalid host',
+      ['--proxy', 'http://user:s3cretPa55@bad host:8080'],
+      {},
+      '--proxy'
+    ],
+    [
+      'HTTPS_PROXY whose password has an invalid percent escape',
+      [],
+      { HTTPS_PROXY: 'http://user:s3cretPa55%zz@proxy:3128' },
+      'HTTPS_PROXY'
+    ]
+  ])(
+    '3 — %s names its source, never its value',
+    (_label, args: string[], env: Record<string, string>, source) => {
+      const r = spawnSync(
+        process.execPath,
+        [BIN, 'run', 'requests/ok.http', '--workspace', ws, ...args],
+        {
+          encoding: 'utf-8',
+          cwd: ws,
+          // Only this case's proxy variable: one inherited from the developer's
+          // shell would otherwise be parsed first.
+          env: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(([k]) => !/^(https?|no)_proxy$/i.test(k))
+            ),
+            ...env
+          }
+        }
+      )
+      expect(r.status).toBe(3)
+      expect(r.stderr).toContain(source)
+      expect(r.stderr).not.toContain('s3cretPa55')
+      expect(r.stderr).not.toContain('This is a bug')
+    },
+    60000
+  )
 
   // CLI hardening (CA-12): a timer the runtime cannot honour is refused.
   it('3 — --timeout above the runtime timer maximum names the maximum', () => {

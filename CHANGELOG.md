@@ -5,6 +5,16 @@ All notable changes to Fetchpier are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **An unusable proxy URL no longer prints its credentials.** When `--proxy`,
+  `HTTPS_PROXY` or `HTTP_PROXY` cannot be used, the error names the flag or
+  variable it came from but not the URL, so a username and password in it stay
+  out of the CI log. Credentials with an invalid percent escape now stop the run
+  the same way (exit code 3) instead of crashing with exit code 255.
+
 ## [0.9.6] - 2026-11-04
 
 The command-line interface becomes reliable in continuous integration, and the

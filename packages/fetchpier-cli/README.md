@@ -167,8 +167,9 @@ targets (lowercase forms too); `NO_PROXY` excludes hosts, domain suffixes,
 `--no-proxy` ignores all three. The active proxy is shown in the header without
 credentials, followed by the `NO_PROXY` list when there is one; at `-v` and above
 each request says whether it went `via proxy` or `direct`. An unusable proxy URL
-stops the run before anything is sent (exit code 3); a proxy that does not
-answer fails the request in the report.
+stops the run before anything is sent (exit code 3), with an error that names
+the flag or variable it came from but never the URL, so its credentials stay
+out of the log; a proxy that does not answer fails the request in the report.
 
 **TLS.** The runner applies the workspace's TLS configuration exactly like the
 desktop: the CA certificates and client certificates listed in the `tls` block

@@ -82,11 +82,56 @@ describe('resolveProxyRouting', () => {
     expect(r.active).toBeUndefined()
   })
 
+  // The value never reaches the message (nor `details`): an unusable proxy is
+  // reported in a CI log, and its URL routinely carries the credentials.
+  const PASSWORD = 's3cretPa55'
   it.each([
-    ['flag', { flag: 'not a url' }, '--proxy'],
-    ['variable', { env: { HTTPS_PROXY: 'not a url' } }, 'HTTPS_PROXY'],
-    ['unsupported scheme', { flag: 'ftp://proxy:21' }, '--proxy']
-  ])('an invalid %s is rejected naming its source', (_label, input, source) => {
+    ['flag', { flag: 'not a url' }, '--proxy', 'not a url'],
+    ['variable', { env: { HTTPS_PROXY: 'not a url' } }, 'HTTPS_PROXY', 'not a url'],
+    ['unsupported scheme', { flag: 'ftp://proxy:21' }, '--proxy', 'ftp://proxy:21'],
+    [
+      'flag with credentials and an invalid host',
+      { flag: `http://user:${PASSWORD}@bad host:8080` },
+      '--proxy',
+      `http://user:${PASSWORD}@bad host:8080`
+    ],
+    [
+      'HTTPS_PROXY with credentials and an invalid host',
+      { env: { HTTPS_PROXY: `http://user:${PASSWORD}@bad host:3128` } },
+      'HTTPS_PROXY',
+      `http://user:${PASSWORD}@bad host:3128`
+    ],
+    [
+      'lowercase http_proxy with credentials and an invalid host',
+      { env: { http_proxy: `http://user:${PASSWORD}@bad host:3128` } },
+      'HTTP_PROXY',
+      `http://user:${PASSWORD}@bad host:3128`
+    ],
+    [
+      'unsupported scheme with credentials',
+      { flag: `ftp://user:${PASSWORD}@proxy:21` },
+      '--proxy',
+      `ftp://user:${PASSWORD}@proxy:21`
+    ],
+    [
+      'password with an invalid percent escape',
+      { flag: `http://user:${PASSWORD}%zz@proxy:3128` },
+      '--proxy',
+      `http://user:${PASSWORD}%zz@proxy:3128`
+    ],
+    [
+      'password with a truncated UTF-8 escape',
+      { env: { HTTPS_PROXY: `http://user:${PASSWORD}%E0@proxy:3128` } },
+      'HTTPS_PROXY',
+      `http://user:${PASSWORD}%E0@proxy:3128`
+    ],
+    [
+      'username with an invalid percent escape',
+      { env: { HTTP_PROXY: `http://us%zzer:${PASSWORD}@proxy:3128` } },
+      'HTTP_PROXY',
+      `http://us%zzer:${PASSWORD}@proxy:3128`
+    ]
+  ])('an invalid %s is rejected naming its source, never its value', (_l, input, source, raw) => {
     let err: unknown
     try {
       resolveProxyRouting(input)
@@ -96,6 +141,9 @@ describe('resolveProxyRouting', () => {
     expect(err).toBeInstanceOf(CoreError)
     expect((err as CoreError).code).toBe('PROXY_INVALID')
     expect((err as CoreError).message).toContain(source)
+    const exposed = `${(err as CoreError).message} ${JSON.stringify((err as CoreError).details)}`
+    expect(exposed).not.toContain(raw)
+    expect(exposed).not.toContain(PASSWORD)
   })
 
   it('rejects the flag together with noProxy', () => {
