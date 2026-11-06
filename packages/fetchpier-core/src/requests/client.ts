@@ -120,6 +120,16 @@ export interface ResolvedTlsMaterial {
   passphrase?: string
 }
 
+/**
+ * TLS material for the send, or a resolver the client asks once per origin a
+ * redirect chain reaches (symmetric to {@link ProxyOption}). Fixed material keeps
+ * its meaning for the first origin only: on any other origin just its CAs apply,
+ * because a client certificate identifies the client to the host it was chosen
+ * for.
+ */
+export type TlsOption =
+  ResolvedTlsMaterial | ((url: string) => Promise<ResolvedTlsMaterial | undefined>)
+
 export interface SendOptions {
   /** AbortController signal for cancellation. */
   signal?: AbortSignal
@@ -138,8 +148,11 @@ export interface SendOptions {
   onWarning?: (warning: ExecutionWarning) => void
   /** Fully resolved transport settings — applied to the dispatcher and request. */
   settings?: WorkspaceHttpSettings
-  /** Optional TLS material (additional CAs and/or client certificate) for this send. */
-  tls?: ResolvedTlsMaterial
+  /**
+   * Optional TLS material (additional CAs and/or client certificate): fixed for
+   * the send, or resolved per origin — see {@link TlsOption}.
+   */
+  tls?: TlsOption
   /**
    * Raw buffer body for binary requests (REQ-0065). When set, overrides
    * `httpRequest.body`. Passed through to undici verbatim — no variable
@@ -172,78 +185,7 @@ export interface SendResult {
   rawSetCookie: string[]
 }
 
-/**
- * Creates a redirect interceptor that optionally strips the `Authorization`
- * header when the redirect points to a host different from the original request.
- * Falls back to the plain `redirect` interceptor when `followAuthorization` is true.
- */
-function redirectInterceptorWithAuthStripping(
-  maxRedirections: number,
-  followAuthorization: boolean
-): (dispatch: Dispatcher['dispatch']) => Dispatcher['dispatch'] {
-  if (maxRedirections <= 0) {
-    // No interception needed — the interceptor only forwards.
-    return (dispatch) => dispatch
-  }
-  if (followAuthorization) {
-    return interceptors.redirect({ maxRedirections })
-  }
-
-  // Custom interceptor: when a redirect crosses hosts, remove Authorization.
-  return (dispatch) => (opts, handler) => {
-    let originalHost: string | undefined
-    try {
-      const origin =
-        typeof opts.origin === 'string'
-          ? opts.origin
-          : opts.origin instanceof URL
-            ? opts.origin.toString()
-            : undefined
-      if (origin) originalHost = new URL(origin).host
-    } catch {
-      // ignore
-    }
-
-    const inner = interceptors.redirect({ maxRedirections })((nextOpts, nextHandler) => {
-      let targetHost: string | undefined
-      try {
-        const origin =
-          typeof nextOpts.origin === 'string'
-            ? nextOpts.origin
-            : nextOpts.origin instanceof URL
-              ? nextOpts.origin.toString()
-              : undefined
-        if (origin) targetHost = new URL(origin).host
-      } catch {
-        // ignore
-      }
-      if (originalHost && targetHost && originalHost !== targetHost) {
-        const headers = nextOpts.headers
-        if (headers) {
-          if (Array.isArray(headers)) {
-            const filtered: string[] = []
-            for (let i = 0; i < headers.length; i += 2) {
-              if (headers[i].toLowerCase() !== 'authorization') {
-                filtered.push(headers[i], headers[i + 1])
-              }
-            }
-            nextOpts = { ...nextOpts, headers: filtered }
-          } else if (typeof headers === 'object') {
-            const filtered: Record<string, string | string[] | undefined> = {}
-            for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
-              if (k.toLowerCase() !== 'authorization') {
-                filtered[k] = v as string | string[] | undefined
-              }
-            }
-            nextOpts = { ...nextOpts, headers: filtered }
-          }
-        }
-      }
-      return dispatch(nextOpts, nextHandler)
-    })
-    return inner(opts, handler)
-  }
-}
+type Interceptor = (dispatch: Dispatcher['dispatch']) => Dispatcher['dispatch']
 
 /** The absolute URL of one hop, rebuilt from the dispatch options. */
 function hopUrl(opts: Dispatcher.DispatchOptions): string | null {
@@ -259,6 +201,96 @@ function hopUrl(opts: Dispatcher.DispatchOptions): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Security finding P1-2 — the dispatcher is chosen **per hop**.
+ *
+ * Innermost entry of the chain, so the transport reaches it once per hop, after
+ * the redirect handler has rewritten the hop's origin (the same ordering the
+ * cookie interceptor relies on). A hop to the send's first origin goes to the
+ * base dispatcher; a hop to any other origin goes to the dispatcher built for
+ * that origin, which carries that origin's own proxy decision and TLS material.
+ *
+ * Building one may need to read certificate files, so the hop is handed over
+ * once that settles; a failure is reported to the handler the way undici's own
+ * DNS interceptor reports a failed lookup. An abort that arrives meanwhile is
+ * honoured by the dispatcher as soon as it starts the hop.
+ */
+function hopRouter(
+  firstOrigin: string,
+  dispatcherFor: (origin: string, url: string) => Promise<Dispatcher>
+): Interceptor {
+  return (dispatch) => (opts, handler) => {
+    const url = hopUrl(opts)
+    const origin = url ? new URL(url).origin : null
+    if (!url || !origin || origin === firstOrigin) return dispatch(opts, handler)
+    dispatcherFor(origin, url)
+      .then((dispatcher) => dispatcher.dispatch(opts, handler))
+      .catch((err: unknown) => {
+        const error = err instanceof Error ? err : new Error(describeError(err))
+        handler.onResponseError?.(null as unknown as Dispatcher.DispatchController, error)
+      })
+    return true
+  }
+}
+
+/** Whether a dispatch's headers (record or positional array) carry `name`. */
+function hasDispatchHeader(headers: Dispatcher.DispatchOptions['headers'], name: string): boolean {
+  if (Array.isArray(headers)) {
+    for (let i = 0; i < headers.length; i += 2) {
+      if (String(headers[i]).toLowerCase() === name) return true
+    }
+    return false
+  }
+  if (headers && typeof headers === 'object') {
+    return Object.keys(headers).some((k) => k.toLowerCase() === name)
+  }
+  return false
+}
+
+/**
+ * `followAuthorizationOnRedirect: true` — put the request's `Authorization` back
+ * on a hop that arrives without it.
+ *
+ * The transport strips `Authorization` whenever a redirect changes origin
+ * (`redirect-handler.js#shouldRemoveHeader`, not configurable), so the setting had
+ * no effect across origins. Composed inside the redirect interceptor, like the
+ * cookie one, this re-adds it per hop. Only `Authorization`, as in Postman's
+ * "Follow Authorization header".
+ */
+function followAuthorizationInterceptor(values: string[]): Interceptor {
+  return (dispatch) => (opts, handler) => {
+    if (values.length === 0 || hasDispatchHeader(opts.headers, 'authorization')) {
+      return dispatch(opts, handler)
+    }
+    const headers = opts.headers
+    if (Array.isArray(headers)) {
+      const restored: string[] = [...(headers as string[])]
+      for (const v of values) restored.push('Authorization', v)
+      return dispatch({ ...opts, headers: restored }, handler)
+    }
+    const record: Record<string, string | string[] | undefined> =
+      headers && typeof headers === 'object'
+        ? { ...(headers as Record<string, string | string[] | undefined>) }
+        : {}
+    record.Authorization = values.length === 1 ? values[0] : values
+    return dispatch({ ...opts, headers: record }, handler)
+  }
+}
+
+/** Every `Authorization` value of an outgoing header set, in order. */
+function authorizationValues(headers: Record<string, string> | string[]): string[] {
+  if (Array.isArray(headers)) {
+    const found: string[] = []
+    for (let i = 0; i < headers.length; i += 2) {
+      if (headers[i].toLowerCase() === 'authorization') found.push(headers[i + 1])
+    }
+    return found
+  }
+  return Object.entries(headers)
+    .filter(([k]) => k.toLowerCase() === 'authorization')
+    .map(([, v]) => v)
 }
 
 /** Replace any `Cookie` header on these dispatch options with `value` (or drop it). */
@@ -337,12 +369,18 @@ function cookieInterceptor(
   }
 }
 
-function buildAgent(
+/**
+ * The dispatcher that talks to one origin: a direct `Agent`, or a `ProxyAgent`
+ * when the proxy that applies to that origin is enabled. The first origin of a
+ * send gets one built before the send; every other origin a redirect reaches
+ * gets its own (see {@link hopRouter}), so no origin inherits another's client
+ * certificate or proxy decision.
+ */
+function buildBaseDispatcher(
   settings: WorkspaceHttpSettings,
   isHttps: boolean,
   proxy?: ProxyConfig,
   tlsMaterial?: ResolvedTlsMaterial,
-  cookies?: CookieHopHooks,
   onWarning?: (warning: ExecutionWarning) => void
 ): Dispatcher {
   // HTTP/2 is only meaningful over HTTPS. Advise and fall back to HTTP/1.1 for plain HTTP.
@@ -363,41 +401,54 @@ function buildAgent(
 
   // Custom CAs and client cert material apply even when `verifySsl: false`
   // (REQ-0053 §4.5). The two are independent settings.
-  const tlsOptions: Record<string, unknown> = {
-    rejectUnauthorized: settings.verifySsl
-  }
-  if (tlsMaterial?.ca && tlsMaterial.ca.length > 0) tlsOptions.ca = tlsMaterial.ca
+  const trust: Record<string, unknown> = { rejectUnauthorized: settings.verifySsl }
+  if (tlsMaterial?.ca && tlsMaterial.ca.length > 0) trust.ca = tlsMaterial.ca
+  const tlsOptions: Record<string, unknown> = { ...trust }
   if (tlsMaterial?.cert) tlsOptions.cert = tlsMaterial.cert
   if (tlsMaterial?.key) tlsOptions.key = tlsMaterial.key
   if (tlsMaterial?.pfx) tlsOptions.pfx = tlsMaterial.pfx
   if (tlsMaterial?.passphrase) tlsOptions.passphrase = tlsMaterial.passphrase
 
-  const base: Dispatcher =
-    proxy && proxy.enabled && proxy.url.trim()
-      ? new ProxyAgent({
-          uri: proxy.url.trim(),
-          token:
-            proxy.username.trim() || proxy.password
-              ? 'Basic ' + Buffer.from(`${proxy.username}:${proxy.password}`).toString('base64')
-              : undefined,
-          requestTls: tlsOptions,
-          proxyTls: tlsOptions
-        })
-      : new Agent({ allowH2, connect: tlsOptions })
+  return proxy && proxy.enabled && proxy.url.trim()
+    ? new ProxyAgent({
+        uri: proxy.url.trim(),
+        token:
+          proxy.username.trim() || proxy.password
+            ? 'Basic ' + Buffer.from(`${proxy.username}:${proxy.password}`).toString('base64')
+            : undefined,
+        requestTls: tlsOptions,
+        // The proxy gets the trust material only: the client certificate
+        // identifies the client to the target server, and the proxy is not it.
+        proxyTls: trust
+      })
+    : new Agent({ allowH2, connect: tlsOptions })
+}
 
+interface ChainParts {
+  settings: WorkspaceHttpSettings
+  cookies?: CookieHopHooks
+  /** Routes a hop to another origin to that origin's dispatcher (redirects only). */
+  router?: Interceptor
+  /** The request's `Authorization` values, restored per hop when the setting asks. */
+  authorization: string[]
+}
+
+function composeChain(base: Dispatcher, parts: ChainParts): Dispatcher {
+  const { settings, cookies, router, authorization } = parts
   const maxRedirections = settings.followRedirects ? settings.maxRedirects : 0
 
   // Order matters. `compose` applies left to right, and each interceptor wraps the
   // previous one — so the LAST entry is the outermost and runs first. The redirect
-  // interceptor must be outermost (it drives the loop); the cookie interceptor
-  // must be inside it, where it is re-entered once per hop.
-  const chain: ((dispatch: Dispatcher['dispatch']) => Dispatcher['dispatch'])[] = []
-  if (cookies) chain.push(cookieInterceptor(cookies))
-  if (maxRedirections > 0) {
-    chain.push(
-      redirectInterceptorWithAuthStripping(maxRedirections, settings.followAuthorizationOnRedirect)
-    )
+  // interceptor must be outermost (it drives the loop and strips by origin); the
+  // per-hop ones must be inside it, where they are re-entered once per hop. The
+  // router is innermost because it replaces the base dispatch for other origins.
+  const chain: Interceptor[] = []
+  if (maxRedirections > 0 && router) chain.push(router)
+  if (maxRedirections > 0 && settings.followAuthorizationOnRedirect) {
+    chain.push(followAuthorizationInterceptor(authorization))
   }
+  if (cookies) chain.push(cookieInterceptor(cookies))
+  if (maxRedirections > 0) chain.push(interceptors.redirect({ maxRedirections }))
   if (chain.length === 0) return base
   return base.compose(chain)
 }
@@ -453,7 +504,29 @@ export async function sendRequestWithRaw(
   const target = buildRequestTarget(httpRequest.url)
   const isHttps = target.protocol === 'https:'
   const proxy = typeof options.proxy === 'function' ? options.proxy(httpRequest.url) : options.proxy
-  const agent = buildAgent(settings, isHttps, proxy, options.tls, options.cookies, onWarning)
+  const tls = typeof options.tls === 'function' ? await options.tls(httpRequest.url) : options.tls
+  const base = buildBaseDispatcher(settings, isHttps, proxy, tls, onWarning)
+
+  // Every other origin a redirect reaches gets its own dispatcher, decided from
+  // that hop's URL: its proxy and its TLS material, never the first origin's.
+  const others = new Map<string, Promise<Dispatcher>>()
+  const dispatcherFor = (origin: string, url: string): Promise<Dispatcher> => {
+    let pending = others.get(origin)
+    if (!pending) {
+      pending = (async () => {
+        const hopProxy = typeof options.proxy === 'function' ? options.proxy(url) : options.proxy
+        const hopTls =
+          typeof options.tls === 'function'
+            ? await options.tls(url)
+            : options.tls?.ca
+              ? { ca: options.tls.ca }
+              : undefined
+        return buildBaseDispatcher(settings, new URL(url).protocol === 'https:', hopProxy, hopTls)
+      })()
+      others.set(origin, pending)
+    }
+    return pending
+  }
 
   const start = performance.now()
 
@@ -498,6 +571,13 @@ export async function sendRequestWithRaw(
     }
     headers = record
   }
+
+  const agent = composeChain(base, {
+    settings,
+    cookies: options.cookies,
+    router: hopRouter(target.origin, dispatcherFor),
+    authorization: authorizationValues(headers)
+  })
 
   try {
     const effectiveBody: string | Buffer | undefined | null =
@@ -579,5 +659,8 @@ export async function sendRequestWithRaw(
     throw new Error(describeError(err), { cause: err })
   } finally {
     agent.destroy().catch(() => {})
+    for (const pending of others.values()) {
+      pending.then((d) => d.destroy()).catch(() => {})
+    }
   }
 }

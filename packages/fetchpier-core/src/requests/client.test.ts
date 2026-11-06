@@ -613,6 +613,43 @@ describe('Dispatcher construction — settings, proxy, TLS material', () => {
     expect(agentConstructorCalls).toHaveLength(1)
   })
 
+  it('gives the proxy only the trust material, never the client certificate', async () => {
+    // The certificate identifies the client to the server it was chosen for; the
+    // proxy is not that server.
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    const ca = [Buffer.from('CA1')]
+    const cert = Buffer.from('CERT')
+    const key = Buffer.from('KEY')
+    const pfx = Buffer.from('PFX')
+    await sendRequest(
+      { method: 'GET', url: 'https://x/', headers: {} },
+      {
+        proxy: { enabled: true, url: 'https://proxy.local:8443', username: '', password: '' },
+        settings: settingsWith({ followRedirects: false, verifySsl: false }),
+        tls: { ca, cert, key, pfx, passphrase: 'pw' }
+      }
+    )
+    const opts = proxyAgentConstructorCalls[0] as {
+      requestTls: Record<string, unknown>
+      proxyTls: Record<string, unknown>
+    }
+    expect(opts.requestTls).toMatchObject({ ca, cert, key, pfx, passphrase: 'pw' })
+    expect(opts.proxyTls).toEqual({ rejectUnauthorized: false, ca })
+  })
+
+  it('awaits a TLS resolver for the first hop and attaches what it returns', async () => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    const cert = Buffer.from('CERT')
+    const tls = vi.fn(async () => ({ cert }))
+    await sendRequest(
+      { method: 'GET', url: 'https://x/', headers: {} },
+      { settings: settingsWith({ followRedirects: false }), tls }
+    )
+    expect(tls).toHaveBeenCalledWith('https://x/')
+    const opts = agentConstructorCalls[0] as { connect: Record<string, unknown> }
+    expect(opts.connect.cert).toBe(cert)
+  })
+
   it('ignores proxy when url is blank', async () => {
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
     await sendRequest(
@@ -645,7 +682,7 @@ describe('Redirect interceptor composition', () => {
     expect(typeof lastComposedInterceptor).toBe('function')
   })
 
-  it('composes an interceptor when followAuthorizationOnRedirect=true (plain redirect path)', async () => {
+  it('composes an interceptor when followAuthorizationOnRedirect=true', async () => {
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
     await sendRequest(
       { method: 'GET', url: 'https://x/', headers: {} },
@@ -680,6 +717,8 @@ describe('Redirect interceptor composition', () => {
   const noopHooks = { headerFor: () => '', capture: () => {} }
 
   it('places the cookie interceptor inside the redirect interceptor', async () => {
+    // Innermost first: the per-hop router (P1-2), the cookie jar, then the
+    // redirect interceptor that drives the loop.
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
     await sendRequest(
       { method: 'GET', url: 'https://x/', headers: {} },
@@ -688,7 +727,26 @@ describe('Redirect interceptor composition', () => {
         cookies: noopHooks
       }
     )
+    expect(lastComposedChain).toHaveLength(3)
+  })
+
+  it('adds the Authorization follow-up per hop only when the setting asks for it', async () => {
+    mockRequest.mockResolvedValue(makeResponse(200, {}, ''))
+    const send = (followAuthorizationOnRedirect: boolean) =>
+      sendRequest(
+        { method: 'GET', url: 'https://x/', headers: {} },
+        {
+          settings: settingsWith({
+            followRedirects: true,
+            maxRedirects: 5,
+            followAuthorizationOnRedirect
+          })
+        }
+      )
+    await send(false)
     expect(lastComposedChain).toHaveLength(2)
+    await send(true)
+    expect(lastComposedChain).toHaveLength(3)
   })
 
   it('composes the cookie interceptor even when redirects are off', async () => {

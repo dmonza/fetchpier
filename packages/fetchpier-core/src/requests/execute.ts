@@ -581,15 +581,24 @@ export async function execute(
     }
   }
 
-  let tlsMaterial: ResolvedTlsMaterial | undefined
-  if (resolveTls) {
+  // TLS material is resolved per origin: up front for the first one, and by the
+  // transport for every other origin a redirect reaches (security finding P1-2 —
+  // a hop must never present the certificate chosen for another host). Each
+  // resolution keeps the same contract, and one reason is reported once however
+  // many hops hit it (an unreadable CA is read again for every origin).
+  // TLS cert refs resolve against plaintext (a secret could name a cert path);
+  // the result only reads a file, it is never logged.
+  const tlsVariables = secrets ? { ...variables, ...secrets.scriptEnvironment } : variables
+  const tlsReasons = new Set<string>()
+  const warnTls = (reason: string): void => {
+    if (tlsReasons.has(reason)) return
+    tlsReasons.add(reason)
+    pushTransportWarning({ code: 'TLS_MATERIAL_UNAVAILABLE', reason })
+  }
+  const resolveTlsFor = async (url: string): Promise<ResolvedTlsMaterial | undefined> => {
+    if (!resolveTls) return undefined
     try {
-      // TLS cert refs resolve against plaintext (a secret could name a cert
-      // path); the result only reads a file, it is never logged.
-      const tlsVariables = secrets ? { ...variables, ...secrets.scriptEnvironment } : variables
-      tlsMaterial = await resolveTls(wireUrl, tlsVariables, (reason) =>
-        pushTransportWarning({ code: 'TLS_MATERIAL_UNAVAILABLE', reason })
-      )
+      return await resolveTls(url, tlsVariables, warnTls)
     } catch (err) {
       // REQ-0089: a contractual secret failure resolving the client-cert
       // passphrase (locked / needs-value / corrupt) must surface before the
@@ -597,9 +606,13 @@ export async function execute(
       if (err instanceof CoreError && err.code.startsWith('SECRETS_')) throw err
       // Any other TLS resolution glitch (e.g. an unreadable cert file) never
       // blocks a send: advise and fall through with no extra material.
-      pushTransportWarning({ code: 'TLS_MATERIAL_UNAVAILABLE', reason: describeError(err) })
+      warnTls(describeError(err))
+      return undefined
     }
   }
+  const tlsMaterial = await resolveTlsFor(wireUrl)
+  const tlsForHop = (url: string): Promise<ResolvedTlsMaterial | undefined> =>
+    url === wireUrl ? Promise.resolve(tlsMaterial) : resolveTlsFor(url)
 
   // The docblock above promises this function does not throw for transport
   // failures — it did, and both adapters had to grow their own catch. Honouring
@@ -630,7 +643,7 @@ export async function execute(
         userAgent,
         onWarning: pushTransportWarning,
         settings: resolvedSettings,
-        tls: tlsMaterial,
+        tls: resolveTls ? tlsForHop : undefined,
         binaryBody,
         multipartBody: multipartEncoded,
         // REQ-0115: from here the client owns the `Cookie` header, per hop. The

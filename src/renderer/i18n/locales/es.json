@@ -259,7 +259,7 @@
         "verifySsl": "Valida el certificado TLS del servidor. Desactivalo solo para endpoints self-signed confiables.",
         "followRedirects": "Sigue automáticamente respuestas 3xx.",
         "maxRedirects": "Máximo de saltos de redirección antes de abortar.",
-        "followAuthorizationOnRedirect": "Mantiene el header Authorization cuando el redirect apunta a otro host.",
+        "followAuthorizationOnRedirect": "Mantiene el header Authorization cuando el redirect va a otro origen (esquema, host o puerto).",
         "encodeUrl": "Codifica caracteres reservados en la URL antes de enviar.",
         "disableCookieJar": "No persiste ni envía cookies para este request."
       },

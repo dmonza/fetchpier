@@ -27,6 +27,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **`--show-secrets` also shows each response as received**, secret values
   included, in the terminal and every report. The request and script output keep
   `{secret:<name>}`, and `--save-history` stays masked. _(Behavior change)_
+- **A redirect no longer hands your client certificate to another host.** Each
+  hop of a redirect chain presents the certificate configured for its own host,
+  or none. It used to present the one chosen for the first host, and a redirect
+  from plain HTTP to HTTPS presented none.
+- **The proxy never receives your client certificate.** Only the trust settings
+  (CAs, certificate verification) are used for the connection to the proxy.
+- **`NO_PROXY` is applied again on every redirect hop** (command line). A host that
+  bypasses the proxy and redirects outside the bypass list now goes through the
+  proxy, and the reverse; the first hop's decision used to apply to the whole
+  chain.
+- **"Follow Authorization header on redirect" now works.** With the setting on,
+  the header was still dropped on a redirect to another origin (scheme, host or
+  port). With it off, nothing changes: `Authorization` is stripped on every
+  change of origin, as in Postman. Also as in Postman, the setting covers
+  `Authorization` only: an API key header follows every redirect, as before.
 
 ## [0.9.6] - 2026-11-04
 
