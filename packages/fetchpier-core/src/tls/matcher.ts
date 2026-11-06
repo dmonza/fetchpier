@@ -1,15 +1,25 @@
 import type { ClientCertEntry, TlsScope } from '@shared/types'
 
+/**
+ * Where a candidate certificate comes from. `run` is material given for one
+ * command-line run (`--tls-config`); it never reaches the desktop, which is why
+ * it is not part of the shared {@link TlsScope}.
+ */
+export type CandidateScope = TlsScope | 'run'
+
+/** Tie-break between scopes on the same specificity tier: lower wins. */
+const SCOPE_RANK: Record<CandidateScope, number> = { run: 0, workspace: 1, app: 2 }
+
 export interface ClientCertCandidate {
   entry: ClientCertEntry
-  scope: TlsScope
+  scope: CandidateScope
   /** Stable position in the originating scope's list — breaks ties at the lowest level. */
   index: number
 }
 
 export interface ClientCertMatch {
   selected: ClientCertEntry
-  scope: TlsScope
+  scope: CandidateScope
 }
 
 /**
@@ -78,8 +88,9 @@ export function matchClientCertificate(
   matching.sort((a, b) => {
     const tierDiff = specificityTier(b.entry) - specificityTier(a.entry)
     if (tierDiff !== 0) return tierDiff
-    // Workspace beats app-global at the same tier.
-    if (a.scope !== b.scope) return a.scope === 'workspace' ? -1 : 1
+    // At the same tier: a run certificate (named explicitly for this run) beats
+    // the workspace's, which beats app-global.
+    if (a.scope !== b.scope) return SCOPE_RANK[a.scope] - SCOPE_RANK[b.scope]
     return a.index - b.index
   })
 

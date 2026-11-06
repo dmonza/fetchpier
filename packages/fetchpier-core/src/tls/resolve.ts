@@ -24,7 +24,12 @@ import { assertSafeIdentifier } from '../workspace/safe-path'
 import { loadHttpSettings } from '../workspace/settings-store'
 import { extractVariableNames, resolveString } from '../requests/variables'
 import { workspaceCertsDir } from './paths'
-import { matchClientCertificate, type ClientCertCandidate, type ClientCertMatch } from './matcher'
+import {
+  matchClientCertificate,
+  type CandidateScope,
+  type ClientCertCandidate,
+  type ClientCertMatch
+} from './matcher'
 import { describeError } from '../shared/describe-error'
 
 const EMPTY_TLS: TlsScopeSettings = { caCertificates: [], clientCertificates: [] }
@@ -49,11 +54,25 @@ export interface AppGlobalTlsMaterial {
   settings: TlsScopeSettings
 }
 
+/**
+ * Material given for one command-line run (`--tls-config` / `FETCHPIER_TLS_CONFIG`):
+ * a `tls` block in the workspace format, whose files sit in `certsDir` (the folder
+ * of the file the operator named). Never persisted. Its certificates win a
+ * specificity tie with the workspace's, and its passphrases follow the workspace
+ * rules (literal or `{{name}}`).
+ */
+export interface RunTlsMaterial {
+  certsDir: string
+  settings: TlsScopeSettings
+}
+
 export interface ResolveTlsContext {
   /** Active workspace path, or null when no workspace is open. */
   workspacePath: string | null
   /** App-global material (desktop only). Omitted ⇒ no app-scope candidates. */
   appGlobal?: AppGlobalTlsMaterial
+  /** Material given for this run (command line only). Omitted ⇒ no run candidates. */
+  run?: RunTlsMaterial
   /**
    * Decrypt the workspace secrets referenced by a workspace-scope passphrase.
    * Key custody stays adapter-side. Returns plaintext only for names that are
@@ -89,8 +108,9 @@ function loadAppScope(ctx: ResolveTlsContext): TlsScopeSettings {
   return normaliseTls(ctx.appGlobal?.settings)
 }
 
-function scopeCertsDir(scope: TlsScope, ctx: ResolveTlsContext): string | null {
+function scopeCertsDir(scope: CandidateScope, ctx: ResolveTlsContext): string | null {
   if (scope === 'app') return ctx.appGlobal?.certsDir ?? null
+  if (scope === 'run') return ctx.run?.certsDir ?? null
   return ctx.workspacePath ? workspaceCertsDir(ctx.workspacePath) : null
 }
 
@@ -107,14 +127,16 @@ async function readCertFile(dir: string, filename: string): Promise<Buffer> {
 async function buildCaBundle(
   workspaceScope: TlsScopeSettings,
   appScope: TlsScopeSettings,
+  runScope: TlsScopeSettings,
   ctx: ResolveTlsContext
 ): Promise<Buffer[]> {
   const bundle: Buffer[] = []
   for (const root of tls.rootCertificates) bundle.push(Buffer.from(root))
 
   for (const { scope, list } of [
-    { scope: 'app' as TlsScope, list: appScope.caCertificates },
-    { scope: 'workspace' as TlsScope, list: workspaceScope.caCertificates }
+    { scope: 'app' as CandidateScope, list: appScope.caCertificates },
+    { scope: 'workspace' as CandidateScope, list: workspaceScope.caCertificates },
+    { scope: 'run' as CandidateScope, list: runScope.caCertificates }
   ]) {
     const dir = scopeCertsDir(scope, ctx)
     if (!dir) continue
@@ -133,9 +155,15 @@ async function buildCaBundle(
 
 function buildClientCandidates(
   workspaceScope: TlsScopeSettings,
-  appScope: TlsScopeSettings
+  appScope: TlsScopeSettings,
+  runScope: TlsScopeSettings = EMPTY_TLS
 ): ClientCertCandidate[] {
   return [
+    ...runScope.clientCertificates.map((entry, index) => ({
+      entry,
+      scope: 'run' as CandidateScope,
+      index
+    })),
     ...workspaceScope.clientCertificates.map((entry, index) => ({
       entry,
       scope: 'workspace' as TlsScope,
@@ -211,11 +239,14 @@ export async function resolveRequestTls(
     loadAppScope(ctx)
   ]
 
-  const material: ResolvedTlsMaterial = { ca: await buildCaBundle(workspaceScope, appScope, ctx) }
+  const runScope = normaliseTls(ctx.run?.settings)
+  const material: ResolvedTlsMaterial = {
+    ca: await buildCaBundle(workspaceScope, appScope, runScope, ctx)
+  }
 
   const match = matchClientCertificate(
     url,
-    buildClientCandidates(workspaceScope, appScope),
+    buildClientCandidates(workspaceScope, appScope, runScope),
     ctx.onWarning
   )
   if (!match) return material
@@ -266,6 +297,7 @@ export async function previewRequestCert(
     loadAppScope(ctx)
   ]
   const match = matchClientCertificate(url, buildClientCandidates(workspaceScope, appScope))
-  if (!match) return { selected: null, scope: null }
+  // The preview is a desktop surface: it never sees run material.
+  if (!match || match.scope === 'run') return { selected: null, scope: null }
   return { selected: match.selected, scope: match.scope }
 }

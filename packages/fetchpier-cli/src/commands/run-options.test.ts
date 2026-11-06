@@ -165,4 +165,9 @@ describe('addRunOptions — flag parsing', () => {
     expect(parse(['-vv']).verbosity).toBe(2)
     expect(parse(['-v', '-v', '-v']).verbosity).toBe(3)
   })
+
+  it('passes --tls-config through as the path it names, and leaves it unset otherwise', () => {
+    expect(parse(['--tls-config', 'local/tls.json']).tlsConfig).toBe('local/tls.json')
+    expect(parse([])).not.toHaveProperty('tlsConfig')
+  })
 })

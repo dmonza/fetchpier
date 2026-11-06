@@ -15,6 +15,7 @@ import { CliError } from '../../errors'
 import { EXIT } from '../../exit-codes'
 import { resolveWorkspace } from '../../context/resolve-workspace'
 import { resolveEnvironment } from '../../context/resolve-environment'
+import { resolveTlsConfig } from '../../context/resolve-tls-config'
 import { createReporters, type ReporterBuildContext } from '../../reporters'
 import type { Reporter } from '../../reporters/types'
 import type { RequestUnit, ReporterConfig, RunOptions, RunSummary } from '../../types'
@@ -275,6 +276,11 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
     env
   })
 
+  // TLS material given for this run only (`--tls-config` / FETCHPIER_TLS_CONFIG):
+  // certificates that belong to the machine or the pipeline, not the workspace.
+  // An unusable file is fatal here, before anything is sent.
+  const runTls = await resolveTlsConfig({ flag: options.tlsConfig, env, cwd })
+
   // Explicit paths resolve against cwd; with none, the target is the workspace's
   // own `requests/` tree — the same from any directory (see `expandPaths`).
   const files = await expandPaths(options.paths, cwd, workspacePath)
@@ -434,6 +440,7 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
           resolveTls: (url, tlsEnv, onWarning) =>
             tls.resolveRequestTls(url, tlsEnv, {
               workspacePath,
+              ...(runTls ? { run: runTls } : {}),
               resolvePassphraseSecrets: prepared.resolvePassphraseSecrets,
               ...(onWarning ? { onWarning } : {})
             }),

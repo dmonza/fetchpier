@@ -230,6 +230,52 @@ describe('resolveRequestTls — CA bundle and matching', () => {
   })
 })
 
+describe('resolveRequestTls — material given for one run (security finding P1-1)', () => {
+  /** A `--tls-config` folder: the JSON's own directory holds its files. */
+  async function makeRun(settings: TlsScopeSettings, files: Record<string, string> = {}) {
+    return makeAppGlobal(settings, files)
+  }
+
+  it('reads the run certificate from its own folder and prefers it on a tie', async () => {
+    const ws = await makeWorkspace(
+      { caCertificates: [], clientCertificates: [pfxCert(null)] },
+      { 'client-1234.pfx': 'WORKSPACE-PFX' }
+    )
+    const run = await makeRun(
+      { caCertificates: [], clientCertificates: [{ ...pfxCert(null), pfxFile: 'mine.pfx' }] },
+      { 'mine.pfx': 'RUN-PFX' }
+    )
+    const material = await resolveRequestTls(URL_MATCH, {}, { workspacePath: ws, run })
+    expect(material.pfx?.toString()).toBe('RUN-PFX')
+  })
+
+  it('resolves a run passphrase reference like a workspace one, secrets included', async () => {
+    const ws = await makeWorkspace({ caCertificates: [], clientCertificates: [] })
+    const run = await makeRun(
+      { caCertificates: [], clientCertificates: [pfxCert('{{cert_pass}}')] },
+      { 'client-1234.pfx': 'RUN-PFX' }
+    )
+    const resolvePassphraseSecrets = vi.fn().mockResolvedValue({ cert_pass: 'from-secret' })
+    const material = await resolveRequestTls(
+      URL_MATCH,
+      {},
+      { workspacePath: ws, run, resolvePassphraseSecrets }
+    )
+    expect(resolvePassphraseSecrets).toHaveBeenCalledWith(['cert_pass'])
+    expect(material.passphrase).toBe('from-secret')
+  })
+
+  it('adds the run CAs to the bundle', async () => {
+    const ws = await makeWorkspace({ caCertificates: [], clientCertificates: [] })
+    const run = await makeRun(
+      { caCertificates: [{ id: 'ca-run', file: 'corp.pem' }], clientCertificates: [] },
+      { 'corp.pem': 'RUN-CA' }
+    )
+    const material = await resolveRequestTls(URL_MATCH, {}, { workspacePath: ws, run })
+    expect(material.ca?.some((b) => b.toString() === 'RUN-CA')).toBe(true)
+  })
+})
+
 describe('resolveRequestTls — desktop ↔ CLI byte-equivalence (CA-09)', () => {
   it('selects and resolves the same workspace material with and without app-global', async () => {
     const ws = await makeWorkspace(

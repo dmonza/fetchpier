@@ -45,6 +45,10 @@ export function addRunOptions(cmd: Command): Command {
     )
     .option('--no-proxy', 'ignore HTTPS_PROXY / HTTP_PROXY / NO_PROXY for this run')
     .option('--insecure', 'do not verify TLS certificates for this run')
+    .option(
+      '--tls-config <file>',
+      'client certificates and CAs for this run only, in the workspace tls format (overrides FETCHPIER_TLS_CONFIG)'
+    )
     .option('--reporter-json <file>', "write a JSON report (use '-' for stdout)")
     .option('--reporter-json-no-body', 'omit response bodies from the JSON report')
     .option('--reporter-junit <file>', 'write a JUnit XML report')
@@ -117,6 +121,7 @@ interface RawRunOpts {
   /** Set by the `option:no-proxy` listener. */
   noProxyGiven?: boolean
   insecure?: boolean
+  tlsConfig?: string
   reporterJson?: string
   reporterJsonNoBody?: boolean
   reporterJunit?: string
@@ -170,6 +175,7 @@ export function toRunOptions(paths: string[], raw: RawRunOpts): RunOptions {
     delay,
     timeoutMs,
     insecure: raw.insecure ?? false,
+    ...(raw.tlsConfig !== undefined ? { tlsConfig: raw.tlsConfig } : {}),
     reporters,
     silent: raw.silent ?? false,
     noColor: raw.color === false,

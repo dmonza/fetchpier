@@ -85,6 +85,7 @@ When a command needs a workspace and none is found, it exits with code 4.
 | `--proxy <url>`                 | Send every request through this proxy (`http://user:pass@host:port`). Wins over `HTTPS_PROXY` / `HTTP_PROXY`.                                                                                                                                                                                                                                                                                                               |
 | `--no-proxy`                    | Ignore `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` for this run. Cannot be combined with `--proxy`.                                                                                                                                                                                                                                                                                                                           |
 | `--insecure`                    | Do not verify TLS certificates for this run.                                                                                                                                                                                                                                                                                                                                                                                |
+| `--tls-config <file>`           | Client certificates and CAs for this run only, from a JSON file in the workspace's TLS format (see **TLS** below). Wins over `FETCHPIER_TLS_CONFIG`.                                                                                                                                                                                                                                                                        |
 | `--reporter-json <file>`        | Write a JSON report. `-` writes it to stdout and silences the terminal reporter.                                                                                                                                                                                                                                                                                                                                            |
 | `--reporter-json-no-body`       | Omit response bodies from the JSON report.                                                                                                                                                                                                                                                                                                                                                                                  |
 | `--reporter-junit <file>`       | Write a JUnit XML report.                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -176,12 +177,41 @@ out of the log; a proxy that does not answer fails the request in the report.
 **TLS.** The runner applies the workspace's TLS configuration exactly like the
 desktop: the CA certificates and client certificates listed in the `tls` block
 of `.fetchpier/settings.json`, whose files live under `.fetchpier/certs/` (both
-are normally managed from the desktop's workspace settings and committed with
-the workspace). A client certificate is presented to the hosts it is configured
-for; a passphrase that references a secret variable is decrypted with
-`FETCHPIER_WORKSPACE_KEY`. Certificates configured only in the desktop's own app
-settings are not visible to the runner. `--insecure` turns off certificate
-verification for a run.
+are managed from the desktop's workspace settings and travel with the
+workspace, so anything there is shared with whoever gets the workspace). A
+client certificate is presented to the hosts it is configured for; a passphrase
+that references a secret variable is decrypted with `FETCHPIER_WORKSPACE_KEY`.
+Certificates configured only in the desktop's own app settings are not visible
+to the runner. `--insecure` turns off certificate verification for a run.
+
+A certificate that must not be shared — a CI identity, a personal key — is given
+for one run instead, with `--tls-config <file>` or `FETCHPIER_TLS_CONFIG=<file>`.
+The file uses the same format as the workspace's `tls` block, and the
+certificate files it names sit next to it:
+
+```json
+{
+  "clientCertificates": [
+    {
+      "host": "api.example.com",
+      "type": "pem",
+      "certFile": "client.crt",
+      "keyFile": "client.key",
+      "passphrase": "{{certPassphrase}}"
+    }
+  ],
+  "caCertificates": [{ "file": "corp-root.pem" }]
+}
+```
+
+`port` (default any), `id` and `disabled` are optional; `type` is `pem` (with
+`certFile` and `keyFile`) or `pfx` (with `pfxFile`). A passphrase is a literal or
+a `{{variable}}` — a secret, or one given with `--env-var` — like in the
+workspace. When a workspace certificate matches the same host just as
+specifically, the one from `--tls-config` is used. Nothing is copied into the
+workspace. A file that cannot be read, is not valid JSON or is not a valid TLS
+block stops the run before anything is sent (exit code 3); the error names the
+file but never quotes it.
 
 **Binary bodies.** A request whose body is a file attached in the desktop
 (staged under `requests/.files/`) is sent with exactly that file's bytes, and
@@ -247,15 +277,16 @@ printed from the same directory.
 
 ## Environment variables
 
-| Variable                     | Purpose                                                               |
-| ---------------------------- | --------------------------------------------------------------------- |
-| `FETCHPIER_WORKSPACE`        | Workspace folder, when `--workspace` is not given.                    |
-| `FETCHPIER_ENV`              | Environment folder name, when `--env` is not given.                   |
-| `FETCHPIER_WORKSPACE_KEY`    | Workspace key (`FPK1-…`) used to decrypt secret variables. See below. |
-| `HTTPS_PROXY` / `HTTP_PROXY` | Proxy for https / http targets (see **Proxy** above).                 |
-| `NO_PROXY`                   | Targets that connect directly.                                        |
-| `NO_COLOR`                   | Disable colors (same as `--no-color`).                                |
-| `FORCE_COLOR`                | Force colors on when stdout is not a terminal (`0` does not force).   |
+| Variable                     | Purpose                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `FETCHPIER_WORKSPACE`        | Workspace folder, when `--workspace` is not given.                                      |
+| `FETCHPIER_ENV`              | Environment folder name, when `--env` is not given.                                     |
+| `FETCHPIER_WORKSPACE_KEY`    | Workspace key (`FPK1-…`) used to decrypt secret variables. See below.                   |
+| `FETCHPIER_TLS_CONFIG`       | Path to TLS material for the run, when `--tls-config` is not given (see **TLS** above). |
+| `HTTPS_PROXY` / `HTTP_PROXY` | Proxy for https / http targets (see **Proxy** above).                                   |
+| `NO_PROXY`                   | Targets that connect directly.                                                          |
+| `NO_COLOR`                   | Disable colors (same as `--no-color`).                                                  |
+| `FORCE_COLOR`                | Force colors on when stdout is not a terminal (`0` does not force).                     |
 
 ## Secrets in CI
 

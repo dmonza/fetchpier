@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { matchClientCertificate, type ClientCertCandidate } from './matcher'
-import type { ClientCertEntry, TlsScope } from '@shared/types'
+import { matchClientCertificate, type CandidateScope, type ClientCertCandidate } from './matcher'
+import type { ClientCertEntry } from '@shared/types'
 
 function entry(partial: Partial<ClientCertEntry> & { host: string; id?: string }): ClientCertEntry {
   return {
@@ -16,7 +16,7 @@ function entry(partial: Partial<ClientCertEntry> & { host: string; id?: string }
   }
 }
 
-function candidate(e: ClientCertEntry, scope: TlsScope, index = 0): ClientCertCandidate {
+function candidate(e: ClientCertEntry, scope: CandidateScope, index = 0): ClientCertCandidate {
   return { entry: e, scope, index }
 }
 
@@ -153,6 +153,33 @@ describe('matchClientCertificate', () => {
       ])
       expect(result?.selected.id).toBe('ws')
       expect(result?.scope).toBe('workspace')
+    })
+
+    // Owner decision (security finding P1-1): a certificate given for this run
+    // (`--tls-config`) was named explicitly, so it wins a tie with the workspace.
+    it('a run certificate beats workspace and app-global at the same tier', () => {
+      const url = new URL('https://api.example.com/v1')
+      const ws = entry({ id: 'ws', host: 'api.example.com' })
+      const app = entry({ id: 'app', host: 'api.example.com' })
+      const run = entry({ id: 'run', host: 'api.example.com' })
+      const result = matchClientCertificate(url, [
+        candidate(ws, 'workspace', 0),
+        candidate(app, 'app', 0),
+        candidate(run, 'run', 0)
+      ])
+      expect(result?.selected.id).toBe('run')
+      expect(result?.scope).toBe('run')
+    })
+
+    it('specificity still decides first: a literal workspace host beats a run wildcard', () => {
+      const url = new URL('https://api.example.com/v1')
+      const ws = entry({ id: 'ws', host: 'api.example.com' })
+      const run = entry({ id: 'run', host: '*.example.com' })
+      const result = matchClientCertificate(url, [
+        candidate(run, 'run', 0),
+        candidate(ws, 'workspace', 0)
+      ])
+      expect(result?.selected.id).toBe('ws')
     })
 
     it('document order breaks ties within the same scope and tier', () => {

@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- **`--tls-config <file>` (or `FETCHPIER_TLS_CONFIG`) for certificates you do not
+  want to share.** The command line can use a client certificate or a CA that
+  belongs to the machine or the pipeline instead of the workspace: name a JSON
+  file in the same format as the workspace's TLS settings, with the certificate
+  files next to it. Nothing is copied into the workspace. When a workspace
+  certificate matches the same host just as specifically, the one given for the
+  run is used. Certificates kept in the workspace keep working as before, and are
+  shared with the workspace.
+
 ### Security
 
 - **An unusable proxy URL no longer prints its credentials.** When `--proxy`,

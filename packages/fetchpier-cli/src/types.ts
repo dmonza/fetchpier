@@ -44,6 +44,13 @@ export interface RunOptions {
   delay?: number
   /** `verifySsl=false` override for this run. */
   insecure?: boolean
+  /**
+   * Path to TLS material for this run only (`--tls-config`; else
+   * `FETCHPIER_TLS_CONFIG`): a JSON file in the workspace `tls` block format whose
+   * files sit next to it. Its client certificates win a specificity tie with the
+   * workspace's. Never persisted.
+   */
+  tlsConfig?: string
   reporters?: ReporterConfig[]
   silent?: boolean
   noColor?: boolean

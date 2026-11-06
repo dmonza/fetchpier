@@ -14,9 +14,14 @@ export type {
   RemoveArgs
 } from './store'
 export { resolveRequestTls, previewRequestCert } from './resolve'
-export type { ResolvedTlsMaterial, ResolveTlsContext, AppGlobalTlsMaterial } from './resolve'
+export type {
+  ResolvedTlsMaterial,
+  ResolveTlsContext,
+  AppGlobalTlsMaterial,
+  RunTlsMaterial
+} from './resolve'
 export { matchClientCertificate } from './matcher'
-export type { ClientCertCandidate, ClientCertMatch } from './matcher'
+export type { CandidateScope, ClientCertCandidate, ClientCertMatch } from './matcher'
 export { readPemCertFile, readPemKeyFile, readPfxFile, TlsImportError } from './import'
 export type { ImportedFile } from './import'
 export {
