@@ -26,7 +26,8 @@ const REQUIRED_KEYS = [
   'proxy',
   'lastVersion',
   'updates',
-  'theme'
+  'theme',
+  'hideSecretsInResponses'
 ] as const satisfies readonly (keyof AppSettings)[]
 
 const UPDATES = {

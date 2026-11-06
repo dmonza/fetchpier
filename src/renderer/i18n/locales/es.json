@@ -680,6 +680,10 @@
       "label": "Timeout de Request",
       "unit": "segundos"
     },
+    "responseSecrets": {
+      "hide": "Ocultar secretos en las respuestas",
+      "hint": "Los valores secretos de una respuesta se muestran como {secret:nombre}. El registro de actividad siempre los oculta."
+    },
     "proxy": {
       "enable": "Activar servidor proxy",
       "url": "URL del Proxy",

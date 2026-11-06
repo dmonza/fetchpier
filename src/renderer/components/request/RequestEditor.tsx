@@ -34,6 +34,7 @@ import { authEcho } from '@shared/lib/auth-echo'
 import { mapHttpRequestToEditorState } from './request-loader'
 import { implicitDefaultHeaderEntries } from './implicit-headers'
 import { serializeTab } from '../../lib/tab-dirty'
+import { buildHistoryEntry, viewerResponse } from '../../lib/send-result'
 import { buildHttpRequestPayload } from './build-send-payload'
 import { defaultReqTabForMethod } from './req-tab'
 import type {
@@ -361,16 +362,11 @@ function RequestEditorInner(): React.JSX.Element {
 
     try {
       const executed = await window.api.request.send(httpRequest, executionId)
-      const {
-        response,
-        scriptResults,
-        error: execError,
-        resolvedSettings,
-        cookies: cookiesSummary,
-        remoteIp
-      } = executed
+      const { scriptResults, error: execError, cookies: cookiesSummary } = executed
       updateTab(activeTab.id, {
-        response: response ?? null,
+        // The viewer may show the response as received (setting off); the
+        // activity log below always records the masked one.
+        response: viewerResponse(executed) ?? null,
         isLoading: false,
         scriptResults,
         error: execError ?? null,
@@ -387,27 +383,21 @@ function RequestEditorInner(): React.JSX.Element {
       // `localValues:changed` event. Nothing to persist here.
 
       // Auto-save to history when a workspace is open and a response was produced
-      if (workspacePath && response) {
-        const relativeSourceFile =
-          activeTab.filePath && activeTab.filePath.startsWith(workspacePath)
-            ? activeTab.filePath.slice(workspacePath.length).replace(/^[/\\]/, '')
-            : (activeTab.filePath ?? null)
-        // `request` keeps the editor-side shape (with `{{variables}}`) for
-        // replay; `wireRequest` carries the actual wire snapshot — what the
-        // history writer renders as the raw HTTP message.
-        const entry = {
-          id: crypto.randomUUID(),
-          timestamp: new Date().toISOString(),
-          request: httpRequest,
-          wireRequest: executed.request,
-          response,
-          sourceFile: relativeSourceFile,
-          requestId: activeTab.requestId,
-          scriptResults,
-          resolvedSettings,
-          cookies: cookiesSummary,
-          remoteIp
-        }
+      const relativeSourceFile =
+        workspacePath && activeTab.filePath && activeTab.filePath.startsWith(workspacePath)
+          ? activeTab.filePath.slice(workspacePath.length).replace(/^[/\\]/, '')
+          : (activeTab.filePath ?? null)
+      const entry = workspacePath
+        ? buildHistoryEntry({
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            request: httpRequest,
+            result: executed,
+            sourceFile: relativeSourceFile,
+            requestId: activeTab.requestId
+          })
+        : undefined
+      if (entry) {
         window.api.history
           .save(entry)
           .then(() => window.dispatchEvent(new Event(HISTORY_UPDATED_EVENT)))

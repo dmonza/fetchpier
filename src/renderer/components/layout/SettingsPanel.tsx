@@ -31,10 +31,22 @@ function GeneralTab(): React.JSX.Element {
   const resetZoom = useDisplayStore((s) => s.resetZoom)
 
   const [timeoutValue, setTimeoutValue] = useState<number>(30)
+  // Safe default while the settings load, and for a file written before the field.
+  const [hideSecrets, setHideSecrets] = useState<boolean>(true)
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    window.api.appSettings.get().then((s) => setTimeoutValue(s.requestTimeoutSeconds))
+    window.api.appSettings.get().then((s) => {
+      setTimeoutValue(s.requestTimeoutSeconds)
+      setHideSecrets(s.hideSecretsInResponses !== false)
+      setLoaded(true)
+    })
   }, [])
+
+  function handleHideSecretsChange(next: boolean): void {
+    setHideSecrets(next)
+    window.api.appSettings.set({ hideSecretsInResponses: next })
+  }
 
   const zoomPercent = Math.round(zoomFactor * 100)
   const isZoomed = zoomPercent !== 100
@@ -105,6 +117,24 @@ function GeneralTab(): React.JSX.Element {
           className="h-7 w-20 rounded border border-border-default bg-background px-2 text-xs tabular-nums text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
         />
         <span className="text-xs text-muted-foreground">{t('settings.requestTimeout.unit')}</span>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={hideSecrets}
+            disabled={!loaded}
+            onChange={(e) => handleHideSecretsChange(e.target.checked)}
+            className="h-4 w-4 accent-primary"
+          />
+          <span className="text-xs font-medium text-foreground">
+            {t('settings.responseSecrets.hide')}
+          </span>
+        </label>
+        <p className="mt-1 pl-6 text-xs text-muted-foreground">
+          {t('settings.responseSecrets.hint')}
+        </p>
       </div>
     </div>
   )

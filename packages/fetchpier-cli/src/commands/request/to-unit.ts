@@ -119,6 +119,9 @@ export function toRequestUnit(args: {
   const reqUrl = redactUrl(snapshot?.url ?? resolved.url, apiKey, showSecrets)
   const reqHeaders = snapshot?.headers ?? resolved.headers
   const reqBody = snapshot?.body ?? resolved.body
+  // The response is masked unless `--show-secrets`, which shows it as received.
+  // The history never reads this: it records `result.response`, always masked.
+  const response = (showSecrets ? result.unmaskedResponse : undefined) ?? result.response
 
   return {
     type: 'request',
@@ -130,23 +133,21 @@ export function toRequestUnit(args: {
       headers: redactHeaders(reqHeaders, showSecrets, apiKey),
       ...(reqBody !== undefined ? { body: reqBody } : {})
     },
-    response: result.response
+    response: response
       ? {
-          status: result.response.status,
-          statusText: result.response.statusText,
-          headers: redactHeaders(result.response.headers, showSecrets),
-          body: result.response.body,
-          timingMs: result.response.timingMs,
-          sizeBytes: result.response.sizeBytes,
-          ...(result.response.compressedBytes !== undefined
-            ? { compressedBytes: result.response.compressedBytes }
+          status: response.status,
+          statusText: response.statusText,
+          headers: redactHeaders(response.headers, showSecrets),
+          body: response.body,
+          timingMs: response.timingMs,
+          sizeBytes: response.sizeBytes,
+          ...(response.compressedBytes !== undefined
+            ? { compressedBytes: response.compressedBytes }
             : {}),
-          ...(result.response.decompressedBytes !== undefined
-            ? { decompressedBytes: result.response.decompressedBytes }
+          ...(response.decompressedBytes !== undefined
+            ? { decompressedBytes: response.decompressedBytes }
             : {}),
-          ...(result.response.decodingStatus
-            ? { decodingStatus: result.response.decodingStatus }
-            : {})
+          ...(response.decodingStatus ? { decodingStatus: response.decodingStatus } : {})
         }
       : undefined,
     scripts: {

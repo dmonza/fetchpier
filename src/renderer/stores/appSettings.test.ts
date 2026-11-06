@@ -18,7 +18,8 @@ function appSettings(lastVersion: string | null): AppSettings {
     proxy: { enabled: false, url: '', username: '', password: '' },
     lastVersion,
     updates: { intervalDays: 15, lastCheckAt: null, autoCheckEnabled: true },
-    theme: 'system'
+    theme: 'system',
+    hideSecretsInResponses: true
   }
 }
 

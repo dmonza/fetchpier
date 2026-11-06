@@ -14,6 +14,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   variable it came from but not the URL, so a username and password in it stay
   out of the CI log. Credentials with an invalid percent escape now stop the run
   the same way (exit code 3) instead of crashing with exit code 255.
+- **A token a script stores as a secret no longer shows in the response it came
+  from.** When a login's post-response script saves the token it receives under a
+  secret variable's name (or a pre-request script writes one the server echoes),
+  the response now shows it as `{secret:<name>}` — body and headers — in the
+  terminal, every report, the run history and the desktop activity log. It used
+  to be masked only in the script output, so the token stayed readable in the
+  login's own response.
+- **New app setting: Hide secrets in responses** (on by default). Turn it off to
+  see the response exactly as the server sent it in the response viewer; the
+  activity log keeps the masked copy either way.
+- **`--show-secrets` also shows each response as received**, secret values
+  included, in the terminal and every report. The request and script output keep
+  `{secret:<name>}`, and `--save-history` stays masked. _(Behavior change)_
 
 ## [0.9.6] - 2026-11-04
 

@@ -927,8 +927,18 @@ export interface ResolvedRequestSnapshot {
 
 /** Result of `http:send` — response plus any script outputs. */
 export interface ExecutedRequestResult {
-  /** Undefined when the request was aborted before being sent (e.g. pre-request script failure). */
+  /**
+   * Undefined when the request was aborted before being sent (e.g. pre-request script failure).
+   * Always masked: every secret value the send knows — the ones it resolved and the
+   * ones a script wrote under a secret name — reads `{secret:<name>}`. This is what
+   * logs, history and reports consume.
+   */
   response?: HttpResponse
+  /**
+   * The response as received, present only when the adapter asked for it
+   * (`revealResponse`) and masking changed something. Display only — never logged.
+   */
+  unmaskedResponse?: HttpResponse
   scriptResults?: ScriptResultsBundle
   environmentChanges?: EnvironmentChanges
   /** Populated when the request could not be sent (e.g. pre-request script error). */
@@ -1470,6 +1480,14 @@ export interface AppSettings {
    * values resolve to `'system'`.
    */
   theme: Theme
+  /**
+   * Show `{secret:<name>}` instead of a secret value in the response viewer
+   * (default `true`; anything but an explicit `false` reads as `true`). When
+   * `false`, the response of a send crosses to the renderer as received — the
+   * documented exception to renderer containment. The activity log always records
+   * the masked response either way.
+   */
+  hideSecretsInResponses: boolean
   /**
    * Last app version for which the About dialog was shown. `null` on a fresh
    * install and on settings files written before this field existed, which is

@@ -20,8 +20,13 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] }
 }))
 
+const appSettingsState = vi.hoisted(() => ({ hideSecretsInResponses: true }))
 vi.mock('./appsettings.ipc', () => ({
-  readAppSettings: () => ({ requestTimeoutSeconds: 30, proxy: undefined })
+  readAppSettings: () => ({
+    requestTimeoutSeconds: 30,
+    proxy: undefined,
+    hideSecretsInResponses: appSettingsState.hideSecretsInResponses
+  })
 }))
 
 vi.mock('../config/workspace-settings-store', () => ({
@@ -288,5 +293,45 @@ describe('http:send — core-governed variables (CLI readiness)', () => {
       name: 'token',
       reason: 'KEY_MISSING'
     })
+  })
+})
+
+describe('http:send — secrets in the response viewer', () => {
+  const masked = { status: 200, statusText: 'OK', headers: {}, body: '{secret:token}', timingMs: 1 }
+  const asReceived = { ...masked, body: 'plaintext-jwt' }
+  const engineResult = {
+    response: masked,
+    unmaskedResponse: asReceived,
+    resolvedSettings: {},
+    cookies: { sent: [], received: [] }
+  }
+
+  afterEach(() => {
+    appSettingsState.hideSecretsInResponses = true
+  })
+
+  it('by default asks for no unmasked copy and never lets one reach the renderer', async () => {
+    executeMock.mockResolvedValueOnce(engineResult as never)
+    const result = (await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-hide')) as {
+      response: unknown
+      unmaskedResponse?: unknown
+    }
+    expect(executeMock.mock.calls[0][1]).toMatchObject({ revealResponse: false })
+    expect(result.response).toEqual(masked)
+    expect(result.unmaskedResponse).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain('plaintext-jwt')
+  })
+
+  it('with the setting off, asks for the response as received and passes it through', async () => {
+    appSettingsState.hideSecretsInResponses = false
+    executeMock.mockResolvedValueOnce(engineResult as never)
+    const result = (await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-show')) as {
+      response: unknown
+      unmaskedResponse?: unknown
+    }
+    expect(executeMock.mock.calls[0][1]).toMatchObject({ revealResponse: true })
+    // The masked one still travels: it is what the activity log records.
+    expect(result.response).toEqual(masked)
+    expect(result.unmaskedResponse).toEqual(asReceived)
   })
 })

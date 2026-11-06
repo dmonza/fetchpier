@@ -422,6 +422,9 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
           userAgent,
           proxy: proxyRouting.proxyFor,
           secretNames: prepared.secretNames,
+          // `--show-secrets` shows the response as received in the terminal and
+          // the reports; `result.response` stays masked for `--save-history`.
+          revealResponse: options.showSecrets ?? false,
           // REQ-0066: multipart parts read from `requests/.files/` inside the
           // workspace. Always pass through; core ignores it for other body modes.
           workspacePath: ws.path,

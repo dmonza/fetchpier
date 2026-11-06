@@ -48,7 +48,8 @@ export function buildSeededSettings(options: SeedSettingsOptions): SeededSetting
     proxy: { enabled: false, url: '', username: '', password: '' },
     lastVersion: options.lastVersion,
     updates: options.updates,
-    theme: options.theme
+    theme: options.theme,
+    hideSecretsInResponses: true
   }
 
   const seeded: SeededSettings = { ...base }

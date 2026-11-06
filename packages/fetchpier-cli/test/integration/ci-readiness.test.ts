@@ -1,6 +1,6 @@
 /**
  * CLI readiness for continuous integration — the runner as a CI pipeline uses
- * it. Each case references its catalog entry (docs/TESTS.md, CLI-098…CLI-112);
+ * it. Each case references its catalog entry (docs/TESTS.md, CLI-098…CLI-112, CLI-120);
  * the Given/When/Then lives there.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -16,7 +16,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import { getLocal, type Mockttp } from 'mockttp'
+import { getLocal, type MockedEndpoint, type Mockttp } from 'mockttp'
 import { secrets } from '@fetchpier/core'
 import { executeRun } from '../../src/commands/request/run'
 import { listCommand } from '../../src/commands/env/list'
@@ -154,10 +154,12 @@ describe('CLI readiness — variables across requests', () => {
     expect(err).toContain('variable "token" has no value')
   })
 
-  // CLI-100
-  it('a value written under a secret name stays masked in every output', async () => {
-    const FRESH = 'FRESH-SECRET-77aa'
-    await server.forPost('/login').thenJson(200, { token: FRESH })
+  // A login that hands out a fresh token its post-response script stores under a
+  // secret name, then a request that sends and logs it (CLI-100, CLI-120).
+  async function loginWorkspace(
+    FRESH: string
+  ): Promise<{ ws: string; fpk: string; me: MockedEndpoint }> {
+    await server.forPost('/login').thenJson(200, { token: FRESH }, { 'x-session': FRESH })
     const me = await server.forGet('/me').thenReply(200, 'ok')
     const ws = workspaceWith({
       '01-login.http':
@@ -169,21 +171,67 @@ describe('CLI readiness — variables across requests', () => {
     })
     const { key, fpk } = await withSecrets(ws)
     setEnvVariables(ws, { token: await secrets.encryptValue(key, 'token', 'stored') })
+    return { ws, fpk, me }
+  }
+
+  function historyTexts(ws: string): string[] {
+    const runs = join(ws, 'requests', '.runs')
+    return readdirSync(runs).map((f) => readFileSync(join(runs, f), 'utf-8'))
+  }
+
+  // CLI-100
+  it('a value written under a secret name stays masked in every output', async () => {
+    const FRESH = 'FRESH-SECRET-77aa'
+    const { ws, fpk, me } = await loginWorkspace(FRESH)
     const json = join(ws, 'report.json')
 
     const { out, err } = await run(
       ws,
-      { reporters: [{ type: 'cli' }, { type: 'json', output: json }], showSecrets: true },
+      {
+        reporters: [{ type: 'cli' }, { type: 'json', output: json }],
+        verbosity: 3,
+        saveHistory: true
+      },
       { FETCHPIER_WORKSPACE_KEY: fpk }
     )
 
     expect((await me.getSeenRequests())[0].headers.authorization).toBe(`Bearer ${FRESH}`)
-    // The login's own response body carries the token — response bodies are out
-    // of scope (`--reporter-json-no-body`). Everything the *next* request shows
-    // (its headers, its script output) is masked, even with --show-secrets.
-    const meUnit = JSON.stringify(JSON.parse(readFileSync(json, 'utf-8')).units[1])
-    for (const text of [out, err, meUnit]) expect(text).not.toContain(FRESH)
-    expect(meUnit).toContain('{secret:token}')
+    const report = readFileSync(json, 'utf-8')
+    const history = historyTexts(ws)
+    expect(history).toHaveLength(2)
+    // The login's own response (body and headers) is masked too, not only what
+    // the next request shows.
+    for (const text of [out, err, report, ...history]) expect(text).not.toContain(FRESH)
+    expect(JSON.stringify(JSON.parse(report).units[0].response)).toContain('{secret:token}')
+    expect(out).toContain('{secret:token}')
+  })
+
+  // CLI-120
+  it('--show-secrets shows the response as received, but the history stays masked', async () => {
+    const FRESH = 'FRESH-SECRET-88bb'
+    const { ws, fpk } = await loginWorkspace(FRESH)
+    const json = join(ws, 'report.json')
+
+    const { out } = await run(
+      ws,
+      {
+        reporters: [{ type: 'cli' }, { type: 'json', output: json }],
+        verbosity: 3,
+        saveHistory: true,
+        showSecrets: true
+      },
+      { FETCHPIER_WORKSPACE_KEY: fpk }
+    )
+
+    const units = JSON.parse(readFileSync(json, 'utf-8')).units
+    expect(units[0].response.body).toBe(JSON.stringify({ token: FRESH }))
+    expect(units[0].response.headers['x-session']).toBe(FRESH)
+    expect(out).toContain(FRESH)
+    // The request and the script output keep the marker; the log never reveals.
+    expect(JSON.stringify(units[1].request)).not.toContain(FRESH)
+    expect(JSON.stringify(units[1].scripts)).not.toContain(FRESH)
+    expect(JSON.stringify(units[1])).toContain('{secret:token}')
+    for (const text of historyTexts(ws)) expect(text).not.toContain(FRESH)
   })
 
   // CLI-101

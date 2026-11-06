@@ -158,6 +158,96 @@ describe('execute() — secret masking of script output', () => {
   })
 })
 
+describe('execute() — secret masking of the response', () => {
+  const FRESH = 'FRESH-tok-55aa11'
+  const storeToken = 'fp.environment.set("token", fp.response.json().token)'
+
+  it('masks a token the post-response script stores under a secret name, in body and headers', async () => {
+    await server.forPost('/login').thenJson(200, { token: FRESH }, { 'x-session': FRESH })
+    const result = await execute(
+      {
+        method: 'POST',
+        url: `${server.url}/login`,
+        headers: {},
+        postResponseScript: storeToken
+      },
+      // No masker: the login references no secret, it only produces one.
+      { ...base, secretNames: ['token'] }
+    )
+    expect(result.response?.body).toBe(JSON.stringify({ token: '{secret:token}' }))
+    expect(result.response?.headers['x-session']).toBe('{secret:token}')
+    expect(JSON.stringify(result.response)).not.toContain(FRESH)
+    // The script read the real value, and the session still gets it to apply.
+    expect(result.environmentChanges?.set.token).toBe(FRESH)
+  })
+
+  it('masks a secret the pre-request script writes and the server echoes', async () => {
+    await server.forGet('/echo').thenCallback((req) => ({
+      statusCode: 200,
+      body: `you sent ${req.headers['x-token']}`
+    }))
+    const result = await execute(
+      {
+        method: 'GET',
+        url: `${server.url}/echo`,
+        headers: { 'X-Token': '{{token}}' },
+        preRequestScript: `fp.environment.set("token", "${FRESH}")`
+      },
+      { ...base, secretNames: ['token'] }
+    )
+    expect(result.response?.body).toBe('you sent {secret:token}')
+  })
+
+  it('leaves the response alone for a plain write', async () => {
+    await server.forPost('/plain').thenJson(200, { token: FRESH })
+    const result = await execute(
+      {
+        method: 'POST',
+        url: `${server.url}/plain`,
+        headers: {},
+        postResponseScript: storeToken
+      },
+      { ...base, secretNames: ['other'] }
+    )
+    expect(result.response?.body).toContain(FRESH)
+    expect(result.unmaskedResponse).toBeUndefined()
+  })
+
+  it('returns the response as received alongside the masked one when asked to reveal it', async () => {
+    await server.forPost('/reveal').thenJson(200, { token: FRESH }, { 'x-session': FRESH })
+    const result = await execute(
+      {
+        method: 'POST',
+        url: `${server.url}/reveal`,
+        headers: {},
+        postResponseScript: storeToken
+      },
+      { ...base, secretNames: ['token'], revealResponse: true }
+    )
+    expect(result.response?.body).not.toContain(FRESH)
+    expect(result.unmaskedResponse?.body).toBe(JSON.stringify({ token: FRESH }))
+    expect(result.unmaskedResponse?.headers['x-session']).toBe(FRESH)
+    expect(result.unmaskedResponse?.status).toBe(200)
+  })
+
+  it.each([
+    ['nothing was masked', { secretNames: ['other'], revealResponse: true }],
+    ['revealing was not asked for', { secretNames: ['token'] }]
+  ])('adds no unmasked copy when %s', async (_label, extra) => {
+    await server.forPost('/no-copy').thenJson(200, { token: FRESH })
+    const result = await execute(
+      {
+        method: 'POST',
+        url: `${server.url}/no-copy`,
+        headers: {},
+        postResponseScript: storeToken
+      },
+      { ...base, ...extra }
+    )
+    expect(result.unmaskedResponse).toBeUndefined()
+  })
+})
+
 describe('the send path never writes to the process console', () => {
   // A console line is a channel neither the desktop nor a CI report can read; on
   // the command line it surfaced as raw `[execute]` / `[parser]` lines. Every

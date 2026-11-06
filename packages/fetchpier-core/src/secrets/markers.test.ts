@@ -45,17 +45,9 @@ describe('createSecretMasker', () => {
     expect(m.logRender(foreign)).toBe(foreign)
   })
 
-  // CA-16: response echoes are masked by substring (best-effort net).
-  it('maskResponse masks decrypted values echoed in a response', () => {
-    const m = make()
-    expect(m.maskResponse('the token is SEKRET here')).toBe('the token is {secret:apiToken} here')
-  })
-
-  it('maskResponse never masks on an empty value', () => {
-    const m = make()
-    // `empty` has value '' — masking on it would corrupt every character.
-    expect(m.maskResponse('abc')).toBe('abc')
-  })
+  // CA-16 (response echoes masked by substring) lives in `requests/execute`: the
+  // engine masks the response with the same value set as script output
+  // (`createValueMask`, which also owns the empty-value rule).
 
   it('collectMaskedNames reports only names whose marker appears', () => {
     const m = make()

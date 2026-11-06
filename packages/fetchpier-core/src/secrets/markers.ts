@@ -62,8 +62,6 @@ export interface SecretMasker {
   wireRender(text: string): string
   /** Replace this execution's markers with `{secret:<name>}` (logs/reporters). */
   logRender(text: string): string
-  /** Best-effort substring masking of decrypted values echoed in a response. */
-  maskResponse(text: string): string
   /** Names whose marker appears in any of the supplied resolved texts. */
   collectMaskedNames(texts: Array<string | undefined>): string[]
 }
@@ -91,18 +89,6 @@ export function createSecretMasker(input: SecretMaskerInput): SecretMasker {
   const logRender = (text: string): string =>
     text.replace(new RegExp(markerSource, 'g'), (_whole, name: string) => secretLogMask(name))
 
-  const maskResponse = (text: string): string => {
-    let out = text
-    for (const name of names) {
-      const value = plaintextByName[name]
-      // Never substring-mask on an empty value — it would match between every
-      // character. An empty secret simply isn't masked on the response side.
-      if (!value) continue
-      out = out.split(value).join(secretLogMask(name))
-    }
-    return out
-  }
-
   const collectMaskedNames = (texts: Array<string | undefined>): string[] => {
     const found: string[] = []
     for (const name of names) {
@@ -117,7 +103,6 @@ export function createSecretMasker(input: SecretMaskerInput): SecretMasker {
     scriptEnvironment: { ...plaintextByName },
     wireRender,
     logRender,
-    maskResponse,
     collectMaskedNames
   }
 }

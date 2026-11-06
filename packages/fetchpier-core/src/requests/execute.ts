@@ -73,6 +73,13 @@ export interface ExecuteOptions {
    */
   secretNames?: Iterable<string>
   /**
+   * Also return the response as received (`unmaskedResponse`) when masking changed
+   * it. `response` stays masked either way — it is what logs and history read. Set
+   * by the desktop when the user turned off "hide secrets in responses" and by the
+   * CLI under `--show-secrets`.
+   */
+  revealResponse?: boolean
+  /**
    * Adapter-bound TLS resolver. `onWarning` receives a plain-language reason when
    * configured material cannot be applied; it becomes a `TLS_MATERIAL_UNAVAILABLE`
    * advisory on the result.
@@ -263,23 +270,28 @@ export async function execute(
     transportWarnings.push(w)
   }
 
-  // Script output is masked inside the engine, once, for every consumer (desktop
-  // console + activity log, CLI terminal, reports, history). The value set is the
-  // secrets this send resolved plus whatever a script wrote under a secret name.
+  // Script output and the response are masked inside the engine, once, for every
+  // consumer (desktop console + activity log, CLI terminal, reports, history).
+  // One value set for both: the secrets this send resolved plus whatever a script
+  // wrote under a secret name — a login's post-response script that stores the
+  // token it just received is the case the response must not miss.
   const secretNameSet = new Set<string>([
     ...(options.secretNames ?? []),
     ...(secrets ? Object.keys(secrets.scriptEnvironment) : [])
   ])
+  const secretValueMask = (changes: EnvironmentChanges | undefined): ((s: string) => string) => {
+    const values: Record<string, string> = { ...(secrets?.scriptEnvironment ?? {}) }
+    for (const [name, value] of Object.entries(changes?.set ?? {})) {
+      if (secretNameSet.has(name)) values[name] = value
+    }
+    return createValueMask(values)
+  }
   const maskedScripts = (
     bundle: ScriptResultsBundle,
     changes: EnvironmentChanges | undefined
   ): ScriptResultsBundle | undefined => {
     if (!bundle.preRequest && !bundle.postResponse) return undefined
-    const values: Record<string, string> = { ...(secrets?.scriptEnvironment ?? {}) }
-    for (const [name, value] of Object.entries(changes?.set ?? {})) {
-      if (secretNameSet.has(name)) values[name] = value
-    }
-    return maskScriptResults(bundle, createValueMask(values))
+    return maskScriptResults(bundle, secretValueMask(changes))
   }
 
   const envIn: Record<string, string> = { ...(request.variables ?? {}) }
@@ -787,20 +799,26 @@ export async function execute(
     ...(secretsMasked.length > 0 ? { secretsMasked } : {})
   }
 
-  // Best-effort response masking: a server may echo a secret back (§6.6). No
-  // marker exists there, so mask by substring against the decrypted values.
-  const maskedResponse = secrets
-    ? {
-        ...response,
-        body: secrets.maskResponse(response.body),
-        headers: Object.fromEntries(
-          Object.entries(response.headers).map(([k, v]) => [k, secrets.maskResponse(v)])
-        )
-      }
+  // Best-effort response masking: a server may echo a secret back, or hand out
+  // one a script then stores under a secret name. No marker exists there, so mask
+  // by substring against the same values as the script output. `response` is
+  // always the masked one — what every log and report reads; the copy as
+  // received travels only when the adapter asked for it and it differs.
+  const responseMask = secretValueMask(envChanges)
+  const maskedBody = responseMask(response.body)
+  const maskedHeaders = Object.fromEntries(
+    Object.entries(response.headers).map(([k, v]) => [k, responseMask(v)])
+  )
+  const responseChanged =
+    maskedBody !== response.body ||
+    Object.entries(maskedHeaders).some(([k, v]) => v !== response.headers[k])
+  const maskedResponse = responseChanged
+    ? { ...response, body: maskedBody, headers: maskedHeaders }
     : response
 
   return {
     response: maskedResponse,
+    ...(options.revealResponse && responseChanged ? { unmaskedResponse: response } : {}),
     scriptResults: maskedScripts(scriptResults, envChanges),
     environmentChanges: envChanges,
     resolvedSettings,

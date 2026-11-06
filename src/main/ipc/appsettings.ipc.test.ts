@@ -150,3 +150,32 @@ describe('writeAppSettings — theme', () => {
     expect(writeAppSettings({ zoomFactor: 1.5 }).theme).toBe('light')
   })
 })
+
+// Hiding secrets in the response viewer is the safe default: anything that is not
+// an explicit `false` keeps them hidden.
+describe('hideSecretsInResponses', () => {
+  it('defaults to true on a fresh install', () => {
+    expect(readAppSettings().hideSecretsInResponses).toBe(true)
+  })
+
+  it('defaults to true for a settings file written before the field existed', () => {
+    seed({ zoomFactor: 1, language: 'en' })
+    expect(readAppSettings().hideSecretsInResponses).toBe(true)
+  })
+
+  it.each([
+    ['a string', 'false'],
+    ['a number', 0],
+    ['null', null]
+  ])('reads %s as true', (_label, value) => {
+    seed({ hideSecretsInResponses: value })
+    expect(readAppSettings().hideSecretsInResponses).toBe(true)
+  })
+
+  it('round-trips false through the settings file', () => {
+    seed({})
+    expect(writeAppSettings({ hideSecretsInResponses: false }).hideSecretsInResponses).toBe(false)
+    expect(readAppSettings().hideSecretsInResponses).toBe(false)
+    expect(writeAppSettings({ zoomFactor: 1.5 }).hideSecretsInResponses).toBe(false)
+  })
+})

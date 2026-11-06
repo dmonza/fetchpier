@@ -125,7 +125,7 @@ export function registerRequestHandlers(): void {
     'http:send',
     async (_event, request: HttpRequest, executionId?: string): Promise<ExecutedRequestResult> => {
       const workspaceSettings = await getResolvedWorkspaceSettings()
-      const { requestTimeoutSeconds, proxy } = readAppSettings()
+      const { requestTimeoutSeconds, proxy, hideSecretsInResponses } = readAppSettings()
 
       const abortController = new AbortController()
       if (executionId) inFlightControllers.set(executionId, abortController)
@@ -233,6 +233,9 @@ export function registerRequestHandlers(): void {
           signal: abortController.signal,
           userAgent: desktopUserAgent(app.getVersion()),
           ...(prepared ? { secretNames: prepared.secretNames } : {}),
+          // The response as received is asked for only when the user turned off
+          // "hide secrets in responses"; `response` stays masked for the log.
+          revealResponse: !hideSecretsInResponses,
           // REQ-0089: core owns workspace TLS resolution keyed off the path; the
           // passphrase-secret resolver is bound here so a secret-referencing
           // passphrase decrypts lazily under the unlocked key.
@@ -292,7 +295,14 @@ export function registerRequestHandlers(): void {
 
       // The renderer never receives secret plaintext in bulk (§5 renderer
       // containment): a value a script wrote under a secret name leaves main
-      // masked. The session already consumed the plaintext above.
+      // masked. The session already consumed the plaintext above. The one
+      // documented exception is the response as received, and only when the user
+      // turned off "hide secrets in responses" — enforced here, whatever the
+      // engine returned.
+      if (hideSecretsInResponses && result.unmaskedResponse !== undefined) {
+        const { unmaskedResponse: _hidden, ...rest } = result
+        result = rest
+      }
       return prepared ? maskSecretEnvironmentChanges(result, prepared.secretNames) : result
     }
   )

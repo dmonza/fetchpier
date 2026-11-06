@@ -680,6 +680,10 @@
       "label": "Request Timeout",
       "unit": "seconds"
     },
+    "responseSecrets": {
+      "hide": "Hide secrets in responses",
+      "hint": "Secret values in a response show as {secret:name}. The activity log always hides them."
+    },
     "proxy": {
       "enable": "Enable proxy server",
       "url": "Proxy URL",

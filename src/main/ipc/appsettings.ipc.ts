@@ -33,7 +33,8 @@ const DEFAULTS: AppSettings = {
   },
   lastVersion: null,
   updates: { ...DEFAULT_UPDATES_SETTINGS },
-  theme: 'system'
+  theme: 'system',
+  hideSecretsInResponses: true
 }
 
 /** Anything that isn't a version string reads as "never shown" (see AppSettings). */
@@ -64,6 +65,8 @@ function mergeDefaults(parsed: Partial<AppSettings>): AppSettings {
     ...parsed,
     lastVersion: sanitizeLastVersion(parsed.lastVersion),
     theme: sanitizeTheme(parsed.theme),
+    // Safe default: only an explicit `false` shows secrets in the response viewer.
+    hideSecretsInResponses: parsed.hideSecretsInResponses !== false,
     proxy: { ...DEFAULTS.proxy, ...(parsed.proxy ?? {}) },
     updates,
     ...(parsed.tls ? { tls: parsed.tls } : {}),
@@ -114,6 +117,8 @@ export interface AppSettingsPatch {
   lastVersion?: string | null
   /** The user's theme preference — see `AppSettings.theme`. */
   theme?: Theme
+  /** See `AppSettings.hideSecretsInResponses`. */
+  hideSecretsInResponses?: boolean
   updates?: Partial<UpdatesSettings>
   /** Replace the TLS scope settings wholesale (callers compose the new value). */
   tls?: TlsScopeSettings
