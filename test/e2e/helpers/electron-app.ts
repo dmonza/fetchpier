@@ -64,6 +64,8 @@ export type LaunchOptions = {
    * is. Pass `'light'` / `'dark'` to pin it regardless of the host's theme.
    */
   theme?: Theme
+  /** Seed the palette preferences (`AppSettings.appearancePalettes`). Absent by default. */
+  appearancePalettes?: unknown
   /**
    * Override the seeded update preferences. Defaults to "auto-check off, just
    * checked", which keeps the update prompt from opening over a spec's UI.
@@ -115,6 +117,7 @@ async function seedUserData(
     lastVersion: string | null
     updates: NonNullable<LaunchOptions['updates']>
     theme: Theme
+    appearancePalettes?: unknown
   }
 ): Promise<void> {
   await fs.mkdir(userDataDir, { recursive: true })
@@ -152,7 +155,8 @@ async function seedUserData(
         language: opts.language,
         lastVersion: opts.lastVersion,
         updates: opts.updates,
-        theme: opts.theme
+        theme: opts.theme,
+        appearancePalettes: opts.appearancePalettes
       }),
       null,
       2
@@ -178,6 +182,7 @@ export async function launchApp(options: LaunchOptions): Promise<ElectronAppCont
     language: options.language ?? 'en',
     lastVersion: options.lastVersion === undefined ? APP_VERSION : options.lastVersion,
     theme: options.theme ?? 'system',
+    appearancePalettes: options.appearancePalettes,
     updates: options.updates ?? {
       autoCheckEnabled: false,
       intervalDays: 30,

@@ -118,4 +118,22 @@ describe('buildSeededSettings', () => {
 
     expect(seeded.updates?.lastCheckAt).not.toBeNull()
   })
+
+  it('seeds palette preferences only when a spec asks for them', () => {
+    const base = {
+      language: 'en' as const,
+      lastVersion: '1.0.0',
+      updates: UPDATES,
+      theme: 'dark' as const
+    }
+    expect('appearancePalettes' in buildSeededSettings(base)).toBe(false)
+    const palettes = {
+      schemaVersion: 1,
+      light: { selected: 'ocean' },
+      dark: { selected: 'forest' }
+    }
+    expect(
+      buildSeededSettings({ ...base, appearancePalettes: palettes }).appearancePalettes
+    ).toEqual(palettes)
+  })
 })

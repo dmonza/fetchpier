@@ -172,9 +172,9 @@ describe('VariableHighlightInput — variable suggestion', () => {
     expect(overlay).not.toBeNull()
     const classFor = (token: string): string =>
       [...overlay.querySelectorAll('span')].find((s) => s.textContent === token)?.className ?? ''
-    expect(classFor('{{baseUrl}}')).toContain('text-emerald-600')
+    expect(classFor('{{baseUrl}}')).toContain('text-var-resolved')
     expect(classFor('{{$guid}}')).toContain('fp-var-dynamic-fg')
-    expect(classFor('{{$nope}}')).toContain('text-rose-600')
+    expect(classFor('{{$nope}}')).toContain('text-var-missing')
   })
 })
 

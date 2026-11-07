@@ -14,6 +14,7 @@ import { useRequestStore } from '../../stores/request'
 import { tabsAffectedBy } from './tabs-affected'
 import { resolveRenameBlur } from './rename-blur'
 import { flattenVisible, resolveTreeKey, typeAheadMatch } from './tree-nav'
+import { treeRowStateClass } from './tree-row-style'
 import { beginRepoint, endRepoint } from '../../lib/repoint-guard'
 import { collectAllPaths } from '../../lib/tree-paths'
 import { useEnvironmentStore } from '../../stores/environment'
@@ -547,14 +548,9 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
               data-tree-focused={isFocused ? 'true' : undefined}
               className={cn(
                 'relative flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                isActiveFile
-                  ? 'font-medium text-foreground'
-                  : 'hover:bg-accent hover:text-accent-foreground'
+                treeRowStateClass({ selected: isActiveFile, emphasis: true })
               )}
-              style={{
-                paddingLeft: `${rowPaddingLeftPx(depth)}px`,
-                backgroundColor: isActiveFile ? 'var(--primary-tint)' : undefined
-              }}
+              style={{ paddingLeft: `${rowPaddingLeftPx(depth)}px` }}
               onClick={() => {
                 useTreeSelectionStore.getState().setSelected(node.path, 'file')
                 onFileClick(node)
@@ -648,14 +644,9 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
               onDragEnd={handleDragEnd}
               className={cn(
                 'relative flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                isActiveFile
-                  ? 'font-medium text-foreground'
-                  : 'hover:bg-accent hover:text-accent-foreground'
+                treeRowStateClass({ selected: isActiveFile, emphasis: true })
               )}
-              style={{
-                paddingLeft: `${rowPaddingLeftPx(depth)}px`,
-                backgroundColor: isActiveFile ? 'var(--primary-tint)' : undefined
-              }}
+              style={{ paddingLeft: `${rowPaddingLeftPx(depth)}px` }}
               onClick={() => {
                 useTreeSelectionStore.getState().setSelected(node.path, 'file')
                 onFileClick(node)
@@ -783,9 +774,7 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
               onDragEnd={handleDragEnd}
               className={cn(
                 'flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                isSelectedFolder
-                  ? 'bg-accent text-accent-foreground'
-                  : 'hover:bg-accent hover:text-accent-foreground'
+                treeRowStateClass({ selected: isSelectedFolder, emphasis: false })
               )}
               style={{ paddingLeft: `${rowPaddingLeftPx(depth)}px` }}
               onClick={() => {

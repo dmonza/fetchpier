@@ -406,9 +406,9 @@ export const VariableHighlightInput = React.forwardRef<
                 key={i}
                 className={
                   seg.type === 'var-found'
-                    ? 'text-emerald-600 dark:text-emerald-500'
+                    ? 'text-var-resolved'
                     : seg.type === 'var-missing'
-                      ? 'text-rose-600 dark:text-rose-500'
+                      ? 'text-var-missing'
                       : seg.type === 'var-dynamic'
                         ? 'fp-var-dynamic-fg'
                         : 'text-foreground'
@@ -489,11 +489,7 @@ export const VariableHighlightInput = React.forwardRef<
                 <span className="min-w-0 flex-1 truncate font-mono">
                   <span className="text-muted-foreground">{'{{'}</span>
                   <span
-                    className={
-                      suggestion.isDynamic
-                        ? 'fp-var-dynamic-fg'
-                        : 'text-emerald-600 dark:text-emerald-500'
-                    }
+                    className={suggestion.isDynamic ? 'fp-var-dynamic-fg' : 'text-var-resolved'}
                   >
                     {suggestion.name}
                   </span>

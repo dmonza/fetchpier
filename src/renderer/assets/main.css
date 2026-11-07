@@ -66,6 +66,15 @@
   /* Code surface for mono blocks */
   --color-surface-code: var(--surface-code);
 
+  /* Selection, variable highlighting and script-console value colours */
+  --color-primary-tint: var(--primary-tint);
+  --color-var-resolved: var(--fp-var-resolved);
+  --color-var-missing: var(--fp-var-missing);
+  --color-console-string: var(--console-string);
+  --color-console-number: var(--console-number);
+  --color-console-boolean: var(--console-boolean);
+  --color-console-function: var(--console-function);
+
   /* Text ramp */
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
@@ -120,27 +129,24 @@
   --popover-foreground: #0f172a;
   --surface-code: #edf0f6; /* code blocks — slightly cooler than surface-2 */
 
-  /* Borders — stronger contrast to meet WCAG 1.4.11 where it carries meaning */
+  /* Borders. Decorative dividers stay soft (non-text contrast does not apply to
+     them); control outlines meet 3:1 against the background and surface-1. */
   --border: #d4dbe8; /* decorative dividers (soft) */
   --border-subtle: #d4dbe8;
-  --border-default: #a3aec2; /* structural — 3.08:1 on white (passes AA non-text) */
-  --border-strong: #7c8aa3; /* emphasis — 4.5:1 on white */
-  --input: #a3aec2; /* input border (shadcn semantics) — 3.08:1 on white, passes AA non-text */
+  --border-default: #858fa3; /* control outlines — 3.0:1 on --background */
+  --border-strong: #5f6d84; /* emphasis — 4.8:1 on --background */
+  --input: #858fa3; /* input border (shadcn semantics) — 3.0:1 on --background */
 
-  /* Indigo primary — actions, tabs, links, focus */
-  --primary: #6366f1; /* fills only (buttons, focus rings, chip bg) */
+  /* Indigo primary — actions, tabs, links */
+  --primary: #6265f0; /* fills only (buttons, chip bg) — white text 4.5:1 */
   --primary-foreground: #ffffff;
   --primary-hover: #5458e8;
   --primary-active: #4547d6;
   --primary-soft: #a5b4fc;
-  --primary-text: #4f46e5; /* 5.1:1 on --background — use when indigo is typography (links, active tab label) */
-  --primary-tint: rgba(
-    99,
-    102,
-    241,
-    0.14
-  ); /* selected-row backdrop — lifted so it lands on neutral bg */
-  --ring: #6366f1;
+  --primary-text: #4f46e5; /* 5.8:1 on --background — indigo as typography (links, active labels) */
+  --primary-tint: rgba(99, 102, 241, 0.14); /* selected-row backdrop */
+  --ring: #6366f1; /* focus ring — 3.4:1 or more on every surface */
+  --focus-glow: rgba(99, 102, 241, 0.4);
 
   /* Secondary / muted / accent → layered surfaces */
   --secondary: #e8ecf3;
@@ -153,34 +159,47 @@
   /* Text ramp */
   --text-secondary: #334155;
   --text-muted: #475569;
-  --text-soft: #596678; /* 5.4:1 on white, 5.1:1 on bg, 4.9:1 on surface-3 (all AA) */
+  --text-soft: #586577; /* 4.5:1 or more on every surface */
 
   /* Semantic statuses — split into fill / text pairs.
-     Fill = saturated (works as /15 tint or solid dot). Text = darker, passes AA body on surface-1. */
+     Fill = saturated (works as /15 tint or solid dot). Text = darker, 4.5:1 or more on
+     the background and surfaces 1–3. */
   --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
   --info: #0ea5e9;
-  --success-text: #047857; /* emerald-700 → 5.0:1 on #FFFFFF */
-  --warning-text: #b45309; /* amber-700   → 5.5:1 */
-  --danger-text: #b91c1c; /* red-700     → 6.3:1 */
-  --info-text: #0369a1; /* sky-700     → 5.1:1 */
+  --success-text: #037353;
+  --warning-text: #a54a02;
+  --danger-text: #b91c1c;
+  --info-text: #0369a1;
 
   /* Destructive action color — deeper than error red on purpose, different channel */
   --destructive: #b91c1c;
   --destructive-foreground: #ffffff;
 
-  /* HTTP method hues — independent from status semantics; each distinct even in grayscale */
-  --method-get: #047857; /* emerald-700 */
-  --method-post: #b45309; /* amber-700   */
-  --method-put: #1d4ed8; /* blue-700    */
-  --method-patch: #6d28d9; /* violet-700  */
-  --method-delete: #b91c1c; /* red-700     */
-  --method-head: #be185d; /* pink-700    */
-  --method-options: #0e7490; /* cyan-700    */
+  /* HTTP method hues — independent from status semantics; each distinct even in grayscale.
+     4.5:1 or more on the background and surfaces 1–3. */
+  --method-get: #037353;
+  --method-post: #a54a02;
+  --method-put: #1d4ed8;
+  --method-patch: #6d28d9;
+  --method-delete: #b91c1c;
+  --method-head: #be185d;
+  --method-options: #016d89;
 
   /* Sidebar in surface-1 per design rules */
   --sidebar: #ffffff;
+
+  /* {{variable}} highlighting (text fields and the editor) and script-console
+     value colours — 4.5:1 or more on the background and surfaces 1–2. */
+  --fp-var-resolved: #017a55;
+  --fp-var-missing: #d6003f;
+  --fp-var-dynamic: #03748f;
+  --fp-var-dynamic-icon: #03748f;
+  --console-string: #047857;
+  --console-number: #0369a1;
+  --console-boolean: #a54a02;
+  --console-function: #7e22ce;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -193,56 +212,58 @@
   /* Core surfaces — widened surface-2→3 step so active states are perceivable next to hover */
   --canvas: #0b1020; /* deepest background (window/body) */
   --background: #0f172a; /* main app background */
-  --surface-1: #111827; /* sidebar, cards */
-  --surface-2: #182142; /* panels, popovers, inputs (was #1D2540) */
-  --surface-3: #2a3661; /* active nav, hover on dense lists (was #263152) */
+  --surface-1: #131c34; /* sidebar, cards — one real step above the background, navy like the ramp */
+  --surface-2: #182142; /* panels, popovers, inputs */
+  --surface-3: #2a3661; /* active nav, hover on dense lists */
 
-  --card: #111827;
+  --card: #131c34;
   --card-foreground: #e5e7eb;
   --popover: #182142; /* elevated = surface-2 */
   --popover-foreground: #e5e7eb;
   --foreground: #e5e7eb;
   --surface-code: #0d1426; /* code blocks — cooler/deeper than surface-1 */
 
-  /* Borders — soft, not heavy separators */
+  /* Borders. Decorative dividers stay soft; control outlines meet 3:1 against the
+     background and surface-1. */
   --border: #24304a;
   --border-subtle: #24304a;
-  --border-default: #2d3a5a;
-  --border-strong: #3a4a72;
-  --input: #3a4a72; /* input border (shadcn semantics) — visible over bg #0F172A */
+  --border-default: #59688b; /* control outlines — 3.0:1 */
+  --border-strong: #6779a4; /* emphasis — 3.9:1 */
+  --input: #556791; /* input border (shadcn semantics) — 3.0:1 */
 
-  /* Indigo primary — actions, tabs, links, focus */
-  --primary: #6366f1;
+  /* Indigo primary — actions, tabs, links */
+  --primary: #6265f0; /* white text 4.5:1 */
   --primary-foreground: #ffffff;
   --primary-hover: #5458e8;
   --primary-active: #4547d6;
   --primary-soft: #a5b4fc;
-  --primary-text: #a5b4fc; /* dark-mode indigo-as-text: use primary-soft, passes AAA */
-  --primary-tint: rgba(99, 102, 241, 0.18); /* subtle selected-row backdrop */
-  --ring: #6366f1;
+  --primary-text: #a5b4fc; /* dark-mode indigo-as-text: use primary-soft */
+  --primary-tint: rgba(99, 102, 241, 0.18); /* selected-row backdrop */
+  --ring: #6c71fd; /* focus ring — 3:1 or more on every surface, surface-3 included */
+  --focus-glow: rgba(99, 102, 241, 0.4);
 
   /* Secondary / muted / accent → layered surfaces */
   --secondary: #182142;
   --secondary-foreground: #e5e7eb;
   --muted: #182142;
-  --muted-foreground: #9ca3af;
+  --muted-foreground: #acb3c0;
   --accent: #2a3661; /* hover state background */
   --accent-foreground: #e5e7eb;
 
-  /* Text ramp */
+  /* Text ramp — secondary > muted > soft, one hue, 4.5:1 or more on every surface */
   --text-secondary: #c7cedb;
-  --text-muted: #9ca3af;
-  --text-soft: #94a3af; /* promoted from #7C8799: now AA body on all surfaces */
+  --text-muted: #acb3c0;
+  --text-soft: #9aa2b0;
 
   /* Semantic statuses — fill / text pair.
      Dark mode: fills are saturated; text variants are lighter so small chip text passes AA on surface-2/3. */
   --success: #10b981;
   --warning: #f59e0b;
-  --danger: #f87171; /* lifted from #EF4444: was 4.02:1 on surface-2, now 5.68:1 */
+  --danger: #f87171;
   --info: #0ea5e9;
   --success-text: #34d399; /* emerald-400 */
   --warning-text: #fbbf24; /* amber-400   */
-  --danger-text: #fca5a5; /* red-300 — 6.15:1 on surface-3 */
+  --danger-text: #fca5a5; /* 6.15:1 on surface-3 */
   --info-text: #38bdf8; /* sky-400     */
 
   /* Destructive action — distinct from error state (deeper weight) */
@@ -259,7 +280,17 @@
   --method-options: #67e8f9; /* cyan-300    */
 
   /* Sidebar in surface-1 per design rules */
-  --sidebar: #111827;
+  --sidebar: #131c34;
+
+  /* {{variable}} highlighting and script-console value colours */
+  --fp-var-resolved: #10b981;
+  --fp-var-missing: #f94462;
+  --fp-var-dynamic: #22d3ee;
+  --fp-var-dynamic-icon: #22d3ee;
+  --console-string: #10b981;
+  --console-number: #0ea5e9;
+  --console-boolean: #f59e0b;
+  --console-function: #b162ff;
 }
 
 * {
@@ -336,8 +367,9 @@ body {
     left 0 bottom 0;
 }
 
-/* Strong, visible indigo focus ring — replaces default outline on all interactive elements.
-   Outline follows the element's own border-radius, so we don't override shape here. */
+/* Strong, visible focus ring — replaces default outline on all interactive elements.
+   Outline follows the element's own border-radius, so we don't override shape here.
+   It uses its own token, not the primary fill, so it meets 3:1 on every surface. */
 :where(
   a,
   button,
@@ -349,7 +381,7 @@ body {
   [role='menuitem'],
   [tabindex]
 ):focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -375,13 +407,13 @@ body {
     0 24px 48px -20px rgba(2, 6, 23, 0.55);
 }
 
-/* Ambient indigo glow on focus-visible — opt-in via .focus-glow on primary actions */
+/* Ambient glow on focus-visible — opt-in via .focus-glow on primary actions */
 .focus-glow:focus-visible {
   outline: none;
   box-shadow:
     0 0 0 2px var(--background),
-    0 0 0 4px var(--primary),
-    0 0 16px 0 rgba(99, 102, 241, 0.4);
+    0 0 0 4px var(--ring),
+    0 0 16px 0 var(--focus-glow);
 }
 .focus-glow {
   transition: box-shadow 150ms ease-out;
@@ -423,7 +455,8 @@ body {
   app-region: no-drag;
 }
 
-/* Scrollbars — minimal, blue-tinted in both themes */
+/* Scrollbars — minimal; the thumb follows the control-border colour (3:1) and the
+   strong border when hovered, in every palette */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -432,21 +465,13 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #a3aec2;
+  background: var(--border-default);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #7c8aa3;
-  background-clip: padding-box;
-}
-.dark ::-webkit-scrollbar-thumb {
-  background: #2d3a5a;
-  background-clip: padding-box;
-}
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #3a4a72;
+  background: var(--border-strong);
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-corner {
@@ -508,36 +533,22 @@ body {
 /* ─────────────────────────────────────────────────────────────────────────
    Variable editing behavior in the raw body editor (REQ-0078).
    `{{name}}` placeholders are highlighted green when the name is declared in
-   the active environment, red when it is not — mirroring VariableHighlightInput
-   (emerald-600/500, rose-600/500). Secret entries in the `{{` suggestion popup
+   the active environment, red when it is not — the same tokens the
+   VariableHighlightInput fields use. Secret entries in the `{{` suggestion popup
    carry a key indicator (masked lucide `key-round`, monochrome via currentColor).
    ───────────────────────────────────────────────────────────────────────── */
 .cm-fp-var {
-  color: #059669;
-} /* emerald-600 */
-.dark .cm-fp-var {
-  color: #10b981;
-} /* emerald-500 */
+  color: var(--fp-var-resolved);
+}
 .cm-fp-var-missing {
-  color: #e11d48;
-} /* rose-600 */
-.dark .cm-fp-var-missing {
-  color: #f43f5e;
-} /* rose-500 */
+  color: var(--fp-var-missing);
+}
 
 /* REQ-0087: dynamic (system-generated) variables render in a third state in a
-   dedicated cyan/teal hue — distinct from resolved (emerald), missing (rose),
-   the indigo primary, and the secret key. Two semantic tokens (inline highlight
-   + completion icon), defined for both ramps, so components carry no color
-   literal. `.fp-var-dynamic-fg` is the component-facing utility. */
-:root {
-  --fp-var-dynamic: #0891b2; /* cyan-600 */
-  --fp-var-dynamic-icon: #0891b2;
-}
-.dark {
-  --fp-var-dynamic: #22d3ee; /* cyan-400 */
-  --fp-var-dynamic-icon: #22d3ee;
-}
+   dedicated cyan/teal hue — distinct from resolved, missing, the indigo primary,
+   and the secret key. Two semantic tokens (inline highlight + completion icon),
+   defined in both palettes, so components carry no color literal.
+   `.fp-var-dynamic-fg` is the component-facing utility. */
 .cm-fp-var-dynamic,
 .fp-var-dynamic-fg {
   color: var(--fp-var-dynamic);

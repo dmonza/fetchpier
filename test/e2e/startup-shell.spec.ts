@@ -27,6 +27,11 @@ async function initialResolvedTheme(ctx: ElectronAppContext): Promise<string> {
   )
 }
 
+/** The palette override on `<html>`, if any (empty when the built-in palette is shown). */
+async function inlineCanvas(ctx: ElectronAppContext): Promise<string> {
+  return ctx.window.evaluate(() => document.documentElement.style.getPropertyValue('--canvas'))
+}
+
 test.describe('startup — theme resolution and shell', () => {
   let ctx: ElectronAppContext | null = null
 
@@ -48,6 +53,8 @@ test.describe('startup — theme resolution and shell', () => {
     // And the document agrees, so nothing flips once the interface mounts.
     expect(await initialResolvedTheme(ctx)).toBe('dark')
     await expect(page.locator('html')).toHaveClass(/dark/)
+    // No palette stored: the built-in stylesheet is what shows, with no override.
+    expect(await inlineCanvas(ctx)).toBe('')
 
     // The interface mounts into the same theme rather than re-deciding it.
     await expect(page.getByRole('treeitem', { name: 'get-httpbin' })).toBeVisible({
@@ -64,6 +71,7 @@ test.describe('startup — theme resolution and shell', () => {
     expect((await windowBackground(ctx)).toLowerCase()).toBe('#eef0f5')
     expect(await initialResolvedTheme(ctx)).toBe('light')
     await expect(page.locator('html')).not.toHaveClass(/dark/)
+    expect(await inlineCanvas(ctx)).toBe('')
 
     await expect(page.getByRole('treeitem', { name: 'get-httpbin' })).toBeVisible({
       timeout: 20_000

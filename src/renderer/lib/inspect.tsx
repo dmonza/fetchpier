@@ -18,31 +18,25 @@ function inspectValue(value: unknown, depth: number, seen: WeakSet<object>): Rea
   const type = typeof value
 
   if (type === 'string') {
-    return (
-      <span className="text-emerald-700 dark:text-emerald-500">&quot;{value as string}&quot;</span>
-    )
+    return <span className="text-console-string">&quot;{value as string}&quot;</span>
   }
 
   if (type === 'number' || type === 'bigint') {
-    return <span className="text-sky-700 dark:text-sky-500">{String(value)}</span>
+    return <span className="text-console-number">{String(value)}</span>
   }
 
   if (type === 'boolean') {
-    return <span className="text-amber-700 dark:text-amber-500">{String(value)}</span>
+    return <span className="text-console-boolean">{String(value)}</span>
   }
 
   if (type === 'function') {
     const fn = value as { name?: string }
-    return (
-      <span className="text-purple-700 dark:text-purple-500">
-        [Function: {fn.name || '(anonymous)'}]
-      </span>
-    )
+    return <span className="text-console-function">[Function: {fn.name || '(anonymous)'}]</span>
   }
 
   if (type === 'object' && isSentinel(value)) {
     if (value.__inspect === 'fn') {
-      return <span className="text-purple-700 dark:text-purple-500">[Function: {value.name}]</span>
+      return <span className="text-console-function">[Function: {value.name}]</span>
     }
     if (value.__inspect === 'circular') {
       return <span className="italic text-muted-foreground">[Circular]</span>

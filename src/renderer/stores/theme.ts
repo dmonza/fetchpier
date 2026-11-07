@@ -5,13 +5,24 @@ import { resolvePlatformTheme, type ResolvedTheme } from '../lib/platform-theme'
 interface ThemeState {
   /** User-selected theme preference */
   theme: Theme
-  /** Resolved theme (never 'system') — what actually gets applied to the DOM */
+  /** Resolved theme (never 'system') — the mode in force, decided by the platform signal */
   resolvedTheme: ResolvedTheme
+  /**
+   * A mode shown in this window as a preview only (while its Appearance
+   * sub-tab is selected). Never persisted, never sent to main.
+   */
+  previewTheme: ResolvedTheme | null
   setTheme: (theme: Theme) => void
   /** Adopt the stored preference without echoing it back to the main process. */
   hydrateTheme: (theme: Theme) => void
   setResolvedTheme: (resolved: ResolvedTheme) => void
+  setPreviewTheme: (preview: ResolvedTheme | null) => void
 }
+
+/** What this window shows: the preview when there is one, else the mode in force. */
+export const selectDisplayedTheme = (
+  s: Pick<ThemeState, 'previewTheme' | 'resolvedTheme'>
+): ResolvedTheme => s.previewTheme ?? s.resolvedTheme
 
 /**
  * The preference is persisted in app-global settings, not here: the process
@@ -21,6 +32,7 @@ interface ThemeState {
 export const useThemeStore = create<ThemeState>()((set) => ({
   theme: 'system',
   resolvedTheme: resolvePlatformTheme(),
+  previewTheme: null,
   setTheme: (theme) => {
     set({ theme })
     // Main applies it to the platform and persists it. `resolvedTheme` is not
@@ -30,5 +42,6 @@ export const useThemeStore = create<ThemeState>()((set) => ({
     void window.api.theme.setNativeTheme(theme)
   },
   hydrateTheme: (theme) => set({ theme }),
-  setResolvedTheme: (resolvedTheme) => set({ resolvedTheme })
+  setResolvedTheme: (resolvedTheme) => set({ resolvedTheme }),
+  setPreviewTheme: (previewTheme) => set({ previewTheme })
 }))

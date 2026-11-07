@@ -1,5 +1,6 @@
 import { ipcMain, nativeTheme, BrowserWindow } from 'electron'
 import { writeAppSettings } from './appsettings.ipc'
+import { updateWindowBackgrounds } from '../window/window-appearance'
 import { THEMES } from '../../shared/types'
 import type { Theme } from '../../shared/types'
 
@@ -23,7 +24,8 @@ export function registerThemeHandlers(): void {
     writeAppSettings({ theme })
   })
 
-  // Forward OS-level theme changes to all renderer windows
+  // Forward OS-level theme changes to all renderer windows, and move every
+  // window's background onto the canvas of the palette chosen for the new mode.
   nativeTheme.on('updated', () => {
     const isDark = nativeTheme.shouldUseDarkColors
     BrowserWindow.getAllWindows().forEach((win) => {
@@ -31,5 +33,6 @@ export function registerThemeHandlers(): void {
         win.webContents.send('theme:systemChanged', isDark)
       }
     })
+    updateWindowBackgrounds()
   })
 }

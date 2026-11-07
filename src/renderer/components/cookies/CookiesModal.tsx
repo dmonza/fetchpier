@@ -277,7 +277,7 @@ export function CookiesModal({
                                   <Pencil className="h-3 w-3" />
                                 </button>
                                 <button
-                                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500"
+                                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-danger-text"
                                   onClick={() => {
                                     if (confirm(t('cookies.confirmDelete', { name: c.name }))) {
                                       remove(c.id).catch(console.error)
@@ -307,7 +307,7 @@ export function CookiesModal({
               variant="ghost"
               size="sm"
               onClick={() => setConfirmClearAll(true)}
-              className="mr-auto text-red-500"
+              className="mr-auto text-danger-text"
             >
               {t('cookies.clearAll')}
             </Button>

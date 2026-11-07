@@ -9,6 +9,7 @@ import { readFileSync } from 'fs'
 import { atomicWriteFileSync } from '@fetchpier/core/atomic-write'
 import type {
   ActivityPanelSettings,
+  AppearancePalettes,
   AppSettings,
   Theme,
   TlsScopeSettings,
@@ -124,9 +125,36 @@ export interface AppSettingsPatch {
   tls?: TlsScopeSettings
   /** Replace the activity-panel UI prefs wholesale. */
   activityPanel?: ActivityPanelSettings
+  /**
+   * Replace the palette preferences wholesale. Typed like `AppSettings`'s raw
+   * field; the appearance handler is the one writer and passes a normalized
+   * `AppearancePalettes`.
+   */
+  appearancePalettes?: AppearancePalettes | unknown
+}
+
+/**
+ * Like `writeAppSettings`, but a failed write throws instead of being logged.
+ * For changes whose failure the user must see (appearance changes surface it
+ * inline with a retry) rather than silently lose.
+ */
+export function writeAppSettingsStrict(partial: AppSettingsPatch): AppSettings {
+  const updated = mergePatch(partial)
+  atomicWriteFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2))
+  return updated
 }
 
 export function writeAppSettings(partial: AppSettingsPatch): AppSettings {
+  const updated = mergePatch(partial)
+  try {
+    atomicWriteFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2))
+  } catch (err) {
+    console.error('[appsettings] Failed to write:', err)
+  }
+  return updated
+}
+
+function mergePatch(partial: AppSettingsPatch): AppSettings {
   const current = readAppSettings()
   const nextActivityPanel: ActivityPanelSettings | undefined =
     partial.activityPanel !== undefined ? partial.activityPanel : current.activityPanel
@@ -137,11 +165,6 @@ export function writeAppSettings(partial: AppSettingsPatch): AppSettings {
     updates: { ...current.updates, ...(partial.updates ?? {}) },
     ...(partial.tls !== undefined ? { tls: partial.tls } : current.tls ? { tls: current.tls } : {}),
     ...(nextActivityPanel !== undefined ? { activityPanel: nextActivityPanel } : {})
-  }
-  try {
-    atomicWriteFileSync(SETTINGS_FILE, JSON.stringify(updated, null, 2))
-  } catch (err) {
-    console.error('[appsettings] Failed to write:', err)
   }
   return updated
 }

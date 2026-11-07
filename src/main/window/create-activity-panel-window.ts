@@ -1,8 +1,9 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { join } from 'path'
-import { RESOLVED_THEME_ARG, WINDOW_BACKGROUND } from '../../shared/app-shell'
+import { readAppSettings } from '../ipc/appsettings.ipc'
 import { setFocusedWindowKind } from '../menu/state'
+import { windowAppearance } from './window-appearance'
 
 const DEFAULT_SIZE = { width: 800, height: 500 }
 const MIN_SIZE = { width: 600, height: 300 }
@@ -14,7 +15,11 @@ export function createActivityPanelWindow(parent?: BrowserWindow): BrowserWindow
   // applied it before any window existed — so this resolves to the same theme
   // the main window is showing, never to the OS theme behind its back.
   const resolvedTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  const backgroundColor = WINDOW_BACKGROUND[resolvedTheme]
+  // Read now, not at launch: a palette chosen since then must be in force here.
+  const { backgroundColor, additionalArguments } = windowAppearance(
+    readAppSettings(),
+    resolvedTheme
+  )
 
   const win = new BrowserWindow({
     width: DEFAULT_SIZE.width,
@@ -32,8 +37,8 @@ export function createActivityPanelWindow(parent?: BrowserWindow): BrowserWindow
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // Same handover as the main window, so this one cannot open in a different
-      // theme from the window that spawned it.
-      additionalArguments: [`${RESOLVED_THEME_ARG}${resolvedTheme}`],
+      // theme or palette from the window that spawned it.
+      additionalArguments,
       // OS-level renderer sandbox (REQ-0060) — match the main window.
       sandbox: true,
       nodeIntegration: false,

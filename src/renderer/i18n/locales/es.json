@@ -659,10 +659,63 @@
     "title": "Configuración",
     "tabs": {
       "general": "General",
+      "appearance": "Apariencia",
       "proxy": "Proxy",
       "updates": "Actualizaciones",
       "certificates": "Certificados",
       "workspaceKeys": "Claves del workspace"
+    },
+    "appearance": {
+      "mode": {
+        "label": "Modo de apariencia",
+        "system": "Sistema",
+        "light": "Claro",
+        "dark": "Oscuro"
+      },
+      "colorThemes": "Temas de color",
+      "savedAsYouGo": "Los cambios se guardan a medida que los hacés.",
+      "previewNote": "Vista previa de {{mode}}. Fetchpier está en modo {{current}}; esta paleta se usa cuando {{mode}} está activo.",
+      "presets": {
+        "original": "Original",
+        "paper": "Papel",
+        "graphite": "Grafito",
+        "ocean": "Océano",
+        "forest": "Bosque",
+        "custom": "Personalizado"
+      },
+      "customHint": "Elegí Personalizado para ajustar una paleta, o partí de la seleccionada.",
+      "customize": "Personalizar {{name}}",
+      "controls": {
+        "hue": "Tono",
+        "intensity": "Intensidad",
+        "surfaceTint": "Tinte de superficies",
+        "brightness": "Brillo",
+        "darkness": "Oscuridad"
+      },
+      "valueText": {
+        "hue": "{{value}} grados, {{name}}",
+        "neutral": "{{value}}, gris neutro"
+      },
+      "hueNames": {
+        "pink": "rosa",
+        "red": "rojo",
+        "orange": "naranja",
+        "yellow": "amarillo",
+        "lime": "lima",
+        "green": "verde",
+        "teal": "verde azulado",
+        "cyan": "cian",
+        "blue": "azul",
+        "indigo": "índigo",
+        "violet": "violeta",
+        "purple": "púrpura"
+      },
+      "hueNoEffect": "Con Intensidad y Tinte de superficies en 0, el Tono no tiene efecto visible.",
+      "forcedColors": "Se están usando los colores de alto contraste del sistema, así que las paletas no se muestran.",
+      "saveError": "No se pudieron guardar los cambios de apariencia. Se aplican hasta que reinicies.",
+      "retry": "Reintentar",
+      "revert": "Revertir cambios",
+      "reverted": "Apariencia revertida a como estaba al abrir Configuración."
     },
     "zoom": {
       "label": "Zoom",

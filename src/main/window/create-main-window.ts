@@ -1,7 +1,7 @@
 import { BrowserWindow, BrowserWindowConstructorOptions, nativeTheme, screen } from 'electron'
 import { join } from 'path'
 import { readAppSettings, writeAppSettings } from '../ipc/appsettings.ipc'
-import { RESOLVED_THEME_ARG, WINDOW_BACKGROUND } from '../../shared/app-shell'
+import { windowAppearance } from './window-appearance'
 import type { WindowState } from '../../shared/types'
 
 const DEFAULT_SIZE = { width: 1200, height: 800 }
@@ -60,7 +60,9 @@ export function createMainWindow(): BrowserWindow {
   // startup still has to proceed rather than assign `undefined`.
   nativeTheme.themeSource = settings.theme ?? 'system'
   const resolvedTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  const backgroundColor = WINDOW_BACKGROUND[resolvedTheme]
+  // The stored palette decides the canvas too, and travels with the resolved
+  // theme to the preload, so the first frame is already in the user's palette.
+  const { backgroundColor, additionalArguments } = windowAppearance(settings, resolvedTheme)
 
   const win = new BrowserWindow({
     ...bounds,
@@ -74,11 +76,12 @@ export function createMainWindow(): BrowserWindow {
     ...platformOptions,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      // Hand the resolved theme to the renderer process instead of making it ask.
-      // The preload reads this at document start, ahead of the stylesheet, so the
-      // startup shell paints theme-correct without a round trip that would stall
-      // the renderer whenever this process is busy loading.
-      additionalArguments: [`${RESOLVED_THEME_ARG}${resolvedTheme}`],
+      // Hand the resolved theme and the palette to the renderer process instead
+      // of making it ask. The preload reads them at document start, ahead of the
+      // stylesheet, so the startup shell paints theme- and palette-correct
+      // without a round trip that would stall the renderer whenever this process
+      // is busy loading.
+      additionalArguments,
       // OS-level renderer sandbox (REQ-0060). The preload was audited to need only the
       // sandboxed-preload API surface; `test/e2e/sandbox.spec.ts` pins the setting on.
       sandbox: true,

@@ -2,7 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { RESOLVED_THEME_ARG } from '../shared/app-shell'
 import type { MenuItemId } from '../shared/menu-model'
 import { boundedWait, HANDLERS_READY_BOUND_MS } from '../shared/bounded-wait'
+import { decodePaletteArg } from '../shared/palette/launch-arg'
 import type {
+  AppearancePalettes,
+  AppearanceState,
   Theme,
   HttpRequest,
   HttpResponse,
@@ -80,8 +83,22 @@ const INITIAL_RESOLVED_THEME: 'light' | 'dark' =
     ? 'dark'
     : 'light'
 
+/**
+ * The palette overrides of both modes, handed over the same way and for the
+ * same reason as the theme. Decoding is strict — anything but known palette
+ * tokens with plain colour values drops the whole argument — so this can only
+ * ever carry appearance data. `null` for a mode means the built-in palette.
+ */
+const INITIAL_PALETTES = decodePaletteArg(process.argv)
+
 function markResolvedTheme(): void {
-  document.documentElement.classList.toggle('dark', INITIAL_RESOLVED_THEME === 'dark')
+  const root = document.documentElement
+  root.classList.toggle('dark', INITIAL_RESOLVED_THEME === 'dark')
+  // Inline custom properties beat both palette blocks of the stylesheet, so the
+  // startup shell — which reads the tokens — paints in the user's palette too.
+  const tokens = INITIAL_PALETTES[INITIAL_RESOLVED_THEME]
+  if (tokens)
+    for (const [name, value] of Object.entries(tokens)) root.style.setProperty(`--${name}`, value)
 }
 
 // `<html>` does not exist yet when this runs — measured, in every launch — so
@@ -159,6 +176,20 @@ const api = {
       const handler = (_: Electron.IpcRendererEvent, isDark: boolean): void => callback(isDark)
       ipcRenderer.on('theme:systemChanged', handler)
       return () => ipcRenderer.removeListener('theme:systemChanged', handler)
+    }
+  },
+
+  // ── Appearance (color palettes) ─────────────────────────────────────────
+  appearance: {
+    /** The palettes in force when this window was created, both modes. Synchronous, like the theme. */
+    initial: INITIAL_PALETTES,
+    get: (): Promise<AppearanceState> => invoke('appearance:get'),
+    set: (prefs: AppearancePalettes): Promise<AppearanceState> => invoke('appearance:set', prefs),
+    onChanged: (callback: (state: AppearanceState) => void): (() => void) => {
+      const handler = (_: Electron.IpcRendererEvent, state: AppearanceState): void =>
+        callback(state)
+      ipcRenderer.on('appearance:changed', handler)
+      return () => ipcRenderer.removeListener('appearance:changed', handler)
     }
   },
 

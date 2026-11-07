@@ -6,6 +6,53 @@ export type Theme = 'light' | 'dark' | 'system'
 /** The permitted `Theme` values, for validating what a hand-edited file holds. */
 export const THEMES: readonly Theme[] = ['light', 'dark', 'system']
 
+// ── Color palettes ─────────────────────────────────────────────────────────
+
+/** An appearance mode a palette belongs to — the resolved theme, never `system`. */
+export type PaletteMode = 'light' | 'dark'
+
+/**
+ * The four controls of a Custom palette, each an integer. `hue` 0–360 is in
+ * degrees of the perceptual colour space; `intensity` (accent chroma),
+ * `surfaceTint` (surface chroma, 0 = neutral greys) and `brightness` (toward the
+ * mode's extreme: lighter in Light, darker in Dark) are 0–100.
+ */
+export interface CustomPaletteParams {
+  hue: number
+  intensity: number
+  surfaceTint: number
+  brightness: number
+}
+
+/** One mode's palette choice. `selected` is `original`, a preset id of that mode, or `custom`. */
+export interface ModePalettePreference {
+  selected: string
+  /** The last Custom values; absent until the mode has been customized once. */
+  custom?: CustomPaletteParams
+}
+
+/** The `appearancePalettes` block of the app-global settings, normalized. */
+export interface AppearancePalettes {
+  schemaVersion: 1
+  light: ModePalettePreference
+  dark: ModePalettePreference
+}
+
+/** Token name (without the leading `--`) → CSS colour (`#rrggbb` or `rgba(…)`). */
+export type PaletteTokens = Record<string, string>
+
+/** The override map in force per mode; `null` means the built-in (Original) palette. */
+export interface ModePalettes {
+  light: PaletteTokens | null
+  dark: PaletteTokens | null
+}
+
+/** What the appearance operations return and broadcast. */
+export interface AppearanceState {
+  prefs: AppearancePalettes
+  palettes: ModePalettes
+}
+
 // ── Window ─────────────────────────────────────────────────────────────────
 export type WindowPlatform = 'win32' | 'darwin' | 'linux'
 
@@ -1499,6 +1546,13 @@ export interface AppSettings {
   tls?: TlsScopeSettings
   /** Persisted UI state for the activity panel. Optional — missing on first run, missing on old files. */
   activityPanel?: ActivityPanelSettings
+  /**
+   * The user's palette per appearance mode, as stored. Kept raw: consumers
+   * normalize it (`normalizeAppearancePalettes`), and reading never rewrites the
+   * file, so a value written by a newer version survives until the user changes
+   * the appearance. Absent ⇒ the built-in palette in both modes.
+   */
+  appearancePalettes?: unknown
 }
 
 // ── Activity Panel ─────────────────────────────────────────────────────────

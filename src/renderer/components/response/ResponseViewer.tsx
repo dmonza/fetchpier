@@ -371,7 +371,10 @@ export function ResponseViewer(): React.JSX.Element {
                 <span
                   className={cn(
                     'inline-flex h-4 min-w-[16px] items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none',
-                    tone === 'danger' ? 'bg-danger text-white' : 'bg-muted text-muted-foreground'
+                    // Destructive pair: white on the danger *fill* is below 4.5:1.
+                    tone === 'danger'
+                      ? 'bg-destructive text-destructive-foreground'
+                      : 'bg-muted text-muted-foreground'
                   )}
                 >
                   {badge}
@@ -453,7 +456,7 @@ export function ResponseViewer(): React.JSX.Element {
         {/* Error state (non-tests tab) */}
         {!isLoading && error && activeTab !== 'tests' && activeTab !== 'cookies' && (
           <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
-            <span className="text-xs font-medium text-red-500">{t('response.error')}</span>
+            <span className="text-xs font-medium text-danger-text">{t('response.error')}</span>
             <span className="text-xs text-muted-foreground">{error}</span>
           </div>
         )}

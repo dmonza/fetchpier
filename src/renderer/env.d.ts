@@ -50,7 +50,10 @@ import type {
   UnresponsiveCloseStrings,
   MenuLabels,
   RendererMenuState,
-  LicenseText
+  LicenseText,
+  AppearancePalettes,
+  AppearanceState,
+  ModePalettes
 } from '../shared/types'
 import type { MenuItemId } from '../shared/menu-model'
 
@@ -75,6 +78,14 @@ declare global {
         getSystemIsDark: () => Promise<boolean>
         setNativeTheme: (theme: Theme) => Promise<void>
         onSystemChanged: (callback: (isDark: boolean) => void) => () => void
+      }
+      appearance: {
+        /** Both modes' palette overrides in force when this window was created (`null` = built-in). */
+        initial: ModePalettes
+        get: () => Promise<AppearanceState>
+        /** Persists and broadcasts; rejects when the settings file cannot be written. */
+        set: (prefs: AppearancePalettes) => Promise<AppearanceState>
+        onChanged: (callback: (state: AppearanceState) => void) => () => void
       }
       workspace: {
         open: (strings: WorkspaceOpenStrings) => Promise<string | null>

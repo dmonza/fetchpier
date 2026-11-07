@@ -12,13 +12,29 @@ const handlers = new Map<string, Handler>()
 const syncHandlers = new Map<string, Handler>()
 const written: Array<{ theme?: Theme }> = []
 
+const nativeThemeListeners = new Map<string, () => void>()
+const sentToWindow: Array<[string, unknown]> = []
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
     on: (channel: string, handler: Handler) => syncHandlers.set(channel, handler)
   },
-  nativeTheme: { themeSource: 'system' as Theme, shouldUseDarkColors: false, on: vi.fn() },
-  BrowserWindow: { getAllWindows: () => [] }
+  nativeTheme: {
+    themeSource: 'system' as Theme,
+    shouldUseDarkColors: false,
+    on: (event: string, listener: () => void) => nativeThemeListeners.set(event, listener)
+  },
+  BrowserWindow: {
+    getAllWindows: () => [
+      {
+        isDestroyed: () => false,
+        webContents: {
+          send: (channel: string, payload: unknown) => sentToWindow.push([channel, payload])
+        }
+      }
+    ]
+  }
 }))
 
 vi.mock('./appsettings.ipc', () => ({
@@ -27,6 +43,9 @@ vi.mock('./appsettings.ipc', () => ({
     return {}
   }
 }))
+
+const updateWindowBackgrounds = vi.fn()
+vi.mock('../window/window-appearance', () => ({ updateWindowBackgrounds }))
 
 const { nativeTheme } = await import('electron')
 const { registerThemeHandlers } = await import('./theme.ipc')
@@ -75,5 +94,19 @@ describe('theme:setNativeTheme', () => {
 
     expect(nativeTheme.themeSource).toBe('system')
     expect(written).toHaveLength(0)
+  })
+})
+
+// Requirement *Dynamic color themes* §6.8: when the resolved mode changes, every
+// window's background follows the canvas of the palette chosen for the new mode
+// (CA-28, main side) — and the renderer is told, as before.
+describe('platform theme updates', () => {
+  it('notifies the windows and moves their backgrounds onto the new mode', () => {
+    sentToWindow.length = 0
+    updateWindowBackgrounds.mockClear()
+    nativeThemeListeners.get('updated')!()
+
+    expect(sentToWindow).toEqual([['theme:systemChanged', false]])
+    expect(updateWindowBackgrounds).toHaveBeenCalledTimes(1)
   })
 })

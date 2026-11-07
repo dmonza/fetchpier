@@ -659,10 +659,63 @@
     "title": "Settings",
     "tabs": {
       "general": "General",
+      "appearance": "Appearance",
       "proxy": "Proxy",
       "updates": "Updates",
       "certificates": "Certificates",
       "workspaceKeys": "Workspace keys"
+    },
+    "appearance": {
+      "mode": {
+        "label": "Appearance mode",
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark"
+      },
+      "colorThemes": "Color themes",
+      "savedAsYouGo": "Changes are saved as you go.",
+      "previewNote": "Previewing {{mode}}. Fetchpier is in {{current}} mode; this palette applies when {{mode}} is on.",
+      "presets": {
+        "original": "Original",
+        "paper": "Paper",
+        "graphite": "Graphite",
+        "ocean": "Ocean",
+        "forest": "Forest",
+        "custom": "Custom"
+      },
+      "customHint": "Choose Custom to fine-tune a palette, or start from the selected one.",
+      "customize": "Customize {{name}}",
+      "controls": {
+        "hue": "Hue",
+        "intensity": "Intensity",
+        "surfaceTint": "Surface tint",
+        "brightness": "Brightness",
+        "darkness": "Darkness"
+      },
+      "valueText": {
+        "hue": "{{value}} degrees, {{name}}",
+        "neutral": "{{value}}, neutral grey"
+      },
+      "hueNames": {
+        "pink": "pink",
+        "red": "red",
+        "orange": "orange",
+        "yellow": "yellow",
+        "lime": "lime",
+        "green": "green",
+        "teal": "teal",
+        "cyan": "cyan",
+        "blue": "blue",
+        "indigo": "indigo",
+        "violet": "violet",
+        "purple": "purple"
+      },
+      "hueNoEffect": "With Intensity and Surface tint at 0, Hue has no visible effect.",
+      "forcedColors": "Your system's high-contrast colors are in use, so palettes are not shown.",
+      "saveError": "Couldn't save your appearance changes. They apply until you restart.",
+      "retry": "Retry",
+      "revert": "Revert changes",
+      "reverted": "Appearance reverted to how it was when Settings opened."
     },
     "zoom": {
       "label": "Zoom",

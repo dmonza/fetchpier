@@ -31,6 +31,15 @@ export const WINDOW_BACKGROUND = {
 export const RESOLVED_THEME_ARG = '--fetchpier-resolved-theme='
 
 /**
+ * Prefix of the process argument that carries the palette overrides of both
+ * modes to a renderer, for the same reason as `RESOLVED_THEME_ARG`: the window
+ * is constructed in the palette's canvas colour, and the startup shell has to
+ * paint in the same palette before any application code runs. Encoded and
+ * validated by `src/shared/palette/launch-arg.ts`.
+ */
+export const PALETTE_ARG = '--fetchpier-palette='
+
+/**
  * The launch geometry of the application layout. The shell reproduces it so
  * nothing already on screen moves when the interface mounts.
  *

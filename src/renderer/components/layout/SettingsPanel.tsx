@@ -1,17 +1,24 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy } from 'react'
 import { Settings, Minus, Plus, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/utils'
 import { useDisplayStore } from '../../stores/display'
 import { useAppSettingsStore } from '../../stores/appSettings'
+import { useAppearanceStore } from '../../stores/appearance'
+import { useThemeStore } from '../../stores/theme'
 import { OPEN_SETTINGS_EVENT } from '../../lib/events'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
+import { LazyBoundary } from '../ui/LazyBoundary'
 import { CertificatesPanel } from '../settings/CertificatesPanel'
 import { WorkspaceKeysPanel } from '../settings/WorkspaceKeysPanel'
 import { VariableHighlightInput } from '../ui/VariableHighlightInput'
 import type { ProxyConfig } from '../../../shared/types'
 
-type Tab = 'general' | 'proxy' | 'updates' | 'certificates' | 'workspaceKeys'
+// The panel carries the palette generator; loading it on demand keeps the
+// generator out of the interface's startup bundle.
+const AppearancePanel = lazy(() => import('../settings/AppearancePanel'))
+
+type Tab = 'general' | 'appearance' | 'proxy' | 'updates' | 'certificates' | 'workspaceKeys'
 
 const MIN_INTERVAL_DAYS = 1
 const MAX_INTERVAL_DAYS = 365
@@ -304,8 +311,30 @@ function SettingsModal({ onClose }: { onClose: () => void }): React.JSX.Element 
     }
   }, [isLoaded, loadUpdates])
 
+  // The appearance as it was when Settings opened, for *Revert changes*. When
+  // Settings closes, any pending change is saved and the snapshot dropped.
+  useEffect(() => {
+    useAppearanceStore.getState().beginSession(useThemeStore.getState().theme)
+    return () => {
+      useThemeStore.getState().setPreviewTheme(null)
+      void useAppearanceStore.getState().endSession()
+    }
+  }, [])
+
+  const onAppearance = activeTab === 'appearance'
+
+  const selectTab = (id: Tab): void => {
+    if (id !== 'appearance') {
+      // Leaving Appearance ends any preview and saves a pending change.
+      useThemeStore.getState().setPreviewTheme(null)
+      void useAppearanceStore.getState().flush()
+    }
+    setActiveTab(id)
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'general', label: t('settings.tabs.general') },
+    { id: 'appearance', label: t('settings.tabs.appearance') },
     { id: 'proxy', label: t('settings.tabs.proxy') },
     { id: 'updates', label: t('settings.tabs.updates') },
     { id: 'certificates', label: t('settings.tabs.certificates') },
@@ -319,7 +348,26 @@ function SettingsModal({ onClose }: { onClose: () => void }): React.JSX.Element 
         if (!open) onClose()
       }}
     >
-      <DialogContent className="max-w-[36rem] gap-0 p-0">
+      <DialogContent
+        className={cn(
+          'max-w-[36rem] gap-0 p-0',
+          // The interface behind is what the user is judging: no tint over it, and
+          // a stronger edge so the dialog still stands apart from it.
+          onAppearance && 'border-border-strong shadow-soft-lg'
+        )}
+        overlayClassName={onAppearance ? 'bg-transparent' : undefined}
+        onInteractOutside={(e) => {
+          // A click on the app means "let me look", not "dismiss", on this tab.
+          if (onAppearance) e.preventDefault()
+        }}
+        onEscapeKeyDown={(e) => {
+          // Escape during a drag puts the control back and keeps Settings open.
+          if (useAppearanceStore.getState().dragging) {
+            e.preventDefault()
+            useAppearanceStore.getState().cancelDrag()
+          }
+        }}
+      >
         <DialogHeader className="border-b border-border px-4 py-3">
           <DialogTitle>{t('settings.title')}</DialogTitle>
         </DialogHeader>
@@ -330,7 +378,7 @@ function SettingsModal({ onClose }: { onClose: () => void }): React.JSX.Element 
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => selectTab(tab.id)}
               className={cn(
                 'mr-4 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
                 activeTab === tab.id
@@ -346,6 +394,11 @@ function SettingsModal({ onClose }: { onClose: () => void }): React.JSX.Element 
         {/* Tab content */}
         <div className="min-h-[20rem] max-h-[36rem] overflow-y-auto">
           {activeTab === 'general' && <GeneralTab />}
+          {activeTab === 'appearance' && (
+            <LazyBoundary>
+              <AppearancePanel />
+            </LazyBoundary>
+          )}
           {activeTab === 'proxy' && <ProxyTab />}
           {activeTab === 'updates' && <UpdatesTab />}
           {activeTab === 'certificates' && <CertificatesPanel scope="app" />}

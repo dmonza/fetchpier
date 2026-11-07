@@ -226,7 +226,7 @@ export function BinaryBodyPicker({
       </div>
       {missing && (
         <div
-          className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+          className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-text"
           role="alert"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

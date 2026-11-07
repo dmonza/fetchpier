@@ -114,6 +114,7 @@ installIpcSenderGuard(ipcMain, isAllowedRendererUrl)
 async function loadDeferredHandlers(): Promise<void> {
   const [
     theme,
+    appearance,
     locale,
     workspace,
     filesystem,
@@ -135,6 +136,7 @@ async function loadDeferredHandlers(): Promise<void> {
     binary
   ] = await Promise.all([
     import('./ipc/theme.ipc'),
+    import('./ipc/appearance.ipc'),
     import('./ipc/locale.ipc'),
     import('./ipc/workspace.ipc'),
     import('./ipc/filesystem.ipc'),
@@ -157,6 +159,7 @@ async function loadDeferredHandlers(): Promise<void> {
   ])
 
   theme.registerThemeHandlers()
+  appearance.registerAppearanceHandlers()
   locale.registerLocaleHandlers()
   workspace.registerWorkspaceHandlers()
   filesystem.registerFilesystemHandlers()

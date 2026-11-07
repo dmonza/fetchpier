@@ -139,7 +139,7 @@ export function CookieForm({ cookie, onClose }: Props): React.JSX.Element {
             <span className="text-xs">{t('cookies.secure')}</span>
             <Switch checked={secure} onCheckedChange={setSecure} />
           </div>
-          {error && <div className="text-xs text-red-500">{error}</div>}
+          {error && <div className="text-xs text-danger-text">{error}</div>}
           <p className="border-t border-border pt-2 text-xs text-muted-foreground">
             {t('cookies.form.inertAttributes')}
           </p>
@@ -171,7 +171,7 @@ function Field({
     <label className="flex flex-col gap-1 text-xs">
       <span className="text-muted-foreground">
         {label}
-        {required && <span className="text-red-500"> *</span>}
+        {required && <span className="text-danger-text"> *</span>}
       </span>
       {children}
     </label>

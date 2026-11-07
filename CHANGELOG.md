@@ -9,6 +9,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Colour palettes, separately for Light and Dark.** Settings → Appearance
+  offers Original, the presets Paper, Graphite, Ocean and Forest, and a Custom
+  palette generated from four controls — Hue, Intensity, Surface tint and
+  Brightness/Darkness — that always keeps text, borders and focus indicators
+  legible. Changes apply to the whole window as you make them and are saved as
+  you go; **Revert changes** returns to how things were when Settings opened.
+  The palette is in force from the first frame of every window, and a System
+  mode swaps between your Light and Dark palettes as the operating system does.
+  The appearance mode can now also be chosen in Settings.
+
 - **`--tls-config <file>` (or `FETCHPIER_TLS_CONFIG`) for certificates you do not
   want to share.** The command line can use a client certificate or a CA that
   belongs to the machine or the pipeline instead of the workspace: name a JSON
@@ -17,6 +27,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   certificate matches the same host just as specifically, the one given for the
   run is used. Certificates kept in the workspace keep working as before, and are
   shared with the workspace.
+
+### Changed
+
+- **The built-in palettes now meet accessibility contrast minimums.** Input and
+  control borders, some status and HTTP-method colours, `{{variable}}`
+  highlighting, primary-button text and error and warning messages were below
+  the minimum on some surfaces; each was adjusted only as much as needed,
+  keeping its hue. Control borders are the most visible change in Dark. Dark
+  also gains a real depth step between the app background and the sidebar and
+  cards, and clearly distinct secondary, muted and soft text. The selected
+  folder in the collection tree no longer looks like a hovered row, the focus
+  ring stays visible on every surface, and scrollbars are easier to see.
 
 ### Security
 

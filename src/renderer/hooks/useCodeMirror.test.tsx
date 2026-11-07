@@ -20,7 +20,10 @@ vi.mock('../stores/theme', () => ({
     selector({ resolvedTheme: 'light' })
 }))
 
-import { useCodeMirror } from './useCodeMirror'
+import { githubDark, githubLight } from '@uiw/codemirror-theme-github'
+import { resolveThemeExtension, useCodeMirror } from './useCodeMirror'
+import { paletteChrome } from './editorPaletteTheme'
+import { generatePalette } from '../../shared/palette/generate'
 
 function Harness({
   value,
@@ -115,5 +118,27 @@ describe('useCodeMirror — external value sync', () => {
     expect(view.state.doc.toString()).toBe('barZ')
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith('barZ')
+  })
+})
+
+// Requirement *Dynamic color themes* CA-32: with Original the editor is exactly
+// as before; with a palette, the palette's chrome and syntax come first.
+describe('resolveThemeExtension — palettes', () => {
+  it('returns the family unchanged when the Original palette is in force', () => {
+    expect(resolveThemeExtension('github', 'light')).toBe(githubLight)
+    expect(resolveThemeExtension('github', 'dark', null)).toBe(githubDark)
+  })
+
+  it('puts the palette chrome ahead of the family when a palette is in force', () => {
+    const palette = generatePalette('light', {
+      hue: 150,
+      intensity: 60,
+      surfaceTint: 60,
+      brightness: 80
+    })
+    const ext = resolveThemeExtension('github', 'light', palette) as unknown[]
+    expect(Array.isArray(ext)).toBe(true)
+    expect((ext[0] as unknown[])[0]).toBe(paletteChrome)
+    expect(ext[ext.length - 1]).toBe(githubLight)
   })
 })

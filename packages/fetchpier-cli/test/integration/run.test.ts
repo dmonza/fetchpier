@@ -329,7 +329,15 @@ describe('executeRun — transport failures (REQ-0111)', () => {
 
   // CLI-082 — an interrupt in flight ends the run without a fatal error.
   it('ends cleanly when the run is interrupted mid-request', async () => {
+    // Interrupt once the request is genuinely in flight — when the server has
+    // received it — not after a fixed delay: under a loaded machine a fixed
+    // delay can fire before the request has left, which tests something else.
+    let arrived!: () => void
+    const inFlight = new Promise<void>((resolve) => {
+      arrived = resolve
+    })
     await server.forGet('/hang').thenCallback(async () => {
+      arrived()
       await new Promise((r) => setTimeout(r, 800))
       return { statusCode: 200, body: 'late' }
     })
@@ -340,7 +348,8 @@ describe('executeRun — transport failures (REQ-0111)', () => {
       { paths: ['requests/hang.http'], workspace: ws, signal: controller.signal },
       deps(ws)
     )
-    setTimeout(() => controller.abort(), 50)
+    await inFlight
+    controller.abort()
     const summary = await pending
 
     expect(summary.summary.requests.failed).toBe(1)

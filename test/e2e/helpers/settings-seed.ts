@@ -32,6 +32,11 @@ export interface SeedSettingsOptions {
    * own theme, which is the case no runner can otherwise produce.
    */
   theme: Theme
+  /**
+   * The palette preferences, seeded only when given — like the field itself,
+   * which is optional and never materialized by the app on its own.
+   */
+  appearancePalettes?: unknown
 }
 
 /**
@@ -54,5 +59,7 @@ export function buildSeededSettings(options: SeedSettingsOptions): SeededSetting
 
   const seeded: SeededSettings = { ...base }
   if (options.lastVersion === null) delete seeded.lastVersion
+  if (options.appearancePalettes !== undefined)
+    seeded.appearancePalettes = options.appearancePalettes
   return seeded
 }

@@ -10,6 +10,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WINDOW_BACKGROUND } from '../../shared/app-shell'
+import { generatePalette } from '../../shared/palette/generate'
+import { decodePaletteArg } from '../../shared/palette/launch-arg'
+import { findPreset } from '../../shared/palette/presets'
 import type { AppSettings, Theme } from '../../shared/types'
 
 /** Ordered log of what the factory did, so "before" can be asserted at all. */
@@ -113,5 +116,50 @@ describe('createMainWindow — theme resolution', () => {
 
     expect(nativeThemeMock.themeSource).toBe('system')
     expect(constructorOptions.backgroundColor).toBe(WINDOW_BACKGROUND.dark)
+  })
+})
+
+// Requirement *Dynamic color themes* §6.8: the stored palette is in force from
+// the first frame — the window is constructed in its canvas colour, and the
+// renderer receives both modes' overrides at launch (CA-01, CA-27).
+describe('createMainWindow — palette', () => {
+  const launchArgs = (): string[] =>
+    ((constructorOptions.webPreferences as { additionalArguments?: string[] })
+      ?.additionalArguments ?? []) as string[]
+
+  it('keeps the Original canvas and hands no overrides when no palette is stored', () => {
+    settings = { theme: 'dark' }
+    createMainWindow()
+
+    expect(constructorOptions.backgroundColor).toBe(WINDOW_BACKGROUND.dark)
+    expect(decodePaletteArg(launchArgs())).toEqual({ light: null, dark: null })
+  })
+
+  it('constructs the window in the stored palette of the resolved mode', () => {
+    const custom = { hue: 150, intensity: 70, surfaceTint: 40, brightness: 70 }
+    settings = {
+      theme: 'dark',
+      appearancePalettes: {
+        schemaVersion: 1,
+        light: { selected: 'ocean' },
+        dark: { selected: 'custom', custom }
+      }
+    }
+    createMainWindow()
+
+    const dark = generatePalette('dark', custom)
+    expect(constructorOptions.backgroundColor).toBe(dark.canvas)
+    expect(dark.canvas).not.toBe(WINDOW_BACKGROUND.dark)
+    const handed = decodePaletteArg(launchArgs())
+    expect(handed.dark).toEqual(dark)
+    expect(handed.light).toEqual(generatePalette('light', findPreset('light', 'ocean')!.params))
+  })
+
+  it('still starts when the stored palette block is malformed', () => {
+    settings = { theme: 'light', appearancePalettes: 'ocean' }
+    createMainWindow()
+
+    expect(constructorOptions.backgroundColor).toBe(WINDOW_BACKGROUND.light)
+    expect(decodePaletteArg(launchArgs())).toEqual({ light: null, dark: null })
   })
 })

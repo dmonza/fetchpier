@@ -18,6 +18,7 @@ import {
 import { linter, lintGutter } from '@codemirror/lint'
 import { useCodeMirrorThemeStore } from '../stores/codemirror-theme'
 import { useThemeStore } from '../stores/theme'
+import { useAppearanceStore } from '../stores/appearance'
 import { resolveThemeExtension, ExternalSync } from './useCodeMirror'
 import { getTsEnvironmentFor, SCRIPT_PATH, type ScriptPhase } from './tsLanguageService'
 import {
@@ -111,7 +112,9 @@ export function useScriptEditor(
   const { value, onChange, phase, readOnly = false } = options
 
   const themeFamily = useCodeMirrorThemeStore((s) => s.themeFamily)
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme)
+  // The displayed mode (a preview while one is shown) and its palette in force.
+  const resolvedTheme = useThemeStore((s) => s.previewTheme ?? s.resolvedTheme)
+  const palette = useAppearanceStore((s) => s.palettes[resolvedTheme])
 
   const onChangeRef = useRef(onChange)
   useEffect(() => {
@@ -155,7 +158,7 @@ export function useScriptEditor(
         autocompletion()
       ]),
       BASE_THEME,
-      themeCompartment.current.of(resolveThemeExtension(themeFamily, resolvedTheme)),
+      themeCompartment.current.of(resolveThemeExtension(themeFamily, resolvedTheme, palette)),
       updateListener,
       EditorState.readOnly.of(readOnly),
       EditorView.lineWrapping
@@ -275,10 +278,10 @@ export function useScriptEditor(
     if (!view) return
     view.dispatch({
       effects: themeCompartment.current.reconfigure(
-        resolveThemeExtension(themeFamily, resolvedTheme)
+        resolveThemeExtension(themeFamily, resolvedTheme, palette)
       )
     })
-  }, [themeFamily, resolvedTheme])
+  }, [themeFamily, resolvedTheme, palette])
 
   return { loading, error }
 }

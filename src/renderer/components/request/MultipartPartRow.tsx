@@ -205,7 +205,7 @@ export function MultipartPartRow({
     <>
       {part.kind === 'file' && missing && (
         <div
-          className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+          className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-warning-text"
           role="alert"
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />

@@ -157,12 +157,12 @@ export function TestsTab({
       )}
 
       {summary.errors.length > 0 && (
-        <div className="space-y-2 border-b border-border bg-red-500/5 p-3">
+        <div className="space-y-2 border-b border-border bg-danger/5 p-3">
           {summary.errors.map((e, i) => (
             <div key={i} className="flex items-start gap-2 text-xs">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-danger-text" />
               <div className="flex-1">
-                <div className="font-medium text-red-500">
+                <div className="font-medium text-danger-text">
                   {t('response.tests.errorIn', { phase: e.phase })}
                 </div>
                 <div className="mt-0.5 break-all font-mono text-muted-foreground">{e.message}</div>
@@ -222,13 +222,16 @@ export function TestsTab({
               {summary.tests.map((tr, i) => (
                 <li key={i} className="flex items-start gap-2 px-3 py-1.5 text-xs">
                   {tr.passed ? (
-                    <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                    <Check className="h-3.5 w-3.5 shrink-0 text-success-text" />
                   ) : (
-                    <X className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                    <X className="h-3.5 w-3.5 shrink-0 text-danger-text" />
                   )}
                   <div className="flex-1">
                     <div
-                      className={cn('font-medium', tr.passed ? 'text-foreground' : 'text-red-500')}
+                      className={cn(
+                        'font-medium',
+                        tr.passed ? 'text-foreground' : 'text-danger-text'
+                      )}
                     >
                       {tr.name}
                     </div>
@@ -271,8 +274,8 @@ export function TestsTab({
                   key={i}
                   className={cn(
                     'flex items-start gap-2 px-3 py-1',
-                    log.level === 'warn' && 'text-amber-500',
-                    log.level === 'error' && 'text-red-500'
+                    log.level === 'warn' && 'text-warning-text',
+                    log.level === 'error' && 'text-danger-text'
                   )}
                 >
                   <span className="shrink-0 text-muted-foreground">

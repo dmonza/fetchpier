@@ -30,18 +30,23 @@ vi.mock('fs', () => ({
 
 // The narrow subpath, mirroring the module under test: pulling the barrel here
 // would also pull the request domain, which is exactly what production avoids.
+let failWrites = false
+
 vi.mock('@fetchpier/core/atomic-write', () => ({
   atomicWriteFileSync: (path: string, contents: string) => {
+    if (failWrites) throw new Error('EACCES: permission denied')
     writes.push({ path, contents })
     fileContents = contents
   }
 }))
 
-const { readAppSettings, writeAppSettings } = await import('./appsettings.ipc')
+const { readAppSettings, writeAppSettings, writeAppSettingsStrict } =
+  await import('./appsettings.ipc')
 
 beforeEach(() => {
   writes.length = 0
   fileContents = null
+  failWrites = false
 })
 
 function seed(settings: Record<string, unknown>): void {
@@ -177,5 +182,65 @@ describe('hideSecretsInResponses', () => {
     expect(writeAppSettings({ hideSecretsInResponses: false }).hideSecretsInResponses).toBe(false)
     expect(readAppSettings().hideSecretsInResponses).toBe(false)
     expect(writeAppSettings({ zoomFactor: 1.5 }).hideSecretsInResponses).toBe(false)
+  })
+})
+
+// Requirement *Dynamic color themes* §5.3: the block is kept raw (normalized by
+// its consumers) so reading never rewrites the file, and a write replaces the
+// block as a whole while preserving every other field (CA-31).
+describe('appearancePalettes', () => {
+  const block = {
+    schemaVersion: 1,
+    light: { selected: 'ocean' },
+    dark: {
+      selected: 'custom',
+      custom: { hue: 150, intensity: 70, surfaceTint: 0, brightness: 55 }
+    }
+  }
+
+  it('is absent on a fresh install', () => {
+    expect(readAppSettings().appearancePalettes).toBeUndefined()
+  })
+
+  it('reads back exactly what the file holds, unknown versions included, without rewriting it', () => {
+    const future = { schemaVersion: 2, light: { selected: 'aurora' } }
+    seed({ zoomFactor: 1, appearancePalettes: future })
+    expect(readAppSettings().appearancePalettes).toEqual(future)
+    expect(writes).toHaveLength(0)
+  })
+
+  it('survives a write of another field', () => {
+    seed({ appearancePalettes: block })
+    writeAppSettings({ zoomFactor: 1.25 })
+    expect(JSON.parse(fileContents!).appearancePalettes).toEqual(block)
+  })
+
+  it('is replaced as a whole and leaves the other fields untouched', () => {
+    seed({ zoomFactor: 1.5, theme: 'dark', appearancePalettes: block })
+    const next = {
+      schemaVersion: 1 as const,
+      light: { selected: 'original' },
+      dark: { selected: 'forest' }
+    }
+    writeAppSettingsStrict({ appearancePalettes: next })
+    const written = JSON.parse(fileContents!)
+    expect(written.appearancePalettes).toEqual(next)
+    expect(written.zoomFactor).toBe(1.5)
+    expect(written.theme).toBe('dark')
+  })
+})
+
+describe('writeAppSettingsStrict', () => {
+  it('reports a failed write instead of swallowing it', () => {
+    seed({ zoomFactor: 1 })
+    failWrites = true
+    expect(() => writeAppSettingsStrict({ zoomFactor: 2 })).toThrow(/permission denied/)
+    expect(JSON.parse(fileContents!).zoomFactor).toBe(1)
+  })
+
+  it('leaves the lenient writer lenient', () => {
+    seed({ zoomFactor: 1 })
+    failWrites = true
+    expect(() => writeAppSettings({ zoomFactor: 2 })).not.toThrow()
   })
 })

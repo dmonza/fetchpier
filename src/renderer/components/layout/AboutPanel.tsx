@@ -123,8 +123,8 @@ export function AboutDialog(): React.JSX.Element {
             {IS_PUBLIC_BETA && (
               <span
                 className={cn(
-                  'inline-flex items-center rounded-full border border-amber-500/50 bg-amber-500/10',
-                  'px-2.5 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300'
+                  'inline-flex items-center rounded-full border border-warning/50 bg-warning/10',
+                  'px-2.5 py-0.5 text-[11px] font-medium text-warning-text'
                 )}
               >
                 {t('about.publicBeta.badge')}

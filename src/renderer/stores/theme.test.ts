@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyPlatformTheme, resolvePlatformTheme } from '../lib/platform-theme'
-import { useThemeStore } from './theme'
+import { selectDisplayedTheme, useThemeStore } from './theme'
 
 const setNativeTheme = vi.fn()
 let initialResolved: 'light' | 'dark' = 'light'
@@ -72,5 +72,34 @@ describe('useThemeStore', () => {
 
     expect(useThemeStore.getState().theme).toBe('dark')
     expect(setNativeTheme).not.toHaveBeenCalled()
+  })
+})
+
+// Requirement *Dynamic color themes* §6.6: previewing the mode that is not on
+// screen changes only what is displayed — never the preference, never main.
+describe('mode preview', () => {
+  it('displays the previewed mode without touching the preference or main', () => {
+    useThemeStore.setState({ theme: 'light', resolvedTheme: 'light', previewTheme: null })
+    useThemeStore.getState().setPreviewTheme('dark')
+
+    expect(selectDisplayedTheme(useThemeStore.getState())).toBe('dark')
+    expect(useThemeStore.getState().theme).toBe('light')
+    expect(useThemeStore.getState().resolvedTheme).toBe('light')
+    expect(setNativeTheme).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the resolved mode when the preview ends', () => {
+    useThemeStore.setState({ resolvedTheme: 'light', previewTheme: 'dark' })
+    useThemeStore.getState().setPreviewTheme(null)
+    expect(selectDisplayedTheme(useThemeStore.getState())).toBe('light')
+  })
+
+  it('holds the preview while the platform changes mode underneath it', () => {
+    useThemeStore.setState({ resolvedTheme: 'light', previewTheme: 'dark' })
+    useThemeStore.getState().setResolvedTheme('dark')
+    useThemeStore.getState().setResolvedTheme('light')
+    expect(selectDisplayedTheme(useThemeStore.getState())).toBe('dark')
+    useThemeStore.getState().setPreviewTheme(null)
+    expect(selectDisplayedTheme(useThemeStore.getState())).toBe('light')
   })
 })

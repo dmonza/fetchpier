@@ -14,7 +14,10 @@ import { dracula } from '@uiw/codemirror-theme-dracula'
 import { useCodeMirrorThemeStore } from '../stores/codemirror-theme'
 import type { CodeMirrorThemeFamily } from '../stores/codemirror-theme'
 import { useThemeStore } from '../stores/theme'
+import { useAppearanceStore } from '../stores/appearance'
 import { variableEditorExtensions } from './variableEditorExtension'
+import { paletteEditorExtension } from './editorPaletteTheme'
+import type { PaletteTokens } from '../../shared/types'
 
 export type CodeMirrorLanguage = 'json' | 'html' | 'xml' | 'javascript' | 'text'
 
@@ -54,7 +57,21 @@ const DEFAULT_COLORS: Extension = [
 
 // ── Theme resolver — picks the right variant based on resolved light/dark ────
 
+/**
+ * The editor's colours for `family` in `resolvedTheme`. With a `palette` other
+ * than Original, the palette's chrome and contrast-adjusted syntax come first
+ * (higher precedence); with `null` (Original) the family is returned as is.
+ */
 export function resolveThemeExtension(
+  family: CodeMirrorThemeFamily,
+  resolvedTheme: 'light' | 'dark',
+  palette: PaletteTokens | null = null
+): Extension {
+  const base = familyExtension(family, resolvedTheme)
+  return palette ? [paletteEditorExtension(family, resolvedTheme, palette), base] : base
+}
+
+function familyExtension(
   family: CodeMirrorThemeFamily,
   resolvedTheme: 'light' | 'dark'
 ): Extension {
@@ -101,7 +118,9 @@ export function useCodeMirror(
   const { value, language = 'text', onChange, readOnly = false, variables } = options
 
   const themeFamily = useCodeMirrorThemeStore((s) => s.themeFamily)
-  const resolvedTheme = useThemeStore((s) => s.resolvedTheme)
+  // The displayed mode (a preview while one is shown) and its palette in force.
+  const resolvedTheme = useThemeStore((s) => s.previewTheme ?? s.resolvedTheme)
+  const palette = useAppearanceStore((s) => s.palettes[resolvedTheme])
 
   const onChangeRef = useRef(onChange)
   useEffect(() => {
@@ -154,7 +173,7 @@ export function useCodeMirror(
         // being clipped or hidden behind the response panel.
         tooltips({ position: 'fixed' }),
         BASE_THEME,
-        themeCompartment.current.of(resolveThemeExtension(themeFamily, resolvedTheme)),
+        themeCompartment.current.of(resolveThemeExtension(themeFamily, resolvedTheme, palette)),
         updateListener,
         EditorState.readOnly.of(readOnly),
         EditorView.lineWrapping
@@ -185,16 +204,16 @@ export function useCodeMirror(
     })
   }, [value])
 
-  // Reconfigure theme when family or resolved light/dark mode changes
+  // Reconfigure theme when family, displayed light/dark mode or palette changes
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
     view.dispatch({
       effects: themeCompartment.current.reconfigure(
-        resolveThemeExtension(themeFamily, resolvedTheme)
+        resolveThemeExtension(themeFamily, resolvedTheme, palette)
       )
     })
-  }, [themeFamily, resolvedTheme])
+  }, [themeFamily, resolvedTheme, palette])
 
   // Reconfigure the variable editing behavior when the active environment's
   // variables change (env switch or variable edit), without remounting.

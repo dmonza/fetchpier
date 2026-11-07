@@ -1,10 +1,14 @@
 import { useEffect } from 'react'
-import { useThemeStore } from '../stores/theme'
+import { selectDisplayedTheme, useThemeStore } from '../stores/theme'
+import { useAppearanceStore } from '../stores/appearance'
 import {
-  applyPlatformTheme,
   applyResolvedTheme,
-  onPlatformThemeChange
+  onPlatformThemeChange,
+  resolvePlatformTheme,
+  type ResolvedTheme
 } from '../lib/platform-theme'
+import { createFrameApplier } from '../lib/palette-dom'
+import type { PaletteTokens } from '../../shared/types'
 
 interface ThemeProviderProps {
   children: React.ReactNode
@@ -20,9 +24,46 @@ export function ThemeProvider({ children }: ThemeProviderProps): React.JSX.Eleme
   // preference is `system` as well as the user picking a different theme.
   // The first application happens at the entry point, before React renders.
   useEffect(() => {
-    setResolvedTheme(applyPlatformTheme())
-    return onPlatformThemeChange((resolved) => setResolvedTheme(applyResolvedTheme(resolved)))
+    setResolvedTheme(resolvePlatformTheme())
+    return onPlatformThemeChange((resolved) => setResolvedTheme(resolved))
   }, [setResolvedTheme])
+
+  // What this window displays: the mode (a preview when there is one) and that
+  // mode's palette (the live draft while editing, else what is in force). A
+  // mode switch applies class and palette in the same frame; draft updates
+  // during a drag are batched to one per frame.
+  useEffect(() => {
+    const schedule = createFrameApplier()
+    let lastMode: ResolvedTheme | null = null
+    let lastTokens: PaletteTokens | null | undefined
+    const sync = (): void => {
+      const displayed = selectDisplayedTheme(useThemeStore.getState())
+      const { drafts, palettes } = useAppearanceStore.getState()
+      const draft = drafts[displayed]
+      const tokens = draft !== undefined ? draft : palettes[displayed]
+      if (displayed !== lastMode) {
+        lastMode = displayed
+        lastTokens = tokens
+        applyResolvedTheme(displayed)
+        schedule.now(tokens)
+      } else if (tokens !== lastTokens) {
+        lastTokens = tokens
+        schedule(tokens)
+      }
+    }
+    sync()
+    const offTheme = useThemeStore.subscribe(sync)
+    const offAppearance = useAppearanceStore.subscribe(sync)
+    const offChanged = window.api.appearance.onChanged((state) =>
+      useAppearanceStore.getState().applyExternal(state)
+    )
+    void useAppearanceStore.getState().load()
+    return () => {
+      offTheme()
+      offAppearance()
+      offChanged()
+    }
+  }, [])
 
   // The preference itself drives only the theme picker's own state; the
   // visible theme is already correct by the time this resolves.

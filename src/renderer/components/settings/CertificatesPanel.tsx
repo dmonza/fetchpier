@@ -238,7 +238,7 @@ function ClientSection({
                           className="inline-flex cursor-help"
                           aria-label={t('certificates.table.literalPassphraseWarning')}
                         >
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning-text" />
                         </span>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
@@ -541,7 +541,7 @@ function AddClientForm({
               variables={variables}
             />
             {showPassphraseWarning && (
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              <p className="mt-1 text-xs text-warning-text">
                 {t('certificates.form.client.passphraseWarning', { example: '{{varName}}' })}
               </p>
             )}
@@ -677,7 +677,7 @@ function EditClientForm({
               variables={variables}
             />
             {showPassphraseWarning && (
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              <p className="mt-1 text-xs text-warning-text">
                 {t('certificates.form.client.passphraseWarning', { example: '{{varName}}' })}
               </p>
             )}
