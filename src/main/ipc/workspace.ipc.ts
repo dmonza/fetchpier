@@ -34,6 +34,8 @@ import {
   loadFromWorkspace as loadWorkspaceStateForWorkspace
 } from '../state/workspace-state-store'
 import { MAX_RECENT, readWorkspaceStore, writeWorkspaceStore } from '../state/recent-workspaces'
+import { broadcastAppearance } from './appearance.ipc'
+import { clearStartupWorkspaceHint } from '../window/window-appearance'
 
 const FETCHPIER_DIR = '.fetchpier'
 
@@ -197,6 +199,8 @@ export function registerWorkspaceHandlers(): void {
     // made this call; this entry point did not.
     await loadTreeStateForWorkspace(workspacePath)
     await loadWorkspaceStateForWorkspace(workspacePath)
+    // The workspace may carry its own palette (REQ workspace color palettes).
+    broadcastAppearance()
     if (gitignoreCreated) broadcastGitignoreGenerated(workspacePath)
     return workspacePath
   }
@@ -205,6 +209,17 @@ export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:create', openOrCreateWorkspace)
 
   ipcMain.handle('workspace:getLast', async (): Promise<RestoreResult> => {
+    try {
+      return await restoreLastWorkspace()
+    } finally {
+      // The workspace the first window was constructed for is now open — or
+      // will not be. Either way the appearance stops answering with the hint.
+      clearStartupWorkspaceHint()
+      broadcastAppearance()
+    }
+  })
+
+  const restoreLastWorkspace = async (): Promise<RestoreResult> => {
     try {
       const store = await readWorkspaceStore()
       const workspacePath = store.path
@@ -247,7 +262,7 @@ export function registerWorkspaceHandlers(): void {
       await stopWatcher()
       return { ok: false, reason: 'none' }
     }
-  })
+  }
 
   ipcMain.handle('workspace:getRecent', async (): Promise<string[]> => {
     const store = await readWorkspaceStore()
@@ -292,6 +307,7 @@ export function registerWorkspaceHandlers(): void {
       await loadUiStateForWorkspace(workspacePath)
       await loadTreeStateForWorkspace(workspacePath)
       await loadWorkspaceStateForWorkspace(workspacePath)
+      broadcastAppearance()
       if (gitignoreCreated) broadcastGitignoreGenerated(workspacePath)
       return { ok: true, path: workspacePath }
     }
@@ -319,6 +335,8 @@ export function registerWorkspaceHandlers(): void {
     clearUiStateWorkspace()
     clearTreeStateWorkspace()
     clearWorkspaceStateWorkspace()
+    // Back to the user's palettes.
+    broadcastAppearance()
     await stopWatcher()
   })
 

@@ -91,7 +91,7 @@ test.describe('appearance — colour palettes', () => {
     const { window: page } = ctx
     // The global Settings — not "Workspace settings", which needs a workspace.
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.getByRole('tab', { name: 'Appearance', exact: true }).click()
     await page.getByRole('radio', { name: 'Paper' }).click()
 
     const file = join(ctx.userDataDir, 'appsettings.json')

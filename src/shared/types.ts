@@ -49,7 +49,14 @@ export interface ModePalettes {
 
 /** What the appearance operations return and broadcast. */
 export interface AppearanceState {
+  /** The user's (app-global) preferences. */
   prefs: AppearancePalettes
+  /**
+   * The open workspace's preferences (`inherit` allowed per mode), normalized;
+   * `null` when no workspace is open.
+   */
+  workspace: AppearancePalettes | null
+  /** The **effective** override maps — the workspace's choice per mode, else the user's. */
   palettes: ModePalettes
 }
 
@@ -1484,6 +1491,11 @@ export interface WorkspaceState {
   schemaVersion: 1
   activeEnvironmentId: string | null
   session: WorkspaceSessionState
+  /**
+   * The workspace's palette per mode (`inherit` allowed), kept raw: the store
+   * writes it back verbatim and consumers normalize it. Absent ⇒ inherit both.
+   */
+  appearancePalettes?: unknown
 }
 
 /**

@@ -38,9 +38,17 @@ export function ThemeProvider({ children }: ThemeProviderProps): React.JSX.Eleme
     let lastTokens: PaletteTokens | null | undefined
     const sync = (): void => {
       const displayed = selectDisplayedTheme(useThemeStore.getState())
-      const { drafts, palettes } = useAppearanceStore.getState()
+      const { drafts, palettes, displayOverride } = useAppearanceStore.getState()
       const draft = drafts[displayed]
-      const tokens = draft !== undefined ? draft : palettes[displayed]
+      // A live draft wins; then a palette shown in place of the effective one
+      // (Settings → Appearance on a mode the workspace overrides); then the
+      // effective palette in force.
+      const tokens =
+        draft !== undefined
+          ? draft
+          : displayOverride && displayOverride.mode === displayed
+            ? displayOverride.tokens
+            : palettes[displayed]
       if (displayed !== lastMode) {
         lastMode = displayed
         lastTokens = tokens

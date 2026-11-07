@@ -14,9 +14,12 @@ import {
   clearWorkspace,
   flushSync,
   getView,
+  getWorkspaceAppearanceRaw,
+  hasActiveWorkspace,
   loadFromWorkspace,
   setActiveEnvironment,
-  setSession
+  setSession,
+  setWorkspaceAppearance
 } from './workspace-state-store'
 import type { WorkspaceSessionTab } from '../../shared/types'
 
@@ -362,5 +365,127 @@ describe('workspace-state-store', () => {
     clearWorkspace()
     expect(readState(ws).activeEnvironmentId).toBe('env-x')
     expect(getView().activeEnvironmentId).toBeNull()
+  })
+})
+
+// Requirement *Workspace color palettes* §5.3, §6.6: the store keeps the
+// workspace's palette block exactly as it found it — it never interprets it —
+// and replaces it only on an explicit appearance write, which is immediate and
+// reports failure.
+describe('workspace-state-store — appearance block', () => {
+  let ws: string
+  const block = {
+    schemaVersion: 1,
+    light: { selected: 'inherit' },
+    dark: { selected: 'forest' }
+  }
+  const raw = (): unknown =>
+    (readState(ws) as unknown as Record<string, unknown>).appearancePalettes
+
+  beforeEach(() => {
+    ws = mkdtempSync(join(tmpdir(), 'ws-appearance-'))
+    _resetForTests()
+  })
+
+  afterEach(() => {
+    _resetForTests()
+    rmSync(ws, { recursive: true, force: true })
+  })
+
+  it('reports no block and writes nothing when the file has none (CA-01)', async () => {
+    seedState(ws, {
+      schemaVersion: 1,
+      activeEnvironmentId: null,
+      session: { tabs: [], activeTabIndex: -1 }
+    })
+    const before = readFileSync(statePath(ws), 'utf-8')
+    await loadFromWorkspace(ws)
+    expect(hasActiveWorkspace()).toBe(true)
+    expect(getWorkspaceAppearanceRaw()).toBeUndefined()
+    await new Promise((r) => setTimeout(r, 300))
+    expect(readFileSync(statePath(ws), 'utf-8')).toBe(before)
+  })
+
+  it('keeps the block through session and active-environment writes (CA-05)', async () => {
+    writeRequestFile(ws, 'requests/a.http')
+    seedState(ws, {
+      schemaVersion: 1,
+      activeEnvironmentId: null,
+      session: { tabs: [], activeTabIndex: -1 },
+      appearancePalettes: block
+    })
+    await loadFromWorkspace(ws)
+    expect(getWorkspaceAppearanceRaw()).toEqual(block)
+    setSession([abs(ws, 'requests/a.http')], 0)
+    setActiveEnvironment('env-y')
+    flushSync()
+    expect(raw()).toEqual(block)
+    expect(readState(ws).activeEnvironmentId).toBe('env-y')
+  })
+
+  it.each([
+    ['a newer version (CA-04)', { schemaVersion: 2, light: { selected: 'aurora' }, accent: 'x' }],
+    ['invalid content', { schemaVersion: 1, light: { selected: 42 }, dark: 'forest' }],
+    ['a non-object value', 'forest']
+  ])('writes %s back unchanged', async (_label, value) => {
+    seedState(ws, {
+      schemaVersion: 1,
+      activeEnvironmentId: null,
+      session: { tabs: [], activeTabIndex: -1 },
+      appearancePalettes: value
+    })
+    await loadFromWorkspace(ws)
+    setActiveEnvironment('env-z')
+    flushSync()
+    expect(raw()).toEqual(value)
+  })
+
+  it('writes an appearance change at once, together with the rest of the state', async () => {
+    writeRequestFile(ws, 'requests/a.http')
+    await loadFromWorkspace(ws)
+    setSession([abs(ws, 'requests/a.http')], 0)
+    await setWorkspaceAppearance(block)
+    expect(raw()).toEqual(block)
+    expect(readState(ws).session.tabs).toHaveLength(1)
+    expect(getWorkspaceAppearanceRaw()).toEqual(block)
+  })
+
+  it('rejects an appearance write with no workspace open (CA-06)', async () => {
+    expect(hasActiveWorkspace()).toBe(false)
+    await expect(setWorkspaceAppearance(block)).rejects.toThrow(/workspace/i)
+  })
+
+  it('reports a failed appearance write and keeps the previous block (CA-07)', async () => {
+    seedState(ws, {
+      schemaVersion: 1,
+      activeEnvironmentId: null,
+      session: { tabs: [], activeTabIndex: -1 },
+      appearancePalettes: block
+    })
+    await loadFromWorkspace(ws)
+    // The target becomes a directory: the atomic rename onto it fails.
+    rmSync(statePath(ws))
+    mkdirSync(statePath(ws))
+    await expect(
+      setWorkspaceAppearance({
+        schemaVersion: 1,
+        light: { selected: 'paper' },
+        dark: { selected: 'inherit' }
+      })
+    ).rejects.toThrow()
+    expect(getWorkspaceAppearanceRaw()).toEqual(block)
+  })
+
+  it('forgets the block when the workspace closes', async () => {
+    seedState(ws, {
+      schemaVersion: 1,
+      activeEnvironmentId: null,
+      session: { tabs: [], activeTabIndex: -1 },
+      appearancePalettes: block
+    })
+    await loadFromWorkspace(ws)
+    clearWorkspace()
+    expect(hasActiveWorkspace()).toBe(false)
+    expect(getWorkspaceAppearanceRaw()).toBeUndefined()
   })
 })

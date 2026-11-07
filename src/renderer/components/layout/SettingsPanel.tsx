@@ -7,8 +7,8 @@ import { useAppSettingsStore } from '../../stores/appSettings'
 import { useAppearanceStore } from '../../stores/appearance'
 import { useThemeStore } from '../../stores/theme'
 import { OPEN_SETTINGS_EVENT } from '../../lib/events'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { LazyBoundary } from '../ui/LazyBoundary'
+import { SettingsDialogShell, SettingsTabPanel } from '../settings/SettingsDialogShell'
 import { CertificatesPanel } from '../settings/CertificatesPanel'
 import { WorkspaceKeysPanel } from '../settings/WorkspaceKeysPanel'
 import { VariableHighlightInput } from '../ui/VariableHighlightInput'
@@ -321,8 +321,6 @@ function SettingsModal({ onClose }: { onClose: () => void }): React.JSX.Element 
     }
   }, [])
 
-  const onAppearance = activeTab === 'appearance'
-
   const selectTab = (id: Tab): void => {
     if (id !== 'appearance') {
       // Leaving Appearance ends any preview and saves a pending change.
@@ -342,70 +340,39 @@ function SettingsModal({ onClose }: { onClose: () => void }): React.JSX.Element 
   ]
 
   return (
-    <Dialog
+    <SettingsDialogShell
       open
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
+      title={t('settings.title')}
+      tabs={tabs.map((tab) => ({ value: tab.id, label: tab.label }))}
+      value={activeTab}
+      onValueChange={(id) => selectTab(id as Tab)}
+      judging={activeTab === 'appearance'}
     >
-      <DialogContent
-        className={cn(
-          'max-w-[36rem] gap-0 p-0',
-          // The interface behind is what the user is judging: no tint over it, and
-          // a stronger edge so the dialog still stands apart from it.
-          onAppearance && 'border-border-strong shadow-soft-lg'
-        )}
-        overlayClassName={onAppearance ? 'bg-transparent' : undefined}
-        onInteractOutside={(e) => {
-          // A click on the app means "let me look", not "dismiss", on this tab.
-          if (onAppearance) e.preventDefault()
-        }}
-        onEscapeKeyDown={(e) => {
-          // Escape during a drag puts the control back and keeps Settings open.
-          if (useAppearanceStore.getState().dragging) {
-            e.preventDefault()
-            useAppearanceStore.getState().cancelDrag()
-          }
-        }}
-      >
-        <DialogHeader className="border-b border-border px-4 py-3">
-          <DialogTitle>{t('settings.title')}</DialogTitle>
-        </DialogHeader>
-
-        {/* Tabs */}
-        <div className="flex border-b border-border px-4">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => selectTab(tab.id)}
-              className={cn(
-                'mr-4 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                activeTab === tab.id
-                  ? 'border-b-2 border-primary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        <div className="min-h-[20rem] max-h-[36rem] overflow-y-auto">
-          {activeTab === 'general' && <GeneralTab />}
-          {activeTab === 'appearance' && (
-            <LazyBoundary>
-              <AppearancePanel />
-            </LazyBoundary>
-          )}
-          {activeTab === 'proxy' && <ProxyTab />}
-          {activeTab === 'updates' && <UpdatesTab />}
-          {activeTab === 'certificates' && <CertificatesPanel scope="app" />}
-          {activeTab === 'workspaceKeys' && <WorkspaceKeysPanel />}
-        </div>
-      </DialogContent>
-    </Dialog>
+      {/* Only the open tab is mounted, so a tab loads its data when shown. */}
+      <SettingsTabPanel value="general">
+        <GeneralTab />
+      </SettingsTabPanel>
+      <SettingsTabPanel value="appearance">
+        <LazyBoundary>
+          <AppearancePanel />
+        </LazyBoundary>
+      </SettingsTabPanel>
+      <SettingsTabPanel value="proxy">
+        <ProxyTab />
+      </SettingsTabPanel>
+      <SettingsTabPanel value="updates">
+        <UpdatesTab />
+      </SettingsTabPanel>
+      <SettingsTabPanel value="certificates">
+        <CertificatesPanel scope="app" />
+      </SettingsTabPanel>
+      <SettingsTabPanel value="workspaceKeys">
+        <WorkspaceKeysPanel />
+      </SettingsTabPanel>
+    </SettingsDialogShell>
   )
 }
 

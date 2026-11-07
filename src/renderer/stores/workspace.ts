@@ -4,6 +4,7 @@ import type { WorkspaceOpenStrings } from '../../shared/types'
 import { useUiStateStore } from './uiState'
 import { useTreeStateStore } from './treeState'
 import { useToastStore } from './toast'
+import { useAppearanceStore } from './appearance'
 import { hydrateSession, teardownSession } from '../lib/sessionPersistence'
 
 /**
@@ -95,6 +96,16 @@ async function applyWorkspace(path: string | null): Promise<{
   }
 }
 
+/**
+ * Save a pending appearance change before the open workspace changes, so it
+ * lands in the workspace it was made for (REQ workspace color palettes §6.5).
+ */
+const flushAppearance = (): Promise<void> =>
+  useAppearanceStore
+    .getState()
+    .flush()
+    .catch(() => undefined)
+
 export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   workspacePath: null,
   requestsRoot: null,
@@ -104,6 +115,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   openWorkspace: async () => {
     set({ isLoading: true })
     try {
+      await flushAppearance()
       const path = await window.api.workspace.open(buildDialogStrings())
       if (path) {
         const [resolved, recent] = await Promise.all([
@@ -120,6 +132,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   createWorkspace: async () => {
     set({ isLoading: true })
     try {
+      await flushAppearance()
       const path = await window.api.workspace.create(buildDialogStrings())
       if (path) {
         const [resolved, recent] = await Promise.all([
@@ -145,9 +158,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
     // filesystem too. Without this the session handle stayed bound and the
     // folder watcher kept running on the workspace the user just closed, so
     // every workspace-scoped operation still succeeded against it.
-    void window.api.workspace.close().catch((err) => {
-      console.error('[workspace] failed to release the workspace in main:', err)
-    })
+    void flushAppearance()
+      .then(() => window.api.workspace.close())
+      .catch((err) => {
+        console.error('[workspace] failed to release the workspace in main:', err)
+      })
   },
 
   loadLastWorkspace: async () => {
@@ -180,6 +195,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   openRecentWorkspace: async (workspacePath: string) => {
     set({ isLoading: true })
     try {
+      await flushAppearance()
       const result = await window.api.workspace.openPath(workspacePath)
       if (result.ok) {
         const [resolved, recent] = await Promise.all([

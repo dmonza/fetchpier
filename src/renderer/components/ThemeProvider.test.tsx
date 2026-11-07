@@ -46,7 +46,11 @@ beforeEach(() => {
       appearance: {
         initial: { light: LIGHT, dark: DARK },
         get: vi.fn(() =>
-          Promise.resolve({ prefs: ORIGINAL_PREFS, palettes: { light: LIGHT, dark: DARK } })
+          Promise.resolve({
+            prefs: ORIGINAL_PREFS,
+            workspace: null,
+            palettes: { light: LIGHT, dark: DARK }
+          })
         ),
         set: vi.fn(),
         onChanged: vi.fn((cb: (s: AppearanceState) => void) => {
@@ -105,7 +109,9 @@ describe('ThemeProvider', () => {
 
   it('removes every override when Original is in force', async () => {
     await mount()
-    act(() => changed!({ prefs: ORIGINAL_PREFS, palettes: { light: null, dark: DARK } }))
+    act(() =>
+      changed!({ prefs: ORIGINAL_PREFS, workspace: null, palettes: { light: null, dark: DARK } })
+    )
     act(() => frames.splice(0).forEach((f) => f()))
     expect(canvas()).toBe('')
   })
@@ -115,5 +121,38 @@ describe('ThemeProvider', () => {
     act(() => useThemeStore.getState().setResolvedTheme('dark'))
     expect(html.classList.contains('dark')).toBe(true)
     expect(canvas()).toBe('#050505')
+  })
+
+  // Requirement *Workspace color palettes* §6.3: a palette shown in place of the
+  // effective one for a mode — below a live draft, above what is in force.
+  it('shows a display override for its mode, under a draft', async () => {
+    await mount()
+    act(() =>
+      useAppearanceStore
+        .getState()
+        .setDisplayOverride({ mode: 'light', tokens: { canvas: '#dddddd' } })
+    )
+    act(() => frames.splice(0).forEach((f) => f()))
+    expect(canvas()).toBe('#dddddd')
+
+    act(() => useAppearanceStore.getState().preview('light', { canvas: '#cccccc' }))
+    act(() => frames.splice(0).forEach((f) => f()))
+    expect(canvas()).toBe('#cccccc')
+
+    act(() => useAppearanceStore.getState().setDisplayOverride(null))
+    act(() => useAppearanceStore.getState().reset())
+    act(() => frames.splice(0).forEach((f) => f()))
+    expect(canvas()).toBe('#fafafa')
+  })
+
+  it('ignores a display override for the other mode', async () => {
+    await mount()
+    act(() =>
+      useAppearanceStore
+        .getState()
+        .setDisplayOverride({ mode: 'dark', tokens: { canvas: '#111111' } })
+    )
+    act(() => frames.splice(0).forEach((f) => f()))
+    expect(canvas()).toBe('#fafafa')
   })
 })

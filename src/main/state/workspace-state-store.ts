@@ -35,6 +35,14 @@ interface SessionModel {
 interface StateModel {
   activeEnvironmentId: string | null
   session: SessionModel
+  /**
+   * The workspace's palette block **exactly as read from disk** (`undefined`
+   * when the file has none). Never interpreted here — consumers normalize it —
+   * and written back verbatim, so session writes keep it and a block this
+   * version does not understand survives. Replaced only by
+   * {@link setWorkspaceAppearance}.
+   */
+  appearanceRaw?: unknown
 }
 
 interface ActiveState {
@@ -61,6 +69,7 @@ interface SanitizedFile {
   activeEnvironmentId: string | null
   rawTabs: RawTab[]
   activeTabIndex: number
+  appearanceRaw?: unknown
 }
 
 /** Coerce arbitrary JSON into the known fields, tolerating anything unexpected. */
@@ -68,6 +77,7 @@ function sanitizeFile(raw: unknown): SanitizedFile {
   const empty: SanitizedFile = { activeEnvironmentId: null, rawTabs: [], activeTabIndex: -1 }
   if (!raw || typeof raw !== 'object') return empty
   const obj = raw as Record<string, unknown>
+  const appearanceRaw = 'appearancePalettes' in obj ? obj.appearancePalettes : undefined
 
   const activeEnvironmentId =
     typeof obj.activeEnvironmentId === 'string' ? obj.activeEnvironmentId : null
@@ -98,7 +108,7 @@ function sanitizeFile(raw: unknown): SanitizedFile {
       ? session.activeTabIndex
       : -1
 
-  return { activeEnvironmentId, rawTabs, activeTabIndex }
+  return { activeEnvironmentId, rawTabs, activeTabIndex, appearanceRaw }
 }
 
 /**
@@ -161,7 +171,11 @@ async function readFromDisk(workspacePath: string): Promise<{
   const dropped =
     session.tabs.length !== file.rawTabs.length || session.activeTabIndex !== file.activeTabIndex
   return {
-    model: { activeEnvironmentId: file.activeEnvironmentId, session },
+    model: {
+      activeEnvironmentId: file.activeEnvironmentId,
+      session,
+      ...(file.appearanceRaw !== undefined ? { appearanceRaw: file.appearanceRaw } : {})
+    },
     dropped
   }
 }
@@ -271,9 +285,49 @@ function serialize(model: StateModel): string {
   const out: WorkspaceState = {
     schemaVersion: SCHEMA_VERSION,
     activeEnvironmentId: model.activeEnvironmentId,
-    session: model.session
+    session: model.session,
+    ...(model.appearanceRaw !== undefined ? { appearancePalettes: model.appearanceRaw } : {})
   }
   return JSON.stringify(out, null, 2)
+}
+
+/** Whether a workspace is bound (its personal state is loaded). */
+export function hasActiveWorkspace(): boolean {
+  return active !== null
+}
+
+/** The workspace's palette block as read from disk; `undefined` when absent or no workspace is open. */
+export function getWorkspaceAppearanceRaw(): unknown {
+  return active?.model.appearanceRaw
+}
+
+/**
+ * Replace the workspace's palette block and write the whole state **now** (not
+ * debounced), so a failure reaches the caller instead of only the log. On
+ * failure the previous block stays in force in memory and on disk. Rejects when
+ * no workspace is open.
+ */
+export async function setWorkspaceAppearance(block: unknown): Promise<void> {
+  if (!active) throw new Error('No workspace is open')
+  const target = active
+  const previous = target.model.appearanceRaw
+  target.model.appearanceRaw = block
+  // This write carries everything pending, so a scheduled one is redundant.
+  if (target.writeTimer) {
+    clearTimeout(target.writeTimer)
+    target.writeTimer = null
+  }
+  const hadPending = target.pendingWrite
+  target.pendingWrite = false
+  try {
+    await workspace
+      .openWorkspace(target.workspacePath)
+      .atomicWrite(STATE_FILE_REL, serialize(target.model))
+  } catch (err) {
+    target.model.appearanceRaw = previous
+    if (hadPending && active === target) scheduleWrite()
+    throw err
+  }
 }
 
 function scheduleWrite(): void {

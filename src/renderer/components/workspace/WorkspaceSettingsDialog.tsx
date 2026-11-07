@@ -1,25 +1,40 @@
-import { useState } from 'react'
+import { lazy, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Info } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '../ui/dialog'
 import { Switch } from '../ui/switch'
 import { Input } from '../ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { SettingsDialogShell, SettingsTabPanel } from '../settings/SettingsDialogShell'
 import { useWorkspaceSettingsStore } from '../../stores/workspaceSettings'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { CertificatesPanel } from '../settings/CertificatesPanel'
+import { LazyBoundary } from '../ui/LazyBoundary'
+import { useAppearanceStore } from '../../stores/appearance'
+import { useThemeStore } from '../../stores/theme'
 import { DEFAULT_BINARY_FILE_LIMITS } from '../../../shared/types'
+
+// The panel carries the palette generator; loading it on demand keeps the
+// generator out of the interface's startup bundle.
+const AppearancePanel = lazy(() => import('../settings/AppearancePanel'))
+
+/**
+ * Mounted only while the dialog is open: captures the workspace's palettes for
+ * *Revert changes*, and on close saves any pending change, ends a preview and
+ * drops the capture.
+ */
+function WorkspaceAppearanceSession(): null {
+  useEffect(() => {
+    useAppearanceStore.getState().beginSession(useThemeStore.getState().theme, 'workspace')
+    return () => {
+      useThemeStore.getState().setPreviewTheme(null)
+      void useAppearanceStore.getState().endSession()
+    }
+  }, [])
+  return null
+}
 import type { BinaryFileLimits, HttpVersion, WorkspaceHttpSettings } from '../../../shared/types'
 
 const BYTES_PER_MB = 1024 * 1024
@@ -38,6 +53,7 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
   const update = useWorkspaceSettingsStore((s) => s.update)
   const resetToDefaults = useWorkspaceSettingsStore((s) => s.resetToDefaults)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [tab, setTab] = useState('http')
 
   const set = <K extends keyof WorkspaceHttpSettings>(
     key: K,
@@ -55,127 +71,147 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
     setConfirmReset(false)
   }
 
+  const selectTab = (next: string): void => {
+    if (next !== 'appearance') {
+      // Leaving Appearance ends any preview and saves a pending change.
+      useThemeStore.getState().setPreviewTheme(null)
+      void useAppearanceStore.getState().flush()
+    }
+    setConfirmReset(false)
+    setTab(next)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t('workspaceSettings.title')}</DialogTitle>
-          <DialogDescription>{t('workspaceSettings.subtitle')}</DialogDescription>
-        </DialogHeader>
-
-        <Tabs defaultValue="http">
-          <TabsList>
-            <TabsTrigger value="http">{t('workspaceSettings.tabs.http')}</TabsTrigger>
-            <TabsTrigger value="certificates">
-              {t('workspaceSettings.tabs.certificates')}
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="http" className="pt-2">
-            <TooltipProvider>
-              <div className="flex flex-col gap-1">
-                <Row
-                  label={t('request.settings.httpVersion')}
-                  hint={t('request.settings.hints.httpVersion')}
-                >
-                  <Select
-                    value={settings.httpVersion}
-                    onValueChange={(v) => set('httpVersion', v as HttpVersion)}
-                  >
-                    <SelectTrigger size="sm" className="h-8 w-40 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">
-                        {t('request.settings.httpVersionOptions.auto')}
-                      </SelectItem>
-                      <SelectItem value="http1">HTTP/1.1</SelectItem>
-                      <SelectItem value="http2">HTTP/2</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Row>
-                <BoolRow
-                  label={t('request.settings.verifySsl')}
-                  hint={t('request.settings.hints.verifySsl')}
-                  value={settings.verifySsl}
-                  onChange={(v) => set('verifySsl', v)}
-                />
-                <BoolRow
-                  label={t('request.settings.followRedirects')}
-                  hint={t('request.settings.hints.followRedirects')}
-                  value={settings.followRedirects}
-                  onChange={(v) => set('followRedirects', v)}
-                />
-                <Row
-                  label={t('request.settings.maxRedirects')}
-                  hint={t('request.settings.hints.maxRedirects')}
-                >
-                  <Input
-                    type="number"
-                    min={0}
-                    max={50}
-                    value={settings.maxRedirects}
-                    disabled={!settings.followRedirects}
-                    onChange={(e) => {
-                      const n = Number(e.target.value)
-                      if (!Number.isFinite(n)) return
-                      set('maxRedirects', Math.max(0, Math.min(50, Math.round(n))))
-                    }}
-                    className={cn('h-8 w-24', !settings.followRedirects && 'opacity-50')}
-                  />
-                </Row>
-                <BoolRow
-                  label={t('request.settings.followAuthorizationOnRedirect')}
-                  hint={t('request.settings.hints.followAuthorizationOnRedirect')}
-                  value={settings.followAuthorizationOnRedirect}
-                  onChange={(v) => set('followAuthorizationOnRedirect', v)}
-                  disabled={!settings.followRedirects}
-                />
-                <BoolRow
-                  label={t('request.settings.encodeUrl')}
-                  hint={t('request.settings.hints.encodeUrl')}
-                  value={settings.encodeUrl}
-                  onChange={(v) => set('encodeUrl', v)}
-                />
-                <BoolRow
-                  label={t('request.settings.disableCookieJar')}
-                  hint={t('request.settings.hints.disableCookieJar')}
-                  value={settings.disableCookieJar}
-                  onChange={(v) => set('disableCookieJar', v)}
-                />
-                <BinaryFileLimitsSection
-                  value={settings.binaryFileLimits ?? DEFAULT_BINARY_FILE_LIMITS}
-                  onChange={(next) => set('binaryFileLimits', next)}
-                />
+    <SettingsDialogShell
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t('workspaceSettings.title')}
+      description={t('workspaceSettings.subtitle')}
+      tabs={[
+        { value: 'http', label: t('workspaceSettings.tabs.http') },
+        { value: 'certificates', label: t('workspaceSettings.tabs.certificates') },
+        { value: 'appearance', label: t('workspaceSettings.tabs.appearance') }
+      ]}
+      value={tab}
+      onValueChange={selectTab}
+      judging={tab === 'appearance'}
+      footer={
+        <>
+          {tab === 'http' ? (
+            confirmReset ? (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">{t('workspaceSettings.confirmReset')}</span>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)}>
+                  {t('workspaceSettings.cancel')}
+                </Button>
+                <Button size="sm" variant="destructive" onClick={handleReset}>
+                  {t('workspaceSettings.resetFactory')}
+                </Button>
               </div>
-            </TooltipProvider>
-          </TabsContent>
-          <TabsContent value="certificates" className="pt-2 max-h-[28rem] overflow-y-auto">
-            <CertificatesPanel scope="workspace" />
-          </TabsContent>
-        </Tabs>
-
-        <DialogFooter className="flex-row justify-between">
-          {confirmReset ? (
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground">{t('workspaceSettings.confirmReset')}</span>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)}>
-                {t('workspaceSettings.cancel')}
-              </Button>
-              <Button size="sm" variant="destructive" onClick={handleReset}>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
                 {t('workspaceSettings.resetFactory')}
               </Button>
-            </div>
+            )
           ) : (
-            <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
-              {t('workspaceSettings.resetFactory')}
-            </Button>
+            // The reset is for the HTTP settings only: offered beside them, nowhere else.
+            <span />
           )}
           <Button size="sm" onClick={() => onOpenChange(false)}>
             {t('workspaceSettings.done')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </>
+      }
+    >
+      <WorkspaceAppearanceSession />
+      <SettingsTabPanel value="http">
+        <TooltipProvider>
+          <div className="flex flex-col gap-1 px-4 py-4">
+            <Row
+              label={t('request.settings.httpVersion')}
+              hint={t('request.settings.hints.httpVersion')}
+            >
+              <Select
+                value={settings.httpVersion}
+                onValueChange={(v) => set('httpVersion', v as HttpVersion)}
+              >
+                <SelectTrigger size="sm" className="h-8 w-40 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">
+                    {t('request.settings.httpVersionOptions.auto')}
+                  </SelectItem>
+                  <SelectItem value="http1">HTTP/1.1</SelectItem>
+                  <SelectItem value="http2">HTTP/2</SelectItem>
+                </SelectContent>
+              </Select>
+            </Row>
+            <BoolRow
+              label={t('request.settings.verifySsl')}
+              hint={t('request.settings.hints.verifySsl')}
+              value={settings.verifySsl}
+              onChange={(v) => set('verifySsl', v)}
+            />
+            <BoolRow
+              label={t('request.settings.followRedirects')}
+              hint={t('request.settings.hints.followRedirects')}
+              value={settings.followRedirects}
+              onChange={(v) => set('followRedirects', v)}
+            />
+            <Row
+              label={t('request.settings.maxRedirects')}
+              hint={t('request.settings.hints.maxRedirects')}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={50}
+                value={settings.maxRedirects}
+                disabled={!settings.followRedirects}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  if (!Number.isFinite(n)) return
+                  set('maxRedirects', Math.max(0, Math.min(50, Math.round(n))))
+                }}
+                className={cn('h-8 w-24', !settings.followRedirects && 'opacity-50')}
+              />
+            </Row>
+            <BoolRow
+              label={t('request.settings.followAuthorizationOnRedirect')}
+              hint={t('request.settings.hints.followAuthorizationOnRedirect')}
+              value={settings.followAuthorizationOnRedirect}
+              onChange={(v) => set('followAuthorizationOnRedirect', v)}
+              disabled={!settings.followRedirects}
+            />
+            <BoolRow
+              label={t('request.settings.encodeUrl')}
+              hint={t('request.settings.hints.encodeUrl')}
+              value={settings.encodeUrl}
+              onChange={(v) => set('encodeUrl', v)}
+            />
+            <BoolRow
+              label={t('request.settings.disableCookieJar')}
+              hint={t('request.settings.hints.disableCookieJar')}
+              value={settings.disableCookieJar}
+              onChange={(v) => set('disableCookieJar', v)}
+            />
+            <BinaryFileLimitsSection
+              value={settings.binaryFileLimits ?? DEFAULT_BINARY_FILE_LIMITS}
+              onChange={(next) => set('binaryFileLimits', next)}
+            />
+          </div>
+        </TooltipProvider>
+      </SettingsTabPanel>
+      <SettingsTabPanel value="certificates">
+        <CertificatesPanel scope="workspace" />
+      </SettingsTabPanel>
+      <SettingsTabPanel value="appearance">
+        <LazyBoundary>
+          <AppearancePanel scope="workspace" />
+        </LazyBoundary>
+      </SettingsTabPanel>
+    </SettingsDialogShell>
   )
 }
 

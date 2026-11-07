@@ -94,12 +94,16 @@ vi.mock('../state/workspace-state-store', () => ({
   loadFromWorkspace: vi.fn()
 }))
 vi.mock('./filesystem.ipc', () => ({ requestsRootPath: (p: string): string => `${p}/requests` }))
+vi.mock('./appearance.ipc', () => ({ broadcastAppearance: vi.fn() }))
+vi.mock('../window/window-appearance', () => ({ clearStartupWorkspaceHint: vi.fn() }))
 
 // Import after mocks
 import { dialog } from 'electron'
 import { registerWorkspaceHandlers } from './workspace.ipc'
 import { workspace as coreWorkspace } from '@fetchpier/core'
 import * as treeStateStore from '../state/tree-state-store'
+import { broadcastAppearance } from './appearance.ipc'
+import { clearStartupWorkspaceHint } from '../window/window-appearance'
 import type { OpenPathResult, RestoreResult, WorkspaceOpenStrings } from '../../shared/types'
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -460,5 +464,40 @@ describe('workspace.ipc — default-environment seed', () => {
     expect(await seedOptionOf(() => invoke('workspace:getLast', null))).toEqual({
       seedDefaultEnvironment: false
     })
+  })
+})
+
+// Requirement *Workspace color palettes* §6.5: every change of the open
+// workspace re-announces the appearance, and the restore ends the startup hint
+// whatever its outcome (CA-10, main side).
+describe('workspace.ipc — appearance follows the open workspace', () => {
+  beforeEach(() => {
+    vi.mocked(broadcastAppearance).mockClear()
+    vi.mocked(clearStartupWorkspaceHint).mockClear()
+  })
+
+  it('announces after opening a recent workspace', async () => {
+    await invoke('workspace:openPath', null, '/ws')
+    expect(broadcastAppearance).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces after closing the workspace', async () => {
+    await invoke('workspace:close', null)
+    expect(broadcastAppearance).toHaveBeenCalledTimes(1)
+  })
+
+  it('ends the startup hint and announces when the restore succeeds', async () => {
+    recentStore = { path: '/ws', recent: ['/ws'] }
+    await invoke('workspace:getLast', null)
+    expect(clearStartupWorkspaceHint).toHaveBeenCalledTimes(1)
+    expect(broadcastAppearance).toHaveBeenCalled()
+  })
+
+  it('ends the startup hint and announces when there is nothing to restore', async () => {
+    recentStore = { path: '', recent: [] }
+    const res = await invoke<RestoreResult>('workspace:getLast', null)
+    expect(res).toEqual({ ok: false, reason: 'none' })
+    expect(clearStartupWorkspaceHint).toHaveBeenCalledTimes(1)
+    expect(broadcastAppearance).toHaveBeenCalledTimes(1)
   })
 })

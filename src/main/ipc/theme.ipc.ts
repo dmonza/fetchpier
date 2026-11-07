@@ -1,6 +1,7 @@
 import { ipcMain, nativeTheme, BrowserWindow } from 'electron'
 import { writeAppSettings } from './appsettings.ipc'
 import { updateWindowBackgrounds } from '../window/window-appearance'
+import { currentAppearance } from './appearance.ipc'
 import { THEMES } from '../../shared/types'
 import type { Theme } from '../../shared/types'
 
@@ -33,6 +34,6 @@ export function registerThemeHandlers(): void {
         win.webContents.send('theme:systemChanged', isDark)
       }
     })
-    updateWindowBackgrounds()
+    updateWindowBackgrounds(currentAppearance().palettes)
   })
 }

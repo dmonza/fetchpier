@@ -185,6 +185,8 @@ const api = {
     initial: INITIAL_PALETTES,
     get: (): Promise<AppearanceState> => invoke('appearance:get'),
     set: (prefs: AppearancePalettes): Promise<AppearanceState> => invoke('appearance:set', prefs),
+    setWorkspace: (prefs: AppearancePalettes): Promise<AppearanceState> =>
+      invoke('appearance:setWorkspace', prefs),
     onChanged: (callback: (state: AppearanceState) => void): (() => void) => {
       const handler = (_: Electron.IpcRendererEvent, state: AppearanceState): void =>
         callback(state)

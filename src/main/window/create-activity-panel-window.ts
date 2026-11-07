@@ -1,7 +1,7 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { join } from 'path'
-import { readAppSettings } from '../ipc/appsettings.ipc'
+import { currentAppearance } from '../ipc/appearance.ipc'
 import { setFocusedWindowKind } from '../menu/state'
 import { windowAppearance } from './window-appearance'
 
@@ -15,9 +15,10 @@ export function createActivityPanelWindow(parent?: BrowserWindow): BrowserWindow
   // applied it before any window existed — so this resolves to the same theme
   // the main window is showing, never to the OS theme behind its back.
   const resolvedTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  // Read now, not at launch: a palette chosen since then must be in force here.
+  // Read now, not at launch: the effective palette — the open workspace's over
+  // the user's — chosen since then must be in force here.
   const { backgroundColor, additionalArguments } = windowAppearance(
-    readAppSettings(),
+    currentAppearance(),
     resolvedTheme
   )
 

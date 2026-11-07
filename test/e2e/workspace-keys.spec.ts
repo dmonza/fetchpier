@@ -67,7 +67,7 @@ async function setupSecrets(page: Page): Promise<SetupResult> {
 
 async function openKeysTab(page: Page): Promise<void> {
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('app:openSettings')))
-  await page.getByRole('button', { name: 'Workspace keys' }).click()
+  await page.getByRole('tab', { name: 'Workspace keys' }).click()
 }
 
 test.describe('workspace keys management', () => {
@@ -322,7 +322,7 @@ test.describe('workspace keys management', () => {
       await page2.waitForLoadState('domcontentloaded')
 
       await page2.evaluate(() => window.dispatchEvent(new CustomEvent('app:openSettings')))
-      await page2.getByRole('button', { name: 'Workspace keys' }).click()
+      await page2.getByRole('tab', { name: 'Workspace keys' }).click()
       // The corrupt entry still lists (metadata only, no unwrap).
       await expect(page2.getByText(keyId, { exact: true })).toBeVisible({ timeout: 10_000 })
 

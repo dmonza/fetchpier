@@ -47,6 +47,10 @@ vi.mock('./appsettings.ipc', () => ({
 const updateWindowBackgrounds = vi.fn()
 vi.mock('../window/window-appearance', () => ({ updateWindowBackgrounds }))
 
+// The effective palettes (workspace over user) — what backgrounds must follow.
+const EFFECTIVE = { light: { canvas: '#fafafa' }, dark: { canvas: '#050505' } }
+vi.mock('./appearance.ipc', () => ({ currentAppearance: () => ({ palettes: EFFECTIVE }) }))
+
 const { nativeTheme } = await import('electron')
 const { registerThemeHandlers } = await import('./theme.ipc')
 
@@ -108,5 +112,6 @@ describe('platform theme updates', () => {
 
     expect(sentToWindow).toEqual([['theme:systemChanged', false]])
     expect(updateWindowBackgrounds).toHaveBeenCalledTimes(1)
+    expect(updateWindowBackgrounds).toHaveBeenCalledWith(EFFECTIVE)
   })
 })

@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import { DEFAULT_APPEARANCE, sameAppearance } from '../../shared/palette/preferences'
+import {
+  DEFAULT_APPEARANCE,
+  DEFAULT_WORKSPACE_APPEARANCE,
+  sameAppearance,
+  type PaletteLevel
+} from '../../shared/palette/preferences'
 import type {
   AppearancePalettes,
   AppearanceState,
@@ -11,63 +16,78 @@ import type {
 import { useThemeStore } from './theme'
 
 /**
- * The appearance (colour palette) state of this window — requirement *Dynamic
- * color themes* §6.5.
+ * The appearance (colour palette) state of this window — requirements *Dynamic
+ * color themes* §6.5 and *Workspace color palettes* §6.
  *
- * - `prefs` / `palettes`: what is in force. Main is the source of truth; the
- *   launch data seeds them so the first render already agrees with the preload.
- * - `drafts`: live palettes shown while the user is editing, before anything is
- *   written (a drag, a pending keyboard change, a failed save).
- * - Every change is saved as it is made, except during a drag (saved on release)
- *   and keyboard changes (saved `COMMIT_DELAY_MS` after the last key, or at once
- *   on flush). Nothing is ever pending once Settings closes.
- * - `snapshot`: how the appearance was when Settings opened; *Revert changes*
- *   returns to it, mode included.
+ * - `prefs` (the user's), `workspace` (the open workspace's, `inherit` allowed;
+ *   `null` with none) and `palettes` (the **effective** maps): what is in force.
+ *   Main is the source of truth; the launch data seeds `palettes` so the first
+ *   render agrees with the preload.
+ * - `drafts`: live palettes shown while editing, before anything is written.
+ * - `displayOverride`: a palette shown in place of the effective one for one
+ *   mode — Settings → Appearance shows the user's palette for a mode the
+ *   workspace overrides. Unlike a draft, it survives saves.
+ * - Every change is saved as it is made, at the level (`scope`) being edited:
+ *   drags on release, keyboard changes `COMMIT_DELAY_MS` after the last key or
+ *   at once on flush.
+ * - `snapshot`: how the edited level was when its dialog opened (one at a time —
+ *   both dialogs are modal); *Revert changes* returns to it, the mode included
+ *   only for the user level.
  *
- * Engine-free: the Appearance panel computes draft palettes and hands them in,
- * so the generator stays out of the eager bundle.
+ * Engine-free: the Appearance panel computes palettes and hands them in.
  */
 export const COMMIT_DELAY_MS = 500
 
+export type AppearanceScope = PaletteLevel
+
 type Drafts = Partial<Record<PaletteMode, PaletteTokens | null>>
+
+interface Snapshot {
+  scope: AppearanceScope
+  prefs: AppearancePalettes
+  theme: Theme
+}
 
 interface AppearanceStore {
   prefs: AppearancePalettes
+  workspace: AppearancePalettes | null
   palettes: ModePalettes
   drafts: Drafts
-  snapshot: { prefs: AppearancePalettes; theme: Theme } | null
-  dragging: { mode: PaletteMode; startPrefs: AppearancePalettes } | null
+  displayOverride: { mode: PaletteMode; tokens: PaletteTokens | null } | null
+  snapshot: Snapshot | null
+  dragging: { mode: PaletteMode; scope: AppearanceScope; startPrefs: AppearancePalettes } | null
   saveError: boolean
-  /** The preferences whose save failed, for Retry. */
-  failed: AppearancePalettes | null
+  /** The preferences whose save failed, and their level, for Retry. */
+  failed: { prefs: AppearancePalettes; scope: AppearanceScope } | null
 
   reset: () => void
   load: () => Promise<void>
   applyExternal: (state: AppearanceState) => void
   preview: (mode: PaletteMode, tokens: PaletteTokens | null) => void
-  commit: (prefs: AppearancePalettes) => Promise<void>
-  scheduleCommit: (prefs: AppearancePalettes) => void
+  setDisplayOverride: (override: { mode: PaletteMode; tokens: PaletteTokens | null } | null) => void
+  commit: (prefs: AppearancePalettes, scope?: AppearanceScope) => Promise<void>
+  scheduleCommit: (prefs: AppearancePalettes, scope?: AppearanceScope) => void
   flush: () => Promise<void>
   retry: () => Promise<void>
-  beginDrag: (mode: PaletteMode) => void
-  endDrag: (prefs: AppearancePalettes) => Promise<void>
+  beginDrag: (mode: PaletteMode, scope?: AppearanceScope) => void
+  endDrag: (prefs: AppearancePalettes, scope?: AppearanceScope) => Promise<void>
   /** Drop the drag in progress; returns the preferences it started from. */
   cancelDrag: () => AppearancePalettes
-  beginSession: (theme: Theme) => void
+  beginSession: (theme: Theme, scope?: AppearanceScope) => void
   endSession: () => Promise<void>
   canRevert: (theme: Theme) => boolean
   revert: () => Promise<void>
 }
 
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
-let pendingPrefs: AppearancePalettes | null = null
+let pending: { prefs: AppearancePalettes; scope: AppearanceScope } | null = null
 /** Only the latest save's outcome is adopted, so out-of-order replies cannot regress the state. */
 let saveSeq = 0
 
 function clearPending(): void {
   if (pendingTimer) clearTimeout(pendingTimer)
   pendingTimer = null
-  pendingPrefs = null
+  pending = null
 }
 
 function launchPalettes(): ModePalettes {
@@ -77,18 +97,39 @@ function launchPalettes(): ModePalettes {
 
 function initialState(): Pick<
   AppearanceStore,
-  'prefs' | 'palettes' | 'drafts' | 'snapshot' | 'dragging' | 'saveError' | 'failed'
+  | 'prefs'
+  | 'workspace'
+  | 'palettes'
+  | 'drafts'
+  | 'displayOverride'
+  | 'snapshot'
+  | 'dragging'
+  | 'saveError'
+  | 'failed'
 > {
   return {
     prefs: DEFAULT_APPEARANCE,
+    workspace: null,
     palettes: launchPalettes(),
     drafts: {},
+    displayOverride: null,
     snapshot: null,
     dragging: null,
     saveError: false,
     failed: null
   }
 }
+
+/** The preferences being edited at `scope`. */
+function levelOf(
+  s: Pick<AppearanceStore, 'prefs' | 'workspace'>,
+  scope: AppearanceScope
+): AppearancePalettes {
+  return scope === 'workspace' ? (s.workspace ?? DEFAULT_WORKSPACE_APPEARANCE) : s.prefs
+}
+
+const fieldFor = (scope: AppearanceScope, prefs: AppearancePalettes): Partial<AppearanceStore> =>
+  scope === 'workspace' ? { workspace: prefs } : { prefs }
 
 export const useAppearanceStore = create<AppearanceStore>()((set, get) => ({
   ...initialState(),
@@ -102,30 +143,42 @@ export const useAppearanceStore = create<AppearanceStore>()((set, get) => ({
   load: async () => {
     try {
       const state = await window.api.appearance.get()
-      if (!get().dragging && !pendingPrefs) set({ prefs: state.prefs, palettes: state.palettes })
+      if (!get().dragging && !pending) {
+        set({ prefs: state.prefs, workspace: state.workspace ?? null, palettes: state.palettes })
+      }
     } catch {
       // The launch palettes stay in force; nothing to show the user here.
     }
   },
 
   applyExternal: (state) => {
-    const busy = get().dragging !== null || pendingPrefs !== null
+    const busy = get().dragging !== null || pending !== null
     // While the user is mid-change, keep their values — only what is in force moves.
-    set(busy ? { palettes: state.palettes } : { prefs: state.prefs, palettes: state.palettes })
+    set(
+      busy
+        ? { palettes: state.palettes }
+        : { prefs: state.prefs, workspace: state.workspace ?? null, palettes: state.palettes }
+    )
   },
 
   preview: (mode, tokens) => set((s) => ({ drafts: { ...s.drafts, [mode]: tokens } })),
 
-  commit: async (prefs) => {
+  setDisplayOverride: (displayOverride) => set({ displayOverride }),
+
+  commit: async (prefs, scope = 'user') => {
     clearPending()
     const seq = ++saveSeq
-    set({ prefs })
+    set(fieldFor(scope, prefs))
     try {
-      const state = await window.api.appearance.set(prefs)
+      const state =
+        scope === 'workspace'
+          ? await window.api.appearance.setWorkspace(prefs)
+          : await window.api.appearance.set(prefs)
       if (seq !== saveSeq) return
       const dragging = get().dragging
       set((s) => ({
         prefs: state.prefs,
+        workspace: state.workspace ?? null,
         palettes: state.palettes,
         drafts: dragging ? { [dragging.mode]: s.drafts[dragging.mode] } : {},
         saveError: false,
@@ -135,39 +188,40 @@ export const useAppearanceStore = create<AppearanceStore>()((set, get) => ({
       if (seq !== saveSeq) return
       // The palette stays applied for the session (the draft is kept); the
       // failure is surfaced with a retry, never only logged.
-      set({ saveError: true, failed: prefs })
+      set({ saveError: true, failed: { prefs, scope } })
     }
   },
 
-  scheduleCommit: (prefs) => {
+  scheduleCommit: (prefs, scope = 'user') => {
     if (pendingTimer) clearTimeout(pendingTimer)
-    pendingPrefs = prefs
-    set({ prefs })
+    pending = { prefs, scope }
+    set(fieldFor(scope, prefs))
     pendingTimer = setTimeout(() => {
-      const next = pendingPrefs
+      const next = pending
       pendingTimer = null
-      pendingPrefs = null
-      if (next) void get().commit(next)
+      pending = null
+      if (next) void get().commit(next.prefs, next.scope)
     }, COMMIT_DELAY_MS)
   },
 
   flush: async () => {
-    const next = pendingPrefs
+    const next = pending
     if (!next) return
     clearPending()
-    await get().commit(next)
+    await get().commit(next.prefs, next.scope)
   },
 
   retry: async () => {
     const failed = get().failed
-    if (failed) await get().commit(failed)
+    if (failed) await get().commit(failed.prefs, failed.scope)
   },
 
-  beginDrag: (mode) => set({ dragging: { mode, startPrefs: get().prefs } }),
+  beginDrag: (mode, scope = 'user') =>
+    set((s) => ({ dragging: { mode, scope, startPrefs: levelOf(s, scope) } })),
 
-  endDrag: async (prefs) => {
+  endDrag: async (prefs, scope = 'user') => {
     set({ dragging: null })
-    await get().commit(prefs)
+    await get().commit(prefs, scope)
   },
 
   cancelDrag: () => {
@@ -176,12 +230,13 @@ export const useAppearanceStore = create<AppearanceStore>()((set, get) => ({
     set((s) => {
       const drafts = { ...s.drafts }
       delete drafts[drag.mode]
-      return { dragging: null, drafts, prefs: drag.startPrefs }
+      return { dragging: null, drafts, ...fieldFor(drag.scope, drag.startPrefs) }
     })
     return drag.startPrefs
   },
 
-  beginSession: (theme) => set({ snapshot: { prefs: get().prefs, theme } }),
+  beginSession: (theme, scope = 'user') =>
+    set((s) => ({ snapshot: { scope, prefs: levelOf(s, scope), theme } })),
 
   endSession: async () => {
     await get().flush()
@@ -191,16 +246,19 @@ export const useAppearanceStore = create<AppearanceStore>()((set, get) => ({
   canRevert: (theme) => {
     const snap = get().snapshot
     if (!snap) return false
-    return theme !== snap.theme || !sameAppearance(get().prefs, snap.prefs)
+    const changed = !sameAppearance(levelOf(get(), snap.scope), snap.prefs, snap.scope)
+    return snap.scope === 'user' ? changed || theme !== snap.theme : changed
   },
 
   revert: async () => {
     const snap = get().snapshot
     if (!snap) return
     clearPending()
-    const themeStore = useThemeStore.getState()
-    if (themeStore.theme !== snap.theme) themeStore.setTheme(snap.theme)
+    if (snap.scope === 'user') {
+      const themeStore = useThemeStore.getState()
+      if (themeStore.theme !== snap.theme) themeStore.setTheme(snap.theme)
+    }
     set({ drafts: {}, dragging: null })
-    await get().commit(snap.prefs)
+    await get().commit(snap.prefs, snap.scope)
   }
 }))

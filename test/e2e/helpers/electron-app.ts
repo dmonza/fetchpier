@@ -83,11 +83,25 @@ export type LaunchOptions = {
        * `recent` list is populated and the spec must drive the welcome UI.
        */
       autoOpen?: boolean
+      /**
+       * Seed the copied fixture's personal state —
+       * `<workspace>/.fetchpier/.state/workspace-state.json` — with this
+       * document, as written by a previous session. Absent by default.
+       */
+      workspaceState?: unknown
+      /**
+       * More workspace paths appended to the seeded recent list, so a spec can
+       * switch to them from the workspace dropdown. The spec owns these paths
+       * and their cleanup.
+       */
+      extraRecent?: string[]
       freshWorkspace?: never
     }
   | {
       fixture?: never
       autoOpen?: never
+      workspaceState?: never
+      extraRecent?: never
       /**
        * Boot with NO existing workspace. The helper creates an empty tmpdir and
        * exposes it as `ctx.freshWorkspacePath`, but does not pre-seed the recent
@@ -113,6 +127,7 @@ async function seedUserData(
   workspacePath: string | null,
   opts: {
     autoOpen: boolean
+    extraRecent: string[]
     language: 'en' | 'es'
     lastVersion: string | null
     updates: NonNullable<LaunchOptions['updates']>
@@ -130,7 +145,10 @@ async function seedUserData(
     join(userDataDir, 'last-workspace.json'),
     JSON.stringify(
       workspacePath
-        ? { path: opts.autoOpen ? workspacePath : '', recent: [workspacePath] }
+        ? {
+            path: opts.autoOpen ? workspacePath : '',
+            recent: [workspacePath, ...opts.extraRecent]
+          }
         : { path: '', recent: [] },
       null,
       2
@@ -165,6 +183,21 @@ async function seedUserData(
   )
 }
 
+/** Path of a workspace's personal state file (per user, never committed). */
+export function workspaceStatePath(workspacePath: string): string {
+  return join(workspacePath, '.fetchpier', '.state', 'workspace-state.json')
+}
+
+/**
+ * Write a workspace's personal state as a previous session would have left
+ * it. Usable on a spec's own extra workspaces as well as the launch fixture.
+ */
+export async function seedWorkspaceState(workspacePath: string, state: unknown): Promise<void> {
+  const file = workspaceStatePath(workspacePath)
+  await fs.mkdir(join(workspacePath, '.fetchpier', '.state'), { recursive: true })
+  await fs.writeFile(file, JSON.stringify(state, null, 2), 'utf-8')
+}
+
 export async function launchApp(options: LaunchOptions): Promise<ElectronAppContext> {
   ensureBuilt()
 
@@ -174,11 +207,15 @@ export async function launchApp(options: LaunchOptions): Promise<ElectronAppCont
     freshWorkspacePath = await fs.mkdtemp(join(tmpdir(), 'fp-e2e-newws-'))
   } else if ('fixture' in options && options.fixture) {
     workspace = await copyWorkspaceFixture(options.fixture)
+    if (options.workspaceState !== undefined) {
+      await seedWorkspaceState(workspace.path, options.workspaceState)
+    }
   }
 
   const userDataDir = await fs.mkdtemp(join(tmpdir(), 'fp-e2e-userdata-'))
   await seedUserData(userDataDir, workspace?.path ?? null, {
     autoOpen: 'autoOpen' in options ? options.autoOpen === true : false,
+    extraRecent: ('extraRecent' in options ? options.extraRecent : undefined) ?? [],
     language: options.language ?? 'en',
     lastVersion: options.lastVersion === undefined ? APP_VERSION : options.lastVersion,
     theme: options.theme ?? 'system',

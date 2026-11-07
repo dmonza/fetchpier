@@ -102,13 +102,18 @@ async function open(): Promise<void> {
 
 const dialog = (): HTMLElement | null => document.querySelector('[role="dialog"]')
 const overlay = (): HTMLElement | null => document.querySelector('[data-slot="dialog-overlay"]')
-const tab = (name: string): HTMLButtonElement => {
-  const el = [...document.querySelectorAll('button')].find((b) => b.textContent === name)
+const tab = (name: string): HTMLElement => {
+  const el = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+    (b) => b.textContent === name
+  )
   if (!el) throw new Error(`no tab ${name}`)
   return el
 }
 async function selectTab(name: string): Promise<void> {
-  await act(async () => tab(name).click())
+  // The tabs select on pointer down, as the platform's tab controls do.
+  await act(async () => {
+    tab(name).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+  })
   await settle()
 }
 // Real input events are cancelable; the product relies on that to keep the
@@ -137,7 +142,7 @@ describe('Settings → Appearance', () => {
     document.documentElement.style.setProperty('--canvas', '#121212')
     await open()
     expect(tab('settings.tabs.appearance')).toBeTruthy()
-    expect(useAppearanceStore.getState().snapshot).toEqual({ prefs, theme: 'light' })
+    expect(useAppearanceStore.getState().snapshot).toEqual({ scope: 'user', prefs, theme: 'light' })
     await selectTab('settings.tabs.appearance')
     expect(document.documentElement.style.getPropertyValue('--canvas')).toBe('#121212')
     expect(useThemeStore.getState().previewTheme).toBeNull()
@@ -190,5 +195,28 @@ describe('Settings → Appearance', () => {
     await escape()
     expect(dialog()).toBeNull()
     expect(set).not.toHaveBeenCalled()
+  })
+})
+
+// Plan *Fixed-size settings dialogs*: the tab strip is a real tablist.
+describe('Settings tabs', () => {
+  it('are a tablist with the open tab marked, reachable with the arrow keys', async () => {
+    await open()
+    expect(dialog()?.querySelector('[role="tablist"]')).not.toBeNull()
+    const general = tab('settings.tabs.general')
+    expect(general.getAttribute('aria-selected')).toBe('true')
+    expect(tab('settings.tabs.appearance').getAttribute('aria-selected')).toBe('false')
+
+    await act(async () => general.focus())
+    await act(async () => {
+      general.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+    })
+    await settle()
+    const appearance = tab('settings.tabs.appearance')
+    expect(document.activeElement).toBe(appearance)
+    expect(appearance.getAttribute('aria-selected')).toBe('true')
+    expect(useAppearanceStore.getState().snapshot).not.toBeNull()
   })
 })

@@ -674,6 +674,9 @@
       },
       "colorThemes": "Temas de color",
       "savedAsYouGo": "Los cambios se guardan a medida que los hacés.",
+      "workspaceSavedAsYouGo": "Solo para vos, en este workspace. Los cambios se guardan a medida que los hacés.",
+      "inheritFromUser": "Heredar del usuario",
+      "workspaceOverride": "Este workspace usa su propia paleta {{mode}}. Los cambios acá aplican a los workspaces que la heredan.",
       "previewNote": "Vista previa de {{mode}}. Fetchpier está en modo {{current}}; esta paleta se usa cuando {{mode}} está activo.",
       "presets": {
         "original": "Original",
@@ -835,7 +838,8 @@
     "subtitle": "Defaults aplicados a cada request de este workspace.",
     "tabs": {
       "http": "HTTP",
-      "certificates": "Certificados"
+      "certificates": "Certificados",
+      "appearance": "Apariencia"
     },
     "done": "Listo",
     "cancel": "Cancelar",

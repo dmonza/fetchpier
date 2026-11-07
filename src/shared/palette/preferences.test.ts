@@ -3,8 +3,11 @@ import { ORIGINAL_POINTS } from './original'
 import { findPreset } from './presets'
 import {
   DEFAULT_APPEARANCE,
+  DEFAULT_WORKSPACE_APPEARANCE,
   customizeFrom,
+  effectivePreferences,
   normalizeAppearancePalettes,
+  normalizeWorkspacePalettes,
   sameAppearance,
   selectPalette,
   setCustomParams
@@ -174,5 +177,120 @@ describe('preference updates', () => {
   it('compares preferences by value', () => {
     expect(sameAppearance(base, JSON.parse(JSON.stringify(base)))).toBe(true)
     expect(sameAppearance(base, selectPalette(base, 'light', 'forest'))).toBe(false)
+  })
+
+  it('refuses inherit for the user level', () => {
+    expect(selectPalette(base, 'light', 'inherit')).toEqual(base)
+  })
+})
+
+// Requirement *Workspace color palettes* §5.3, §6.1, §6.2.
+describe('workspace palettes', () => {
+  const user: AppearancePalettes = {
+    schemaVersion: 1,
+    light: { selected: 'ocean', custom },
+    dark: { selected: 'original' }
+  }
+
+  describe('normalizeWorkspacePalettes (CA-03)', () => {
+    it.each([
+      ['absent', undefined],
+      ['null', null],
+      ['not an object', 'forest'],
+      ['an array', []],
+      ['an unknown schema version', stored({ selected: 'forest' }, { selected: 'forest' }, 2)]
+    ])('treats %s as inherit in both modes', (_label, raw) => {
+      expect(normalizeWorkspacePalettes(raw)).toEqual(DEFAULT_WORKSPACE_APPEARANCE)
+    })
+
+    it('keeps inherit, presets and Custom', () => {
+      const raw = stored({ selected: 'inherit' }, { selected: 'custom', custom })
+      expect(normalizeWorkspacePalettes(raw)).toEqual(raw)
+    })
+
+    it.each([
+      ['an unknown preset', { selected: 'sunset' }],
+      ['a preset of the other mode', { selected: 'graphite' }],
+      ['Custom without a valid block', { selected: 'custom', custom: { hue: 'x' } }],
+      ['a non-object mode', 'forest']
+    ])('falls back to inherit — never Original — for %s, in that mode only', (_label, light) => {
+      const got = normalizeWorkspacePalettes(stored(light, { selected: 'forest' }))
+      expect(got.light.selected).toBe('inherit')
+      expect(got.dark).toEqual({ selected: 'forest' })
+    })
+
+    it('keeps a valid Custom block when the selection falls back', () => {
+      const got = normalizeWorkspacePalettes(
+        stored({ selected: 'nope', custom }, { selected: 'inherit' })
+      )
+      expect(got.light).toEqual({ selected: 'inherit', custom })
+    })
+  })
+
+  describe('effectivePreferences (CA-02, CA-11)', () => {
+    it('takes each mode from the workspace unless it inherits', () => {
+      const ws = stored({ selected: 'inherit' }, { selected: 'forest' }) as AppearancePalettes
+      expect(effectivePreferences(user, ws)).toEqual({
+        schemaVersion: 1,
+        light: user.light,
+        dark: { selected: 'forest' }
+      })
+    })
+
+    it('is the user preference when no workspace is open', () => {
+      expect(effectivePreferences(user, null)).toEqual(user)
+    })
+
+    it('follows the user where the workspace inherits, and only there', () => {
+      const ws = stored({ selected: 'inherit' }, { selected: 'forest' }) as AppearancePalettes
+      const changed: AppearancePalettes = {
+        ...user,
+        light: { selected: 'paper' },
+        dark: { selected: 'graphite' }
+      }
+      const eff = effectivePreferences(changed, ws)
+      expect(eff.light).toEqual({ selected: 'paper' })
+      expect(eff.dark).toEqual({ selected: 'forest' })
+    })
+  })
+
+  describe('editing an inheriting mode (CA-14)', () => {
+    const ws: AppearancePalettes = DEFAULT_WORKSPACE_APPEARANCE
+
+    it('accepts inherit as a choice when the inherited palette is given', () => {
+      const overridden = selectPalette(ws, 'light', 'forest', { inherited: user.light })
+      const back = selectPalette(overridden, 'light', 'inherit', { inherited: user.light })
+      expect(back.light.selected).toBe('inherit')
+    })
+
+    // The user's Light is Ocean (with stored, unselected Custom values): the
+    // starting point is what is on screen — Ocean — not those stored values.
+    it('starts Custom (first use) from the inherited palette', () => {
+      const next = selectPalette(ws, 'light', 'custom', { inherited: user.light })
+      expect(next.light).toEqual({
+        selected: 'custom',
+        custom: findPreset('light', 'ocean')!.params
+      })
+    })
+
+    it('starts Custom from the user Custom values when the user is on Custom', () => {
+      const next = selectPalette(ws, 'light', 'custom', {
+        inherited: { selected: 'custom', custom }
+      })
+      expect(next.light).toEqual({ selected: 'custom', custom })
+    })
+
+    it('starts Custom from a preset the user inherits', () => {
+      const next = selectPalette(ws, 'dark', 'custom', { inherited: { selected: 'graphite' } })
+      expect(next.dark.custom).toEqual(findPreset('dark', 'graphite')!.params)
+    })
+
+    it('customizes from the inherited palette', () => {
+      const next = customizeFrom(ws, 'light', 'inherit', { inherited: user.light })
+      expect(next.light).toEqual({
+        selected: 'custom',
+        custom: findPreset('light', 'ocean')!.params
+      })
+    })
   })
 })

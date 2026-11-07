@@ -85,6 +85,8 @@ declare global {
         get: () => Promise<AppearanceState>
         /** Persists and broadcasts; rejects when the settings file cannot be written. */
         set: (prefs: AppearancePalettes) => Promise<AppearanceState>
+        /** The open workspace's palettes (`inherit` allowed); rejects with no workspace or on a failed write. */
+        setWorkspace: (prefs: AppearancePalettes) => Promise<AppearanceState>
         onChanged: (callback: (state: AppearanceState) => void) => () => void
       }
       workspace: {

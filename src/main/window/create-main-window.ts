@@ -1,7 +1,13 @@
-import { BrowserWindow, BrowserWindowConstructorOptions, nativeTheme, screen } from 'electron'
+import { app, BrowserWindow, BrowserWindowConstructorOptions, nativeTheme, screen } from 'electron'
 import { join } from 'path'
 import { readAppSettings, writeAppSettings } from '../ipc/appsettings.ipc'
-import { windowAppearance } from './window-appearance'
+import {
+  appearanceFrom,
+  clearStartupWorkspaceHint,
+  readStartupWorkspace,
+  setStartupWorkspaceHint,
+  windowAppearance
+} from './window-appearance'
 import type { WindowState } from '../../shared/types'
 
 const DEFAULT_SIZE = { width: 1200, height: 800 }
@@ -62,7 +68,16 @@ export function createMainWindow(): BrowserWindow {
   const resolvedTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   // The stored palette decides the canvas too, and travels with the resolved
   // theme to the preload, so the first frame is already in the user's palette.
-  const { backgroundColor, additionalArguments } = windowAppearance(settings, resolvedTheme)
+  // The interface restores the last workspace only after it has loaded, so the
+  // palette of that workspace is read here too — and held until the restore
+  // settles, so the interface's first read agrees with this window.
+  const startup = readStartupWorkspace(app.getPath('userData'))
+  if (startup.restorable) setStartupWorkspaceHint(startup.raw)
+  else clearStartupWorkspaceHint()
+  const { backgroundColor, additionalArguments } = windowAppearance(
+    appearanceFrom(settings, startup.restorable ? startup.raw : null),
+    resolvedTheme
+  )
 
   const win = new BrowserWindow({
     ...bounds,

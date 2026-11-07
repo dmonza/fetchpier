@@ -16,11 +16,16 @@ const ORIGINAL: AppearancePalettes = {
 const withLight = (selected: string): AppearancePalettes => ({ ...ORIGINAL, light: { selected } })
 
 let set: ReturnType<typeof vi.fn>
+let setWorkspace: ReturnType<typeof vi.fn>
 let setNativeTheme: ReturnType<typeof vi.fn>
 
-function stateFor(prefs: AppearancePalettes): AppearanceState {
+function stateFor(
+  prefs: AppearancePalettes,
+  workspace: AppearancePalettes | null = null
+): AppearanceState {
   return {
     prefs,
+    workspace,
     palettes: {
       light: prefs.light.selected === 'original' ? null : { canvas: '#fefefe' },
       dark: prefs.dark.selected === 'original' ? null : { canvas: '#010101' }
@@ -31,6 +36,7 @@ function stateFor(prefs: AppearancePalettes): AppearanceState {
 beforeEach(() => {
   vi.useFakeTimers()
   set = vi.fn((prefs: AppearancePalettes) => Promise.resolve(stateFor(prefs)))
+  setWorkspace = vi.fn((ws: AppearancePalettes) => Promise.resolve(stateFor(ORIGINAL, ws)))
   setNativeTheme = vi.fn(() => Promise.resolve())
   vi.stubGlobal('window', {
     ...window,
@@ -39,6 +45,7 @@ beforeEach(() => {
         initial: { light: null, dark: null },
         get: vi.fn(() => Promise.resolve(stateFor(ORIGINAL))),
         set,
+        setWorkspace,
         onChanged: vi.fn(() => () => undefined)
       },
       theme: { setNativeTheme, onSystemChanged: vi.fn(), initialResolved: 'light' }
@@ -192,5 +199,98 @@ describe('save failure (CA-33)', () => {
     expect(set).toHaveBeenLastCalledWith(withLight('ocean'))
     expect(store().saveError).toBe(false)
     expect(store().drafts.light).toBeUndefined()
+  })
+})
+
+// Requirement *Workspace color palettes* §6.2–§6.4: the same lifecycle, applied
+// to the open workspace's palettes.
+describe('the workspace scope', () => {
+  const INHERIT: AppearancePalettes = {
+    schemaVersion: 1,
+    light: { selected: 'inherit' },
+    dark: { selected: 'inherit' }
+  }
+  const forestDark: AppearancePalettes = { ...INHERIT, dark: { selected: 'forest' } }
+
+  beforeEach(() => {
+    useAppearanceStore.setState({ workspace: INHERIT })
+  })
+
+  it('adopts the workspace from what main reports', async () => {
+    window.api.appearance.get = vi.fn(() => Promise.resolve(stateFor(ORIGINAL, forestDark)))
+    await store().load()
+    expect(store().workspace).toEqual(forestDark)
+    store().applyExternal(stateFor(ORIGINAL, null))
+    expect(store().workspace).toBeNull()
+  })
+
+  it('saves workspace changes through the workspace write, never the user one', async () => {
+    await store().commit(forestDark, 'workspace')
+    expect(setWorkspace).toHaveBeenCalledWith(forestDark)
+    expect(set).not.toHaveBeenCalled()
+    expect(store().workspace).toEqual(forestDark)
+  })
+
+  it('batches workspace keyboard steps into one workspace write', async () => {
+    store().scheduleCommit(forestDark, 'workspace')
+    store().scheduleCommit({ ...forestDark, light: { selected: 'paper' } }, 'workspace')
+    vi.advanceTimersByTime(COMMIT_DELAY_MS)
+    await Promise.resolve()
+    expect(setWorkspace).toHaveBeenCalledTimes(1)
+    expect(setWorkspace).toHaveBeenCalledWith({ ...forestDark, light: { selected: 'paper' } })
+  })
+
+  it('reverts only the workspace palettes, never the mode (CA-15)', async () => {
+    useThemeStore.setState({ theme: 'light' })
+    store().beginSession('light', 'workspace')
+    await store().commit(forestDark, 'workspace')
+    expect(store().canRevert('dark')).toBe(true)
+    useThemeStore.setState({ theme: 'dark' })
+    setNativeTheme.mockClear()
+    await store().revert()
+    expect(setWorkspace).toHaveBeenLastCalledWith(INHERIT)
+    expect(set).not.toHaveBeenCalled()
+    expect(setNativeTheme).not.toHaveBeenCalled()
+    expect(store().canRevert('dark')).toBe(false)
+  })
+
+  it('does not count a mode change as something a workspace session reverts', () => {
+    store().beginSession('light', 'workspace')
+    expect(store().canRevert('dark')).toBe(false)
+  })
+
+  it('cancels a workspace drag back to where it started', () => {
+    store().beginDrag('dark', 'workspace')
+    store().preview('dark', { canvas: '#123456' })
+    store().cancelDrag()
+    expect(store().workspace).toEqual(INHERIT)
+    expect(store().drafts.dark).toBeUndefined()
+  })
+
+  it('surfaces a failed workspace save and retries the workspace write (CA-07)', async () => {
+    setWorkspace.mockImplementationOnce(() => Promise.reject(new Error('EACCES')))
+    await store().commit(forestDark, 'workspace')
+    expect(store().saveError).toBe(true)
+    await store().retry()
+    expect(setWorkspace).toHaveBeenCalledTimes(2)
+    expect(set).not.toHaveBeenCalled()
+    expect(store().saveError).toBe(false)
+  })
+})
+
+// Settings → Appearance shows the user's palette for a mode the workspace
+// overrides (requirement *Workspace color palettes* §6.3).
+describe('display override', () => {
+  it('holds a palette to show for one mode until cleared', () => {
+    store().setDisplayOverride({ mode: 'dark', tokens: { canvas: '#0a0a0a' } })
+    expect(store().displayOverride).toEqual({ mode: 'dark', tokens: { canvas: '#0a0a0a' } })
+    store().setDisplayOverride(null)
+    expect(store().displayOverride).toBeNull()
+  })
+
+  it('survives a save, unlike a draft', async () => {
+    store().setDisplayOverride({ mode: 'dark', tokens: { canvas: '#0a0a0a' } })
+    await store().commit(withLight('ocean'))
+    expect(store().displayOverride).not.toBeNull()
   })
 })

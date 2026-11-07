@@ -19,6 +19,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   mode swaps between your Light and Dark palettes as the operating system does.
   The appearance mode can now also be chosen in Settings.
 
+- **Palettes per workspace.** Workspace Settings → Appearance lets each mode of
+  a workspace inherit your own palette (the default) or use its own — Original,
+  a preset or Custom. The choice is yours alone: it is kept in the workspace's
+  personal, gitignored state, never in the files the team shares. Opening,
+  switching or closing a workspace switches palettes, from the first frame at
+  launch too; the appearance mode stays a single choice across workspaces.
+  While a workspace overrides a mode, Settings → Appearance says so and shows
+  your own palette while you edit it.
+
 - **`--tls-config <file>` (or `FETCHPIER_TLS_CONFIG`) for certificates you do not
   want to share.** The command line can use a client certificate or a CA that
   belongs to the machine or the pipeline instead of the workspace: name a JSON
@@ -83,6 +92,15 @@ desktop app gains the engine changes that make that possible. Several of these
 change behavior on purpose; they are marked **Behavior change**.
 
 ### Fixed
+
+- **Settings and Workspace Settings no longer change size from tab to tab.**
+  Each dialog keeps one size, so the title, the tabs and the buttons stay where
+  they are when you switch tabs; only the tab's content scrolls. In a small
+  window the dialog now fits and scrolls instead of running off the screen.
+  Inside Appearance, switching Light / Dark or pressing Customize no longer
+  moves the palette cards. The Settings tabs now work with the arrow keys and
+  screen readers, and Workspace Settings offers _Reset to defaults_ only on its
+  HTTP tab, the one it resets.
 
 - **Values set by a script now reach the next request of a run.** A token a login
   request stores with `fp.environment.set` is used by the authenticated call that

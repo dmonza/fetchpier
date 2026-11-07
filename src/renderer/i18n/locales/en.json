@@ -674,6 +674,9 @@
       },
       "colorThemes": "Color themes",
       "savedAsYouGo": "Changes are saved as you go.",
+      "workspaceSavedAsYouGo": "Only for you, in this workspace. Changes are saved as you go.",
+      "inheritFromUser": "Inherit from user",
+      "workspaceOverride": "This workspace uses its own {{mode}} palette. Changes here apply to workspaces that inherit it.",
       "previewNote": "Previewing {{mode}}. Fetchpier is in {{current}} mode; this palette applies when {{mode}} is on.",
       "presets": {
         "original": "Original",
@@ -835,7 +838,8 @@
     "subtitle": "Defaults applied to every request in this workspace.",
     "tabs": {
       "http": "HTTP",
-      "certificates": "Certificates"
+      "certificates": "Certificates",
+      "appearance": "Appearance"
     },
     "done": "Done",
     "cancel": "Cancel",
