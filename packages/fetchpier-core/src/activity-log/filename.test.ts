@@ -107,6 +107,24 @@ describe('buildActivityLogFilename', () => {
     expect(name).toBe('20260515T142304123Z-00001-GET-a_b_c_d_e_f.http')
   })
 
+  it.each([
+    ['/__foo__/', 'foo'],
+    ['/_/foo', 'foo'],
+    ['/foo/_', 'foo'],
+    ['/a__b', 'a_b'],
+    ['/%20', '20'],
+    ['/___', 'root']
+  ])('trims separators at the edges of the slug for %j', (pathRaw, slug) => {
+    const name = buildActivityLogFilename({
+      timestamp: ts,
+      runId: runIdA,
+      counter: 1,
+      method: 'GET',
+      pathRaw
+    })
+    expect(name).toBe(`20260515T142304123Z-00001-GET-${slug}.http`)
+  })
+
   it('returns "root" for empty path', () => {
     const name = buildActivityLogFilename({
       timestamp: ts,

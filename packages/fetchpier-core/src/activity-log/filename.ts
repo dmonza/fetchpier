@@ -88,8 +88,9 @@ function slugifyPath(pathRaw: string): string {
   p = p.replace(/[^a-zA-Z0-9._-]/g, '_')
   // Collapse consecutive `_`.
   p = p.replace(/_+/g, '_')
-  // Trim leading/trailing `_`.
-  p = p.replace(/^_+|_+$/g, '')
+  // Trim leading/trailing `_`. One per edge is all that can remain after the
+  // collapse above, and matching a run here would be quadratic on a long path.
+  p = p.replace(/^_|_$/g, '')
   return p.length > 0 ? p : 'root'
 }
 

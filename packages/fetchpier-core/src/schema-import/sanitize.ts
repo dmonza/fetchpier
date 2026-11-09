@@ -32,7 +32,9 @@ export function sanitizeName(raw: string, fallback = 'untitled'): string {
   name = name
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    // One dash per edge is all that can remain after the collapse above, and
+    // matching a run here would be quadratic on hostile schema names.
+    .replace(/^-|-$/g, '')
   if (!name) name = fallback
   // Reject pure-dot segments (`.`, `..`, `...`) — they survive the regex above
   // and would traverse upward when used as a path segment.

@@ -10,6 +10,18 @@ describe('sanitizeName', () => {
     expect(sanitizeName('  hello   world  ')).toBe('hello-world')
   })
 
+  it.each([
+    ['--foo--', 'foo'],
+    ['-foo', 'foo'],
+    ['foo-', 'foo'],
+    ['* foo *', 'foo'],
+    ['a--b', 'a-b'],
+    ['-', 'untitled'],
+    ['---', 'untitled']
+  ])('trims separators at the edges of %j and keeps one inside', (raw, expected) => {
+    expect(sanitizeName(raw)).toBe(expected)
+  })
+
   it('applies fallback when empty', () => {
     expect(sanitizeName('', 'fb')).toBe('fb')
     expect(sanitizeName('???', 'fb')).toBe('fb')
