@@ -1,6 +1,6 @@
 {
   "name": "@fetchpier/cli",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Fetchpier command-line interface — run requests and inspect environments of a Fetchpier workspace from the terminal. Reuses @fetchpier/core; no Electron.",
   "author": "Daniel Monza",
   "license": "MIT",

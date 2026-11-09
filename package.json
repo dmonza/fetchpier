@@ -1,7 +1,7 @@
 {
   "name": "fetchpier",
   "productName": "Fetchpier",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Open-source desktop API client with filesystem-based workspaces and Git-friendly collections.",
   "author": "Daniel Monza",
   "license": "MIT",

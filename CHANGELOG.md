@@ -5,7 +5,14 @@ All notable changes to Fetchpier are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.7] - 2026-11-09
+
+Fetchpier can now be recoloured: palettes for Light and Dark, from a preset or
+built by you, for all your workspaces or just one. This release also closes
+several ways a secret or a client certificate could reach the wrong place, and
+lets the command line use certificates that are not shared with the workspace.
+One change, to `--show-secrets`, alters behavior on purpose and is marked
+_Behavior change_.
 
 ### Added
 
@@ -48,6 +55,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   cards, and clearly distinct secondary, muted and soft text. The selected
   folder in the collection tree no longer looks like a hovered row, the focus
   ring stays visible on every surface, and scrollbars are easier to see.
+
+### Fixed
+
+- **Settings and Workspace Settings no longer change size from tab to tab.**
+  Each dialog keeps one size, so the title, the tabs and the buttons stay where
+  they are when you switch tabs; only the tab's content scrolls. In a small
+  window the dialog now fits and scrolls instead of running off the screen.
+  Inside Appearance, switching Light / Dark or pressing Customize no longer
+  moves the palette cards. The Settings tabs now work with the arrow keys and
+  screen readers, and Workspace Settings offers _Reset to defaults_ only on its
+  HTTP tab, the one it resets.
 
 ### Security
 
@@ -92,15 +110,6 @@ desktop app gains the engine changes that make that possible. Several of these
 change behavior on purpose; they are marked **Behavior change**.
 
 ### Fixed
-
-- **Settings and Workspace Settings no longer change size from tab to tab.**
-  Each dialog keeps one size, so the title, the tabs and the buttons stay where
-  they are when you switch tabs; only the tab's content scrolls. In a small
-  window the dialog now fits and scrolls instead of running off the screen.
-  Inside Appearance, switching Light / Dark or pressing Customize no longer
-  moves the palette cards. The Settings tabs now work with the arrow keys and
-  screen readers, and Workspace Settings offers _Reset to defaults_ only on its
-  HTTP tab, the one it resets.
 
 - **Values set by a script now reach the next request of a run.** A token a login
   request stores with `fp.environment.set` is used by the authenticated call that
@@ -300,6 +309,7 @@ nobody could install.
   every connection originates from your request configuration. No telemetry, no
   background traffic, no remote content in the UI.
 
+[0.9.7]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.7
 [0.9.6]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.6
 [0.9.5]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.5
 [0.9.4]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.4

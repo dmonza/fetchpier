@@ -95,10 +95,13 @@ Development is sustained primarily by sponsorship: Sincrum (my studio) is the ma
 **Quality of life**
 
 - Light and dark themes, OS-aware
+- Custom color themes — choose a preset for each mode or build your own from hue, intensity, surface tint and brightness. Text, borders and focus indicators stay at accessible contrast, and each workspace can have its own palette, kept per user and never shared
 - Internationalization (English and Spanish) from day one
 - Keyboard shortcuts and command palette
 - Detachable Activity panel (history and run output) in its own window
 - On-demand version check — tells you when a newer release is out and links to the [GitHub Releases](https://github.com/dmonza/fetchpier/releases) page; it never downloads or installs anything by itself
+
+![Settings → Appearance with a custom amber color theme applied to the whole window](assets/screenshots/05-themes.png)
 
 ## Install
 
