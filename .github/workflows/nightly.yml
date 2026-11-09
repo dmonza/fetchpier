@@ -94,9 +94,15 @@ jobs:
 
       # The same check the release gate runs: moderate-or-higher advisories in
       # what ships, and the bundled runtime on the latest release of a supported
-      # line. Also catches a runtime patch published since the last release.
+      # line.
+      #
+      # Runtime lag is tolerated here for 30 days and reported as a notice. The
+      # runtime publishes a patch every few days and a lockfile bump reaches
+      # nobody until a release, so red here means "time to release". The release
+      # gate has no tolerance, and 30 days leaves margin inside the 60 the
+      # best-practices criterion allows.
       #
       # An advisory with no published fix keeps this red until upstream ships
       # one. That is accepted: no exception mechanism exists.
       - name: Shipped-runtime audit
-        run: npm run audit:shipped
+        run: npm run audit:shipped -- --grace-days=30

@@ -6,6 +6,7 @@ import {
   evaluateAudit,
   evaluateRuntimeCurrency,
   isRuntimeInAuditedTree,
+  parseGraceDays,
   runShippedRuntimeAudit
   // @ts-expect-error — mjs with JSDoc types, no .d.ts emitted.
 } from './shipped-runtime.mjs'
@@ -133,6 +134,76 @@ describe('evaluateRuntimeCurrency', () => {
     })
   })
 
+  describe('grace period', () => {
+    const daysAgo = (days: number, extraMs = 0): string =>
+      new Date(NOW.getTime() - days * 86_400_000 - extraMs).toISOString()
+
+    function tolerant(
+      installed: string,
+      times: Record<string, string>
+    ): { status: string; message?: string } {
+      return evaluateRuntimeCurrency({ installed, times, now: NOW, graceDays: 30 })
+    }
+
+    it('tolerates a patch available for exactly the grace period, and says so', () => {
+      const result = tolerant('45.2.0', { ...lines, '45.2.1': daysAgo(30) })
+      expect(result.status).toBe('lagging')
+      expect(result.message).toContain('45.2.1')
+      expect(result.message).toContain('30 days')
+    })
+
+    it('stops tolerating one millisecond past the grace period', () => {
+      expect(tolerant('45.2.0', { ...lines, '45.2.1': daysAgo(30, 1) }).status).toBe('behind')
+    })
+
+    it('measures from the oldest missing patch, so a new patch does not restart the clock', () => {
+      const result = tolerant('45.2.0', {
+        ...lines,
+        '45.2.1': daysAgo(40),
+        '45.2.2': daysAgo(3)
+      })
+      expect(result.status).toBe('behind')
+      expect(result.message).toContain('45.2.2')
+    })
+
+    it('reports a current runtime as current', () => {
+      expect(tolerant('45.2.0', lines).status).toBe('ok')
+    })
+
+    it('tolerates a retired line within the grace period', () => {
+      const result = tolerant('42.3.0', {
+        ...lines,
+        '45.0.0': daysAgo(20),
+        '45.2.0': daysAgo(3)
+      })
+      expect(result.status).toBe('lagging')
+      expect(result.message).toContain('45, 44, 43')
+    })
+
+    it('measures a retired line from the first release of the major that retired it', () => {
+      expect(
+        tolerant('42.3.0', { ...lines, '45.0.0': daysAgo(31), '45.2.0': daysAgo(3) }).status
+      ).toBe('unsupported')
+    })
+
+    it('measures a line two majors out from the major that actually retired it', () => {
+      expect(
+        tolerant('41.0.0', { ...lines, '41.0.0': OLD, '45.0.0': daysAgo(5), '45.2.0': daysAgo(3) })
+          .status
+      ).toBe('unsupported')
+    })
+
+    it('gives no tolerance to an installed prerelease', () => {
+      expect(tolerant('46.0.0-beta.1', { ...lines, '46.0.0-beta.1': OLD }).status).toBe(
+        'unsupported'
+      )
+    })
+
+    it('is strict when no grace period is given', () => {
+      expect(check('45.2.0', { ...lines, '45.2.1': daysAgo(3) }).status).toBe('behind')
+    })
+  })
+
   it('ignores the non-version keys of the registry time map', () => {
     expect(check('45.2.0', { ...lines, created: OLD, modified: OLD }).status).toBe('ok')
   })
@@ -177,8 +248,9 @@ describe('runShippedRuntimeAudit', () => {
 
   function run(
     outputs: Partial<Record<string, string>>,
-    installed: string | undefined = '45.2.0'
-  ): { ok: boolean; failures: { kind: string; message: string }[] } {
+    installed: string | undefined = '45.2.0',
+    graceDays = 0
+  ): { ok: boolean; failures: { kind: string; message: string }[]; notices: string[] } {
     const merged = { ...healthy, ...outputs }
     return runShippedRuntimeAudit({
       runNpm: (args: string[]) => {
@@ -186,12 +258,13 @@ describe('runShippedRuntimeAudit', () => {
         return { stdout: merged[command] ?? '' }
       },
       readInstalledVersion: () => installed,
+      graceDays,
       now: NOW
     })
   }
 
   it('passes when every check passes', () => {
-    expect(run({})).toEqual({ ok: true, failures: [] })
+    expect(run({})).toEqual({ ok: true, failures: [], notices: [] })
   })
 
   it('names the package and advisory of a finding', () => {
@@ -233,6 +306,41 @@ describe('runShippedRuntimeAudit', () => {
     expect(run({ ls: 'not json' }).failures[0].kind).toBe('unavailable')
   })
 
+  describe('with a grace period', () => {
+    const behind = JSON.stringify({ '45.2.1': '2026-11-01T00:00:00.000Z', '45.2.0': OLD })
+
+    it('passes tolerated lag and reports it as a notice', () => {
+      const { ok, failures, notices } = run({ view: behind }, '45.2.0', 30)
+      expect(ok).toBe(true)
+      expect(failures).toEqual([])
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toContain('45.2.1')
+    })
+
+    it('fails the same lag without one', () => {
+      expect(run({ view: behind }).failures.map((f) => f.kind)).toEqual(['behind'])
+    })
+
+    it('never tolerates an advisory', () => {
+      const { ok, failures } = run(
+        {
+          audit: JSON.stringify(auditReport({ 'bad-pkg': vulnerability('moderate') })),
+          view: behind
+        },
+        '45.2.0',
+        30
+      )
+      expect(ok).toBe(false)
+      expect(failures.map((f) => f.kind)).toEqual(['finding'])
+    })
+
+    it('never tolerates unreadable data', () => {
+      const { ok, failures } = run({ view: 'not json' }, '45.2.0', 30)
+      expect(ok).toBe(false)
+      expect(failures[0].kind).toBe('unavailable')
+    })
+  })
+
   it('fails when the lockfile does not name the runtime', () => {
     const result = runShippedRuntimeAudit({
       runNpm: (args: string[]) => ({ stdout: healthy[args[0]] }),
@@ -240,6 +348,26 @@ describe('runShippedRuntimeAudit', () => {
       now: NOW
     })
     expect(result.failures[0].kind).toBe('unavailable')
+  })
+})
+
+describe('parseGraceDays', () => {
+  it('defaults to no grace period', () => {
+    expect(parseGraceDays([])).toBe(0)
+  })
+
+  it('reads the flag', () => {
+    expect(parseGraceDays(['--grace-days=30'])).toBe(30)
+  })
+
+  it.each([
+    '--grace-days=abc',
+    '--grace-days=-1',
+    '--grace-days=',
+    '--grace-days',
+    '--grace-days=1.5'
+  ])('rejects %s rather than running without the intended policy', (flag) => {
+    expect(() => parseGraceDays([flag])).toThrow(/grace-days/)
   })
 })
 
@@ -257,6 +385,7 @@ describe('the gates share one definition', () => {
     const preflight = read('scripts/preflight.mjs')
     expect(preflight).toMatch(/\['run', 'audit:shipped'\]/)
     expect(preflight).not.toMatch(/\['audit',/)
+    expect(preflight).not.toMatch(/grace-days/)
   })
 
   it('runs it from the nightly audit job, with no separate audit call', () => {
@@ -267,7 +396,7 @@ describe('the gates share one definition', () => {
       jobs: Record<string, { steps: Step[] }>
     }
     const runs = nightly.jobs.audit.steps.map((step) => step.run ?? '')
-    expect(runs).toContain('npm run audit:shipped')
+    expect(runs).toContain('npm run audit:shipped -- --grace-days=30')
     expect(runs.some((run) => /\bnpm audit\b/.test(run))).toBe(false)
   })
 })
