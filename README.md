@@ -5,6 +5,7 @@ A desktop and CI/CD API client, MIT licensed and in public beta. Your requests a
 [![CI](https://github.com/dmonza/fetchpier/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dmonza/fetchpier/actions/workflows/ci.yml)
 [![Nightly](https://github.com/dmonza/fetchpier/actions/workflows/nightly.yml/badge.svg)](https://github.com/dmonza/fetchpier/actions/workflows/nightly.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16505/badge)](https://www.bestpractices.dev/projects/16505)
 
 [Download](https://github.com/dmonza/fetchpier/releases) · [Documentation](https://fetchpier.com/docs) · [Sponsor](https://ko-fi.com/dmonza)
 
