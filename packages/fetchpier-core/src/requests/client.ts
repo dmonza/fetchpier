@@ -187,7 +187,15 @@ export interface SendResult {
 
 type Interceptor = (dispatch: Dispatcher['dispatch']) => Dispatcher['dispatch']
 
-/** The absolute URL of one hop, rebuilt from the dispatch options. */
+/**
+ * The absolute URL of one hop, rebuilt from the dispatch options.
+ *
+ * The connection goes to `opts.origin`, so that is the hop's only source of
+ * identity. The path is appended literally: resolving it as a URL reference
+ * would read `//other/x` as a change of host, and everything decided from this
+ * URL (certificate, proxy, cookies) would be chosen for a server the bytes never
+ * reach.
+ */
 function hopUrl(opts: Dispatcher.DispatchOptions): string | null {
   try {
     const origin =
@@ -196,8 +204,10 @@ function hopUrl(opts: Dispatcher.DispatchOptions): string | null {
         : opts.origin instanceof URL
           ? opts.origin.toString()
           : undefined
-    if (!origin) return null
-    return new URL(opts.path ?? '/', origin).toString()
+    const path = opts.path ?? '/'
+    // Without its leading slash a path could extend the authority (`@host/`).
+    if (!origin || !path.startsWith('/')) return null
+    return new URL(new URL(origin).origin + path).toString()
   } catch {
     return null
   }
@@ -369,6 +379,57 @@ function cookieInterceptor(
   }
 }
 
+/** The statuses the transport follows (`redirect-handler.js#redirectableStatusCodes`). */
+const FOLLOWED_REDIRECT_STATUSES = new Set([300, 301, 302, 303, 307, 308])
+
+/** These headers with a redirect's `Location` made absolute against `base`. */
+function withResolvedLocation<H extends { location?: unknown }>(
+  status: number,
+  headers: H,
+  base: string
+): H {
+  const { location } = headers
+  if (!FOLLOWED_REDIRECT_STATUSES.has(status) || typeof location !== 'string') return headers
+  try {
+    return { ...headers, location: new URL(location, base).toString() }
+  } catch {
+    // Not ours to report: the transport's own handling of a bad value applies.
+    return headers
+  }
+}
+
+/**
+ * Keeps a relative `Location` on the real host after a path that begins with two
+ * slashes.
+ *
+ * The transport resolves `Location` against `new URL(path, origin)`, the misreading
+ * {@link hopUrl} avoids, so `//users/x` answering `/login` would leave for a host
+ * called `users`. Composed directly inside the redirect interceptor, this hands it
+ * an absolute value it cannot misread. Any other path is left out on purpose: its
+ * response headers reach the user exactly as the server sent them.
+ */
+function relativeLocationInterceptor(): Interceptor {
+  return (dispatch) => (opts, handler) => {
+    const base = opts.path?.startsWith('//') ? hopUrl(opts) : null
+    if (!base) return dispatch(opts, handler)
+    return dispatch(opts, {
+      onRequestStart: (c, ctx) => handler.onRequestStart?.(c, ctx),
+      onRequestUpgrade: (c, status, headers, socket) =>
+        handler.onRequestUpgrade?.(c, status, headers, socket),
+      onResponseStart: (c, status, headers, statusMessage) =>
+        handler.onResponseStart?.(
+          c,
+          status,
+          withResolvedLocation(status, headers, base),
+          statusMessage
+        ),
+      onResponseData: (c, chunk) => handler.onResponseData?.(c, chunk),
+      onResponseEnd: (c, trailers) => handler.onResponseEnd?.(c, trailers),
+      onResponseError: (c, err) => handler.onResponseError?.(c, err)
+    })
+  }
+}
+
 /**
  * The dispatcher that talks to one origin: a direct `Agent`, or a `ProxyAgent`
  * when the proxy that applies to that origin is enabled. The first origin of a
@@ -448,7 +509,9 @@ function composeChain(base: Dispatcher, parts: ChainParts): Dispatcher {
     chain.push(followAuthorizationInterceptor(authorization))
   }
   if (cookies) chain.push(cookieInterceptor(cookies))
-  if (maxRedirections > 0) chain.push(interceptors.redirect({ maxRedirections }))
+  if (maxRedirections > 0) {
+    chain.push(relativeLocationInterceptor(), interceptors.redirect({ maxRedirections }))
+  }
   if (chain.length === 0) return base
   return base.compose(chain)
 }

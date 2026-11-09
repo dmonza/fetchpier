@@ -9,10 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 Fetchpier can now be recoloured: palettes for Light and Dark, from a preset or
 built by you, for all your workspaces or just one. This release also closes
-several ways a secret or a client certificate could reach the wrong place, and
-lets the command line use certificates that are not shared with the workspace.
-One change, to `--show-secrets`, alters behavior on purpose and is marked
-_Behavior change_.
+several ways a secret, a cookie or a client certificate could reach the wrong
+place, and lets the command line use certificates that are not shared with the
+workspace. One change, to `--show-secrets`, alters behavior on purpose and is
+marked _Behavior change_. If you used 0.9.4 to 0.9.6 with servers you do not
+trust, read the first entry under Security.
 
 ### Added
 
@@ -67,8 +68,23 @@ _Behavior change_.
   screen readers, and Workspace Settings offers _Reset to defaults_ only on its
   HTTP tab, the one it resets.
 
+- **A double slash in a URL's path no longer confuses the request.** A base URL
+  ending in a slash followed by a path starting with one, as in
+  `https://api.example.com//users`, reached the right server, but its cookies
+  were chosen as if `users` were the host, and a relative redirect such as
+  `/login` left for a host called `users`. The server's own cookies now apply and
+  the redirect stays on it. The path is still sent as you wrote it.
+
 ### Security
 
+- **A URL path can no longer send your cookies to the wrong server.** A request
+  whose path begins with two slashes, such as `https://a.example//b.example/x`,
+  goes to `a.example`, but Fetchpier chose its cookies as if it were going to
+  `b.example`. A server could exploit this with a redirect to itself, to collect
+  another host's cookies from your jar or to store cookies in that host's name.
+  Each request now uses the host it really connects to. If you used versions
+  0.9.4 to 0.9.6 with servers you do not trust, clear the environment's cookie
+  jar and rotate the affected sessions.
 - **An unusable proxy URL no longer prints its credentials.** When `--proxy`,
   `HTTPS_PROXY` or `HTTP_PROXY` cannot be used, the error names the flag or
   variable it came from but not the URL, so a username and password in it stay

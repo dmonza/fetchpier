@@ -717,8 +717,8 @@ describe('Redirect interceptor composition', () => {
   const noopHooks = { headerFor: () => '', capture: () => {} }
 
   it('places the cookie interceptor inside the redirect interceptor', async () => {
-    // Innermost first: the per-hop router (P1-2), the cookie jar, then the
-    // redirect interceptor that drives the loop.
+    // Innermost first: the per-hop router (P1-2), the cookie jar, the `Location`
+    // correction, then the redirect interceptor that drives the loop.
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
     await sendRequest(
       { method: 'GET', url: 'https://x/', headers: {} },
@@ -727,7 +727,7 @@ describe('Redirect interceptor composition', () => {
         cookies: noopHooks
       }
     )
-    expect(lastComposedChain).toHaveLength(3)
+    expect(lastComposedChain).toHaveLength(4)
   })
 
   it('adds the Authorization follow-up per hop only when the setting asks for it', async () => {
@@ -744,9 +744,9 @@ describe('Redirect interceptor composition', () => {
         }
       )
     await send(false)
-    expect(lastComposedChain).toHaveLength(2)
-    await send(true)
     expect(lastComposedChain).toHaveLength(3)
+    await send(true)
+    expect(lastComposedChain).toHaveLength(4)
   })
 
   it('composes the cookie interceptor even when redirects are off', async () => {

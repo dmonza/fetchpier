@@ -15,7 +15,7 @@ import { CoreError } from '../shared/context'
 import type { ClientCertEntry, HttpRequest, ProxyConfig } from '@shared/types'
 
 /**
- * Security finding P1-2 — what a redirect hop inherits (REDIR-001..007).
+ * Security finding P1-2 — what a redirect hop inherits (REDIR-001..011).
  *
  * Real servers, a real forward proxy and the real transport, for the same reason
  * as `cookie-redirect-execute.test.ts`: every case rests on the transport cleaning
@@ -450,5 +450,217 @@ describe('REDIR-003 — an API key header follows the redirect, as in Postman', 
     )
 
     expect((await final.getSeenRequests())[0].headers['x-api-key']).toBe('key-redirect-1')
+  })
+})
+
+// ── A path that begins with two slashes ─────────────────────────────────────
+
+/**
+ * `https://a//b/x` connects to `a` and asks it for `//b/x`. Read as a URL
+ * reference that path names another host, which is the misreading these cases
+ * exist to catch: the connection stays on `a`, so anything chosen for `b` lands
+ * on the wrong server.
+ */
+describe('REDIR-008 — a two-slash path does not change whose certificate is presented', () => {
+  const pathNamingB = (): string => `//localhost:${b.port}/resource`
+
+  it('presents the real host’s own certificate on a direct request', async () => {
+    a.routes.set(pathNamingB(), reply('a'))
+
+    const res = await execute(get(`${a.origin}${pathNamingB()}`), opts())
+
+    expect(res.response?.body).toBe('a')
+    expect(a.hops).toEqual([{ path: pathNamingB(), clientCert: 'client-a' }])
+    expect(b.hops).toEqual([])
+  })
+
+  it('presents nothing to a host with no certificate, even when the path names one that has', async () => {
+    c.routes.set(pathNamingB(), reply('c'))
+
+    await execute(get(`${c.origin}${pathNamingB()}`), opts())
+
+    expect(certsSeen(c)).toEqual([null])
+  })
+
+  it('does not present another host’s certificate on a redirect to a two-slash path', async () => {
+    c.routes.set('/start', redirectTo(`${c.origin}${pathNamingB()}`))
+    c.routes.set(pathNamingB(), reply('c'))
+
+    const res = await execute(get(`${c.origin}/start`), opts())
+
+    expect(res.response?.body).toBe('c')
+    expect(certsSeen(c)).toEqual([null, null])
+  })
+
+  it('treats a backslash after the first slash the same way', async () => {
+    c.routes.set(pathNamingB(), reply('c'))
+
+    const res = await execute(get(`${c.origin}/\\localhost:${b.port}/resource`), opts())
+
+    expect(res.response?.body).toBe('c')
+    expect(c.hops).toEqual([{ path: pathNamingB(), clientCert: null }])
+  })
+})
+
+describe('REDIR-009 — a two-slash path does not change what is looked up for the hop', () => {
+  /** Named only inside the path: nothing listens there, and nothing should try. */
+  const path = '//127.0.0.1:1/resource'
+
+  it('goes direct when the real host bypasses the proxy, whatever the path names', async () => {
+    await plain.forAnyRequest().thenReply(200, 'direct')
+    const asked: string[] = []
+
+    const res = await execute(
+      get(`${plain.url}${path}`),
+      opts({
+        proxy: (url) => {
+          const { hostname } = new URL(url)
+          asked.push(hostname)
+          return hostname === 'localhost' ? undefined : proxyConfig
+        }
+      })
+    )
+
+    expect(res.response?.body).toBe('direct')
+    expect(proxied).toEqual([])
+    expect(new Set(asked)).toEqual(new Set(['localhost']))
+  })
+
+  it('uses the proxy when the real host needs it, whatever the path names', async () => {
+    proxyRoutes.set(path, reply('via-proxy'))
+
+    const res = await execute(
+      get(`${plain.url}${path}`),
+      opts({
+        proxy: (url) => (new URL(url).hostname === 'localhost' ? proxyConfig : undefined)
+      })
+    )
+
+    expect(res.response?.body).toBe('via-proxy')
+    expect(proxied).toEqual([`${plain.url}${path}`])
+  })
+
+  it('never resolves TLS material for the host named in the path', async () => {
+    const pathNamingB = `//localhost:${b.port}/resource`
+    a.routes.set(pathNamingB, reply('a'))
+    const asked: string[] = []
+
+    await execute(
+      get(`${a.origin}${pathNamingB}`),
+      opts({
+        resolveTls: (url, environment, onWarning) => {
+          asked.push(new URL(url).host)
+          return resolveRequestTls(url, environment, {
+            workspacePath: workspaceDir,
+            ...(onWarning ? { onWarning } : {})
+          })
+        }
+      })
+    )
+
+    expect(asked).toEqual([`localhost:${a.port}`])
+  })
+})
+
+describe('REDIR-010 — a redirect after a two-slash path starts from the real URL', () => {
+  const start = '//users/start'
+
+  it.each([
+    ['/login', '/login'],
+    ['next', '//users/next'],
+    ['?page=2', '//users/start?page=2'],
+    ['../up', '//up']
+  ])('keeps a relative Location of %s on the real host', async (location, expected) => {
+    a.routes.set(start, redirectTo(location))
+    a.routes.set(expected, reply('landed'))
+
+    const res = await execute(get(`${a.origin}${start}`), opts())
+
+    expect(res.response?.body).toBe('landed')
+    expect(a.hops.map((h) => h.path)).toEqual([start, expected])
+    expect(certsSeen(a)).toEqual(['client-a', 'client-a'])
+  })
+
+  it('follows an absolute Location to the other host with that host’s certificate', async () => {
+    a.routes.set(start, redirectTo(`${b.origin}/final`))
+    b.routes.set('/final', reply('b'))
+
+    const res = await execute(get(`${a.origin}${start}`), opts())
+
+    expect(res.response?.body).toBe('b')
+    expect(certsSeen(a)).toEqual(['client-a'])
+    expect(certsSeen(b)).toEqual(['client-b'])
+  })
+
+  it('follows a Location that names another host with two slashes', async () => {
+    a.routes.set(start, redirectTo(`//localhost:${c.port}/final`))
+    c.routes.set('/final', reply('c'))
+
+    const res = await execute(get(`${a.origin}${start}`), opts())
+
+    expect(res.response?.body).toBe('c')
+    expect(certsSeen(a)).toEqual(['client-a'])
+    expect(certsSeen(c)).toEqual([null])
+  })
+})
+
+describe('REDIR-011 — the Location shown is the one the server sent', () => {
+  const limitedTo = (maxRedirects: number): Partial<ExecuteOptions> => ({
+    workspaceSettings: { ...opts().workspaceSettings, maxRedirects }
+  })
+
+  it('leaves it alone on an ordinary path when the redirect limit is reached', async () => {
+    a.routes.set('/one', redirectTo('/two'))
+    a.routes.set('/two', redirectTo('three'))
+
+    const res = await execute(get(`${a.origin}/one`), opts(limitedTo(1)))
+
+    expect(res.response?.status).toBe(302)
+    expect(res.response?.headers.location).toBe('three')
+  })
+
+  it('leaves it alone on a non-redirect status after a two-slash path', async () => {
+    a.routes.set('//users/new', (res) => {
+      res.writeHead(201, { location: 'created' })
+      res.end()
+    })
+
+    const res = await execute(get(`${a.origin}//users/new`), opts())
+
+    expect(res.response?.status).toBe(201)
+    expect(res.response?.headers.location).toBe('created')
+  })
+
+  it('leaves it alone after a two-slash path when redirects are off', async () => {
+    a.routes.set('//users/start', redirectTo('next'))
+
+    const res = await execute(
+      get(`${a.origin}//users/start`),
+      opts({ workspaceSettings: { ...opts().workspaceSettings, followRedirects: false } })
+    )
+
+    expect(res.response?.status).toBe(302)
+    expect(res.response?.headers.location).toBe('next')
+  })
+
+  it('shows it in absolute form when a two-slash path reaches the limit', async () => {
+    // The one documented exception: the correction runs before the transport
+    // decides whether this redirect is the one over the limit.
+    a.routes.set('//users/one', redirectTo('two'))
+    a.routes.set('//users/two', redirectTo('three'))
+
+    const res = await execute(get(`${a.origin}//users/one`), opts(limitedTo(1)))
+
+    expect(res.response?.status).toBe(302)
+    expect(res.response?.headers.location).toBe(`${a.origin}//users/three`)
+  })
+
+  it('reports a Location that cannot be parsed as a failed send, without a second hop', async () => {
+    a.routes.set('//users/start', redirectTo('http://[bad'))
+
+    const res = await execute(get(`${a.origin}//users/start`), opts())
+
+    expect(res.error).toBeDefined()
+    expect(a.hops).toHaveLength(1)
   })
 })

@@ -293,3 +293,72 @@ describe('COOKIE-004 — rejections surface as warnings on the send', () => {
     expect(await names()).toEqual(['sid'])
   })
 })
+
+describe('COOKIE-011 — a two-slash path does not change whose cookies apply', () => {
+  /** A request to hostB whose path names hostA: the connection stays on hostB. */
+  const pathNamingA = (): string => `//${hostA.replace('http://', '')}/resource`
+
+  const seedHostA = async (): Promise<void> => {
+    await server.forGet('/seed').thenReply(200, 'ok', { 'set-cookie': 'session=of-a' })
+    await execute(get(`${hostA}/seed`), opts())
+  }
+
+  it('does not send the named host’s cookie on a direct request', async () => {
+    await seedHostA()
+    const hit = await server.forAnyRequest().thenReply(200, 'ok')
+
+    await execute(get(`${hostB}${pathNamingA()}`), opts())
+
+    const seen = await hit.getSeenRequests()
+    expect(seen).toHaveLength(1)
+    expect(seen[0].headers.cookie).toBeUndefined()
+  })
+
+  it('does not send the named host’s cookie on a redirect to a two-slash path', async () => {
+    await seedHostA()
+    await server
+      .forGet('/start')
+      .thenReply(302, undefined, { location: `${hostB}${pathNamingA()}` })
+    const hit = await server.forAnyRequest().thenReply(200, 'ok')
+
+    await execute(get(`${hostB}/start`), opts())
+
+    const seen = await hit.getSeenRequests()
+    expect(seen).toHaveLength(1)
+    expect(seen[0].headers.cookie).toBeUndefined()
+  })
+
+  it('does not send the named host’s cookie when redirects are off', async () => {
+    await seedHostA()
+    const hit = await server.forAnyRequest().thenReply(200, 'ok')
+
+    await execute(get(`${hostB}${pathNamingA()}`), {
+      ...opts(),
+      workspaceSettings: { ...DEFAULT_WORKSPACE_HTTP_SETTINGS, followRedirects: false }
+    })
+
+    const seen = await hit.getSeenRequests()
+    expect(seen).toHaveLength(1)
+    expect(seen[0].headers.cookie).toBeUndefined()
+  })
+
+  it('stores a received cookie for the host that answered, not the one named', async () => {
+    await server.forAnyRequest().thenReply(200, 'ok', { 'set-cookie': 'planted=1' })
+
+    const res = await execute(get(`${hostB}${pathNamingA()}`), opts())
+
+    const stored = await list(workspaceDir, 'dev')
+    expect(stored.map((c) => c.domain)).toEqual(['127.0.0.1'])
+    expect(res.cookies?.received.map((c) => c.url)).toEqual([`${hostB}${pathNamingA()}`])
+  })
+
+  it('sends the real host its own cookie on a two-slash path', async () => {
+    await server.forGet('/seed').thenReply(200, 'ok', { 'set-cookie': 'own=yes; Path=/' })
+    await execute(get(`${hostB}/seed`), opts())
+    const hit = await server.forAnyRequest().thenReply(200, 'ok')
+
+    await execute(get(`${hostB}//users`), opts())
+
+    expect((await hit.getSeenRequests())[0].headers.cookie).toBe('own=yes')
+  })
+})
