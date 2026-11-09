@@ -1,0 +1,47 @@
+name: CodeQL
+
+# Security-oriented static analysis, which the linter in ci.yml does not provide.
+#
+# Findings are informational here: work lands directly on the default branch, so
+# a required check would not stop anything. They appear in the repository's code
+# scanning view and are reviewed before each release.
+#
+# The weekly run picks up new analysis rules on weeks with no pushes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '30 5 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (JavaScript/TypeScript)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          config: |
+            paths-ignore:
+              - test
+              - '**/*.test.ts'
+              - '**/*.test.tsx'
+              - '**/*.spec.ts'
+
+      - uses: github/codeql-action/analyze@v4

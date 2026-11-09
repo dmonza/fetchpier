@@ -92,12 +92,11 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
-      # Same threshold and scope the release gate already uses: runtime
-      # dependencies only, failing on high and critical. Moderate advisories are
-      # frequent and often unfixable without an upstream release.
+      # The same check the release gate runs: moderate-or-higher advisories in
+      # what ships, and the bundled runtime on the latest release of a supported
+      # line. Also catches a runtime patch published since the last release.
       #
-      # A high/critical advisory with no published fix will keep this red until
-      # upstream ships one. That is accepted for now — no allowlist exists yet;
-      # add one if it becomes noise rather than signal.
-      - name: npm audit (high+)
-        run: npm audit --omit=dev --audit-level=high
+      # An advisory with no published fix keeps this red until upstream ships
+      # one. That is accepted: no exception mechanism exists.
+      - name: Shipped-runtime audit
+        run: npm run audit:shipped

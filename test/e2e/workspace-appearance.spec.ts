@@ -42,6 +42,31 @@ const userOceanDark = {
   dark: { selected: 'ocean' }
 }
 
+/** The window-bounds persister's debounce, plus margin for the write to land. */
+const WINDOW_STATE_SETTLE_MS = 700
+
+/**
+ * Force the app's other writer of `appsettings.json` to run, and wait for it.
+ *
+ * The main window saves its bounds 400 ms after any move or resize. Left to
+ * chance, that lands mid-test only where the window manager settles the window
+ * after load, which made this reproducible on CI and invisible elsewhere.
+ */
+async function forceWindowStateWrite(ctx: ElectronAppContext): Promise<void> {
+  await ctx.app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    const { width, height } = win.getBounds()
+    win.setBounds({ width: width - 20, height: height - 20 })
+  })
+  await ctx.window.waitForTimeout(WINDOW_STATE_SETTLE_MS)
+}
+
+async function appSettingsSansWindowState(file: string): Promise<Record<string, unknown>> {
+  const parsed = JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>
+  delete parsed.windowState
+  return parsed
+}
+
 async function windowBackground(ctx: ElectronAppContext): Promise<string> {
   return (
     await ctx.app.evaluate(({ BrowserWindow }) =>
@@ -184,7 +209,7 @@ test.describe('appearance — workspace colour palettes', () => {
 
     const appSettingsFile = join(ctx.userDataDir, 'appsettings.json')
     const sharedSettingsFile = join(ws, '.fetchpier', 'settings.json')
-    const appSettingsBefore = JSON.parse(await fs.readFile(appSettingsFile, 'utf-8'))
+    const appSettingsBefore = await appSettingsSansWindowState(appSettingsFile)
     const sharedBefore = await fs.readFile(sharedSettingsFile, 'utf-8')
 
     await page.getByRole('button', { name: 'Workspace settings', exact: true }).click()
@@ -211,7 +236,8 @@ test.describe('appearance — workspace colour palettes', () => {
 
     // Nothing else learnt about it: not the user's settings, not the files the
     // team shares.
-    expect(JSON.parse(await fs.readFile(appSettingsFile, 'utf-8'))).toEqual(appSettingsBefore)
+    await forceWindowStateWrite(ctx)
+    expect(await appSettingsSansWindowState(appSettingsFile)).toEqual(appSettingsBefore)
     expect(await fs.readFile(sharedSettingsFile, 'utf-8')).toBe(sharedBefore)
   })
 

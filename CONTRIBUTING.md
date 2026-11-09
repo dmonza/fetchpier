@@ -43,6 +43,22 @@ If you find a typo, broken link, unclear explanation, or outdated information in
 
 Do **not** open a public issue for security vulnerabilities. Follow the process described in [`SECURITY.md`](SECURITY.md).
 
+## Running the tests
+
+The test suites are part of this repository and released under the same license. After `npm install`:
+
+```bash
+npm test               # unit and integration tests
+npm run build          # required once before the end-to-end tests
+npm run test:e2e       # end-to-end tests against the built application
+```
+
+`npm run post-req` runs the full verification gate: type checking, linting, formatting, the test suite with coverage, and a smoke test of the application. [`test/README.md`](test/README.md) covers the end-to-end setup.
+
+### Test policy
+
+Major new functionality must be added together with automated tests that exercise it, and a bug fix should come with a test that fails without the fix. Coverage is not allowed to regress: the verification gate compares every change against a committed baseline, and continuous integration runs the gate on every push. This policy applies to the maintainer today and will apply to any external contribution in the future.
+
 ## What happens with external pull requests
 
 External pull requests opened during this phase will be closed with a comment linking to this document. This is not a judgment of the work or the contributor — it is a consistent policy applied to every PR equally.

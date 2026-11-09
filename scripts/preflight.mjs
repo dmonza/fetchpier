@@ -7,7 +7,7 @@
  * first failure.
  *
  * Steps:
- *   1. npm audit (high+)               — fail on high/critical vulnerabilities
+ *   1. audit:shipped                   — advisories (moderate+) and runtime currency
  *   2. generate:licenses               — refresh THIRD_PARTY_LICENSES.txt
  *   3. prebuild:dts --check            — fail if fp-api generated dts is stale
  *   4. post-req                        — typecheck + lint + tests + coverage + smoke
@@ -52,10 +52,9 @@ function runStep(title, cmd, args) {
 
 const totalStart = performance.now()
 
-// Step 1: dependency audit. We only fail on `high` and `critical` because
-// `moderate` advisories are frequent and often unfixable without an upstream
-// release. Tighten this when the project is ready.
-runStep('npm audit (high+)', NPM, ['audit', '--omit=dev', '--audit-level=high'])
+// Step 1: what ships must be clean and current. Same check as the nightly; see
+// scripts/audit/shipped-runtime.mjs.
+runStep('audit:shipped', NPM, ['run', 'audit:shipped'])
 
 runStep('generate:licenses', NPM, ['run', 'generate:licenses'])
 runStep('prebuild:dts (--check)', NPM, ['run', 'prebuild:dts'])
