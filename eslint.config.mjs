@@ -166,7 +166,7 @@ export default tseslint.config(
   // and only via dynamic `await import()` (which `no-restricted-imports` does
   // not lint) or `import type` (allowed by `allowTypeImports`). A static value
   // import here would defeat the cold-path optimization silently by pulling
-  // openapi-parser/graphql/ajv/js-yaml into the main bundle at boot.
+  // graphql/js-yaml and the importers into the main bundle at boot.
   {
     files: ['src/**/*.{ts,tsx}'],
     rules: {

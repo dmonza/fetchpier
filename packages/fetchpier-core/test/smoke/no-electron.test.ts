@@ -36,7 +36,7 @@ describe('@fetchpier/core boundary', () => {
   it('exposes the expected cold-path namespaces (schemaImport intentionally absent)', () => {
     // REQ-0063 split schemaImport into the `@fetchpier/core/schema-import`
     // secondary entry. The main barrel must NOT expose it — that's what keeps
-    // openapi-parser/graphql/ajv/js-yaml off the main-process cold path.
+    // graphql/js-yaml and the importers off the main-process cold path.
     const script = `const c = require(${JSON.stringify(DIST)}); console.log(JSON.stringify(Object.keys(c)))`
     const out = execFileSync(process.execPath, ['-e', script], { encoding: 'utf-8' })
     const keys = JSON.parse(out) as string[]

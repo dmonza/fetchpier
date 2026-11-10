@@ -1,7 +1,7 @@
 // Schema-import IPC handler.
 //
-// The schema-import pipeline (`@readme/openapi-parser`, `graphql`, `js-yaml`,
-// `ajv` and friends) is **not** loaded at boot. `@fetchpier/core` exposes it
+// The schema-import pipeline (`graphql`, `js-yaml` and the importers) is
+// **not** loaded at boot. `@fetchpier/core` exposes it
 // through the secondary entry point `@fetchpier/core/schema-import`, and this
 // handler dynamically `import()`s the module on the first IPC call, caching
 // the resulting promise so the second call onward is free (REQ-0063).

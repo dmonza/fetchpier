@@ -33,7 +33,7 @@ export default defineConfig((options) => ({
   // the CLI's own `dependencies` so `npm install -g` pulls them from the registry
   // like any normal dep — bundling them would only bloat the dist with no gain.
   // The main core barrel does not re-export `schema-import`, so its heavy deps
-  // (@readme/openapi-parser, graphql, js-yaml) are unreachable and not declared.
+  // (graphql, js-yaml) are unreachable and not declared.
   //
   // `libsodium-wrappers` is a fourth entry in that `dependencies` list without
   // appearing here, and the asymmetry is the point: core reaches it through

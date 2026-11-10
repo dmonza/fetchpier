@@ -1,0 +1,13 @@
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+# @rawSubtype: xml
+POST https://api.example.com/v1/reports
+Content-Type: application/xml
+
+{
+  "amount": 0,
+  "currency": "USD"
+}

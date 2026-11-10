@@ -1,0 +1,6 @@
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+GET https://catalog.example.com/api/export

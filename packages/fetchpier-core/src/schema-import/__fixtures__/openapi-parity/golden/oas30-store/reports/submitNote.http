@@ -1,0 +1,9 @@
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+PUT https://api.example.com/v1/reports
+Content-Type: text/plain
+
+plain text note

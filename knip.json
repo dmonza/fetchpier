@@ -21,13 +21,7 @@
         "@fetchpier/core/activity-log": ["packages/fetchpier-core/src/activity-log/index.ts"]
       },
       "ignore": ["**/*.d.ts"],
-      "ignoreDependencies": [
-        "@readme/openapi-parser",
-        "fast-xml-parser",
-        "graphql",
-        "js-yaml",
-        "mime"
-      ]
+      "ignoreDependencies": ["fast-xml-parser", "graphql", "js-yaml", "mime"]
     },
     "packages/fetchpier-core": {
       "entry": ["**/*.test.ts"],

@@ -1,0 +1,246 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Parity Store", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.com/v1" }],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "tags": ["orders"],
+        "summary": "List orders",
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/TraceId" },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/Status" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/OrderList" } }
+      },
+      "post": {
+        "operationId": "createOrder",
+        "tags": ["orders"],
+        "requestBody": { "$ref": "#/components/requestBodies/NewOrder" },
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/orders/{orderId}": {
+      "parameters": [{ "$ref": "#/components/parameters/OrderId" }],
+      "get": {
+        "operationId": "getOrder",
+        "tags": ["orders"],
+        "security": [{ "apiKey": [] }],
+        "responses": { "200": { "description": "ok" } }
+      },
+      "put": {
+        "operationId": "replaceOrder",
+        "tags": ["orders"],
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/OrderAlias" } }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      },
+      "delete": {
+        "operationId": "deleteOrder",
+        "tags": ["orders"],
+        "security": [],
+        "responses": { "204": { "description": "gone" } }
+      }
+    },
+    "/legacy/orders/{orderId}": { "$ref": "#/paths/~1orders~1{orderId}" },
+    "/customers/{id}": {
+      "get": {
+        "operationId": "getCustomer",
+        "tags": ["customers"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "expand", "in": "query", "required": false, "schema": { "type": "boolean" } }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      },
+      "post": {
+        "operationId": "updateCustomerForm",
+        "tags": ["customers"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CustomerForm" }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/items": {
+      "post": {
+        "operationId": "createItem",
+        "tags": ["items"],
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Item~1Detail~0v2" } }
+          }
+        },
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/spaced": {
+      "post": {
+        "operationId": "createSpaced",
+        "tags": ["items"],
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Spaced%20Name" } }
+          }
+        },
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/reports": {
+      "post": {
+        "operationId": "submitReport",
+        "tags": ["reports"],
+        "requestBody": {
+          "content": {
+            "application/xml": { "schema": { "$ref": "#/components/schemas/Money" } }
+          }
+        },
+        "responses": { "202": { "description": "accepted" } }
+      },
+      "put": {
+        "operationId": "submitNote",
+        "tags": ["reports"],
+        "requestBody": {
+          "content": {
+            "text/plain": { "schema": { "$ref": "#/components/schemas/Note" } }
+          }
+        },
+        "responses": { "202": { "description": "accepted" } }
+      }
+    },
+    "/pointer": {
+      "get": {
+        "operationId": "pointerIntoSchema",
+        "tags": ["misc"],
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/Customer/properties/id" }
+          }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Status": { "type": "string", "enum": ["open", "shipped", "closed"] },
+      "Money": {
+        "type": "object",
+        "properties": {
+          "amount": { "type": "number" },
+          "currency": { "type": "string", "enum": ["USD", "EUR"] }
+        }
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "street": { "type": "string" },
+          "city": { "type": "string" },
+          "zip": { "type": "string", "example": "12345" }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "email": { "type": "string", "format": "email" },
+          "address": { "$ref": "#/components/schemas/Address" },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "LineItem": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "qty": { "type": "integer", "default": 1 },
+          "price": { "$ref": "#/components/schemas/Money" }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "customer": { "$ref": "#/components/schemas/Customer" },
+          "total": { "$ref": "#/components/schemas/Money" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/LineItem" } },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "status": { "$ref": "#/components/schemas/Status" }
+        }
+      },
+      "OrderAlias": { "$ref": "#/components/schemas/OrderAlias2" },
+      "OrderAlias2": { "$ref": "#/components/schemas/Order" },
+      "CustomerForm": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "age": { "type": "integer" },
+          "vip": { "type": "boolean", "example": true }
+        }
+      },
+      "Item/Detail~v2": {
+        "type": "object",
+        "properties": {
+          "label": { "type": "string" },
+          "link": { "type": "string", "format": "uri" }
+        }
+      },
+      "Spaced Name": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Address" },
+          { "type": "object", "properties": { "note": { "type": "string" } } }
+        ]
+      },
+      "Note": { "type": "string", "example": "plain text note" }
+    },
+    "parameters": {
+      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+      "TraceId": {
+        "name": "X-Trace-Id",
+        "in": "header",
+        "required": true,
+        "example": "trace-0001",
+        "schema": { "type": "string" }
+      },
+      "OrderId": {
+        "name": "orderId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      }
+    },
+    "requestBodies": {
+      "NewOrder": {
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } }
+      }
+    },
+    "responses": {
+      "OrderList": {
+        "description": "ok",
+        "content": {
+          "application/json": {
+            "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Order" } }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" },
+      "apiKey": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    }
+  }
+}

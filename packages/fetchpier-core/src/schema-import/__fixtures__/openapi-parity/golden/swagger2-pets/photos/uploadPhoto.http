@@ -1,0 +1,15 @@
+# @id <id>
+# @auth
+# type: api-key
+# location: query
+# key: key
+# value: 
+# @end-auth
+# @rawSubtype: xml
+PUT https://pets.example.com/v2/pets/0/photo?key=
+Content-Type: application/xml
+
+{
+  "url": "https://example.com",
+  "caption": "string"
+}

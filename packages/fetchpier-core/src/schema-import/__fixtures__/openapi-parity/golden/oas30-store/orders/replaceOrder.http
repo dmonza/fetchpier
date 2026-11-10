@@ -1,0 +1,40 @@
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+# @rawSubtype: json
+PUT https://api.example.com/v1/orders/string
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "customer": {
+    "id": 0,
+    "email": "user@example.com",
+    "address": {
+      "street": "string",
+      "city": "string",
+      "zip": "12345"
+    },
+    "tags": [
+      "string"
+    ]
+  },
+  "total": {
+    "amount": 0,
+    "currency": "USD"
+  },
+  "items": [
+    {
+      "sku": "string",
+      "qty": 1,
+      "price": {
+        "amount": 0,
+        "currency": "USD"
+      }
+    }
+  ],
+  "createdAt": "2026-01-01T00:00:00Z",
+  "status": "open"
+}

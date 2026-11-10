@@ -1,0 +1,20 @@
+# @id <id>
+# @auth
+# type: basic
+# username: 
+# password: 
+# @end-auth
+# @rawSubtype: json
+PATCH https://catalog.example.com/api/products/string/variants
+Content-Type: application/json
+
+[
+  {
+    "color": "string",
+    "size": "S",
+    "price": {
+      "value": 9.99,
+      "currency": "USD"
+    }
+  }
+]

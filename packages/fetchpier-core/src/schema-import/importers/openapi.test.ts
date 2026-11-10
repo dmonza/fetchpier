@@ -144,7 +144,10 @@ describe('importOpenApi — malformed and edge inputs', () => {
     await expect(importOpenApi(notOpenApi)).rejects.toThrow(/Not a recognizable OpenAPI/)
   })
 
-  it('emits a "dereference failed" warning and falls back to the raw doc', async () => {
+  // Was: 'emits a "dereference failed" warning and falls back to the raw doc'. The
+  // whole-document fallback is gone (REQ "In-house OpenAPI reference
+  // resolution", CA-12): the broken ref degrades only its own location.
+  it('reports a broken ref as an unresolved reference and still imports the operation', async () => {
     const withBadRef = JSON.stringify({
       openapi: '3.0.0',
       info: { title: 'BadRef', version: '1.0.0' },
@@ -159,9 +162,9 @@ describe('importOpenApi — malformed and edge inputs', () => {
       }
     })
     const { warnings, schema } = await importOpenApi(withBadRef)
-    expect(warnings.some((w) => w.kind === 'other' && /dereference failed/.test(w.message))).toBe(
-      true
-    )
+    // Responses are never read by the importer, so this ref is never needed (on demand).
+    expect(warnings.some((w) => /dereference failed/.test(w.message))).toBe(false)
+    expect(warnings.filter((w) => w.kind === 'unresolved-ref')).toEqual([])
     expect(schema.operations).toHaveLength(1)
   })
 
@@ -242,5 +245,755 @@ describe('importOpenApi — malformed and edge inputs', () => {
     // skipped-operation warning. Either way it must not throw.
     const { schema, warnings } = await importOpenApi(broken)
     expect(schema.operations.length + warnings.length).toBeGreaterThan(0)
+  })
+})
+
+// ── Reference resolution (REQ "In-house OpenAPI reference resolution") ─────
+// CA-xx ids refer to that requirement's acceptance criteria; Dn to the plan's
+// triage table (PLAN "In-house OpenAPI reference resolution").
+
+type Doc = Record<string, unknown>
+type Imported = Awaited<ReturnType<typeof importOpenApi>>
+
+function v3(paths: Doc, components: Doc = {}, extra: Doc = {}): string {
+  return JSON.stringify({
+    openapi: '3.0.3',
+    info: { title: 'Refs', version: '1' },
+    servers: [{ url: 'https://api.example.com' }],
+    paths,
+    components,
+    ...extra
+  })
+}
+
+const jsonBody = (schema: unknown): Doc => ({ content: { 'application/json': { schema } } })
+const ok = { '200': { description: 'ok' } }
+const schemaRef = (name: string): { $ref: string } => ({ $ref: `#/components/schemas/${name}` })
+
+function op(result: Imported, name: string): Imported['schema']['operations'][number] {
+  const found = result.schema.operations.find((o) => o.name === name)
+  if (!found) throw new Error(`operation ${name} not imported`)
+  return found
+}
+
+function bodyOf(result: Imported, name: string): unknown {
+  return JSON.parse(op(result, name).editorState.body)
+}
+
+function unresolved(result: Imported): Array<{ message: string; location?: string }> {
+  return result.warnings
+    .filter((w) => w.kind === 'unresolved-ref')
+    .map(({ message, location }) => (location === undefined ? { message } : { message, location }))
+}
+
+const USER = {
+  type: 'object',
+  properties: { id: { type: 'integer' }, email: { type: 'string', format: 'email' } }
+}
+
+describe('importOpenApi — reference resolution, happy paths', () => {
+  it('CA-01 an internal schema reference feeds the generated body', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/users': {
+            post: {
+              operationId: 'createUser',
+              requestBody: jsonBody(schemaRef('User')),
+              responses: ok
+            }
+          }
+        },
+        { schemas: { User: USER } }
+      )
+    )
+    expect(bodyOf(r, 'createUser')).toEqual({ id: 0, email: 'user@example.com' })
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('CA-02 Swagger 2.0 references in definitions, parameters, responses and securityDefinitions', async () => {
+    const r = await importOpenApi(
+      JSON.stringify({
+        swagger: '2.0',
+        info: { title: 'S', version: '1' },
+        host: 'api.example.com',
+        security: [{ ApiKey: [] }],
+        securityDefinitions: { ApiKey: { $ref: '#/x-defs/ApiKey' } },
+        'x-defs': { ApiKey: { type: 'apiKey', in: 'header', name: 'X-Key' } },
+        parameters: { Limit: { name: 'limit', in: 'query', type: 'integer' } },
+        responses: { NotFound: { description: 'nope' } },
+        definitions: { Pet: { type: 'object', properties: { name: { type: 'string' } } } },
+        paths: {
+          '/pets': {
+            post: {
+              operationId: 'addPet',
+              parameters: [
+                { $ref: '#/parameters/Limit' },
+                { in: 'body', name: 'body', schema: { $ref: '#/definitions/Pet' } }
+              ],
+              responses: { '404': { $ref: '#/responses/NotFound' } }
+            }
+          }
+        }
+      })
+    )
+    const addPet = op(r, 'addPet')
+    expect(bodyOf(r, 'addPet')).toEqual({ name: 'string' })
+    expect(addPet.editorState.params.map((p) => p.key)).toEqual(['limit'])
+    expect(addPet.editorState.auth).toEqual({
+      type: 'api-key',
+      key: 'X-Key',
+      value: '',
+      location: 'header'
+    })
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('CA-03 JSON and YAML (with anchors) import identically', async () => {
+    const yaml = `
+openapi: 3.0.3
+info: { title: Refs, version: '1' }
+servers: [{ url: 'https://api.example.com' }]
+paths:
+  /a:
+    post:
+      operationId: postA
+      parameters: &shared
+        - { name: q, in: query, schema: { $ref: '#/components/schemas/Count' } }
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+      responses: { '200': { description: ok } }
+  /b:
+    get:
+      operationId: getB
+      parameters: *shared
+      responses: { '200': { description: ok } }
+components:
+  schemas:
+    Count: { type: integer }
+    User: { type: object, properties: { id: { type: integer }, email: { type: string, format: email } } }
+`
+    const shared = [{ name: 'q', in: 'query', schema: schemaRef('Count') }]
+    const json = v3(
+      {
+        '/a': {
+          post: {
+            operationId: 'postA',
+            parameters: shared,
+            requestBody: jsonBody(schemaRef('User')),
+            responses: ok
+          }
+        },
+        '/b': { get: { operationId: 'getB', parameters: shared, responses: ok } }
+      },
+      { schemas: { Count: { type: 'integer' }, User: USER } }
+    )
+    const strip = (x: Imported): unknown =>
+      JSON.parse(
+        JSON.stringify(x, (k, v) =>
+          k === 'id' && typeof v === 'string' && v.length === 36 ? '<id>' : v
+        )
+      )
+    expect(strip(await importOpenApi(yaml))).toEqual(strip(await importOpenApi(json)))
+  })
+
+  it('CA-04 a path item reference yields the referenced operations', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/users/{id}': {
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+          get: { operationId: 'getUser', responses: ok },
+          delete: { operationId: 'deleteUser', responses: ok }
+        },
+        '/v2/users/{id}': { $ref: '#/paths/~1users~1{id}' }
+      })
+    )
+    const urls = r.schema.operations.map((o) => `${o.editorState.method} ${o.editorState.url}`)
+    expect(urls).toEqual([
+      'GET https://api.example.com/users/0',
+      'DELETE https://api.example.com/users/0',
+      'GET https://api.example.com/v2/users/0',
+      'DELETE https://api.example.com/v2/users/0'
+    ])
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('CA-05 references in every position the importer reads', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/orders/{id}': {
+            parameters: [{ $ref: '#/components/parameters/Id' }],
+            put: {
+              operationId: 'putOrder',
+              security: [{ token: [] }],
+              parameters: [{ $ref: '#/components/parameters/Trace' }],
+              requestBody: { $ref: '#/components/requestBodies/Order' },
+              responses: ok
+            }
+          }
+        },
+        {
+          schemas: { User: USER },
+          parameters: {
+            Id: { name: 'id', in: 'path', required: true, schema: { type: 'integer' } },
+            Trace: { name: 'X-Trace', in: 'header', example: 't-1', schema: { type: 'string' } }
+          },
+          requestBodies: { Order: jsonBody(schemaRef('User')) },
+          securitySchemes: { token: { $ref: '#/components/x-schemes/bearer' } },
+          'x-schemes': { bearer: { type: 'http', scheme: 'bearer' } }
+        }
+      )
+    )
+    const put = op(r, 'putOrder')
+    expect(put.editorState.url).toBe('https://api.example.com/orders/0')
+    expect(put.editorState.headers.find((h) => h.key === 'X-Trace')?.value).toBe('t-1')
+    expect(bodyOf(r, 'putOrder')).toEqual({ id: 0, email: 'user@example.com' })
+    expect(put.editorState.auth).toEqual({ type: 'bearer', token: '' })
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('D9 an operation object written as a reference is resolved too', async () => {
+    const r = await importOpenApi(
+      v3(
+        { '/me': { get: { $ref: '#/x-ops/getMe' } } },
+        {},
+        { 'x-ops': { getMe: { operationId: 'getMe', responses: ok } } }
+      )
+    )
+    expect(op(r, 'getMe').editorState.method).toBe('GET')
+  })
+
+  it('CA-06 pointers outside components and into a schema resolve', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/t': {
+            get: {
+              operationId: 'getT',
+              parameters: [
+                { $ref: '#/x-shared/headers/Trace' },
+                {
+                  name: 'uid',
+                  in: 'query',
+                  schema: { $ref: '#/components/schemas/User/properties/id' }
+                }
+              ],
+              responses: ok
+            }
+          }
+        },
+        { schemas: { User: USER } },
+        {
+          'x-shared': {
+            headers: { Trace: { name: 'X-Trace', in: 'header', schema: { type: 'boolean' } } }
+          }
+        }
+      )
+    )
+    const t = op(r, 'getT')
+    expect(t.editorState.headers.find((h) => h.key === 'X-Trace')?.value).toBe('false')
+    expect(t.editorState.params.find((p) => p.key === 'uid')?.value).toBe('0')
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('CA-26 OpenAPI 3.1: type arrays, ignored siblings, components.pathItems', async () => {
+    const r = await importOpenApi(
+      JSON.stringify({
+        openapi: '3.1.0',
+        info: { title: 'T31', version: '1' },
+        paths: { '/events': { $ref: '#/components/pathItems/Events' } },
+        components: {
+          pathItems: {
+            Events: {
+              post: {
+                operationId: 'createEvent',
+                requestBody: jsonBody({
+                  $ref: '#/components/schemas/Event',
+                  description: 'ignored'
+                }),
+                responses: ok
+              }
+            }
+          },
+          schemas: {
+            Event: {
+              type: 'object',
+              properties: {
+                title: { type: ['string', 'null'] },
+                seats: { type: ['null', 'integer'] }
+              }
+            }
+          }
+        }
+      })
+    )
+    expect(bodyOf(r, 'createEvent')).toEqual({ title: 'string', seats: 0 })
+  })
+})
+
+describe('importOpenApi — sibling members are ignored (CA-07, D14)', () => {
+  it('drops siblings next to a $ref in parameter schemas and body schemas', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/s': {
+            post: {
+              operationId: 'postS',
+              parameters: [
+                {
+                  name: 'n',
+                  in: 'query',
+                  schema: { $ref: '#/components/schemas/Count', type: 'string' }
+                }
+              ],
+              requestBody: jsonBody({ $ref: '#/components/schemas/User', example: { id: 99 } }),
+              responses: ok
+            }
+          }
+        },
+        { schemas: { Count: { type: 'integer' }, User: USER } }
+      )
+    )
+    expect(op(r, 'postS').editorState.params.find((p) => p.key === 'n')?.value).toBe('0')
+    expect(bodyOf(r, 'postS')).toEqual({ id: 0, email: 'user@example.com' })
+  })
+})
+
+describe('importOpenApi — unresolvable references', () => {
+  const MISSING = '#/components/schemas/Missing'
+  const notFound = (ref: string): string => `reference ${ref} not found in the OpenAPI spec`
+
+  it('CA-12 a missing target degrades only its location', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/a': {
+            post: {
+              operationId: 'postA',
+              requestBody: jsonBody({ type: 'object', properties: { owner: { $ref: MISSING } } }),
+              responses: ok
+            }
+          },
+          '/b': {
+            post: { operationId: 'postB', requestBody: jsonBody(schemaRef('User')), responses: ok }
+          }
+        },
+        { schemas: { User: USER } }
+      )
+    )
+    expect(bodyOf(r, 'postA')).toEqual({ owner: notFound(MISSING) })
+    expect(bodyOf(r, 'postB')).toEqual({ id: 0, email: 'user@example.com' })
+    expect(unresolved(r)).toEqual([
+      { message: `${MISSING} — not found in the document`, location: 'POST /a' }
+    ])
+    expect(r.warnings.some((w) => /dereference failed/.test(w.message))).toBe(false)
+  })
+
+  it('CA-13 one warning per distinct reference, with count and first location', async () => {
+    const getWith = (id: string, ref: string): Doc => ({
+      get: { operationId: id, requestBody: jsonBody({ $ref: ref }), responses: ok }
+    })
+    const r = await importOpenApi(
+      v3({
+        '/x': getWith('getX', '#/components/schemas/Gone'),
+        '/y': getWith('getY', '#/components/schemas/Gone'),
+        '/w': getWith('getW', '#/components/schemas/AlsoGone'),
+        '/z': getWith('getZ', '#/components/schemas/Gone')
+      })
+    )
+    expect(unresolved(r)).toEqual([
+      {
+        message: '#/components/schemas/Gone — not found in the document (used in 3 places)',
+        location: 'GET /x'
+      },
+      { message: '#/components/schemas/AlsoGone — not found in the document', location: 'GET /w' }
+    ])
+  })
+
+  it('CA-14 marker in value positions; the default placeholder in the path (D2, D3)', async () => {
+    const broken = { $ref: MISSING }
+    const r = await importOpenApi(
+      v3({
+        '/items/{id}': {
+          put: {
+            operationId: 'putItem',
+            parameters: [
+              { name: 'id', in: 'path', required: true, schema: broken },
+              { name: 'q', in: 'query', schema: broken },
+              { name: 'X-H', in: 'header', schema: broken }
+            ],
+            requestBody: {
+              content: {
+                'application/x-www-form-urlencoded': {
+                  schema: { type: 'object', properties: { f: broken, g: { type: 'integer' } } }
+                }
+              }
+            },
+            responses: ok
+          }
+        }
+      })
+    )
+    const put = op(r, 'putItem').editorState
+    expect(put.url).toBe('https://api.example.com/items/string')
+    expect(put.params.find((p) => p.key === 'q')?.value).toBe(notFound(MISSING))
+    expect(put.headers.find((h) => h.key === 'X-H')?.value).toBe(notFound(MISSING))
+    expect(put.formFields.map((f) => [f.key, f.value])).toEqual([
+      ['f', notFound(MISSING)],
+      ['g', '0']
+    ])
+    expect(unresolved(r)).toEqual([
+      {
+        message: `${MISSING} — not found in the document (used in 4 places)`,
+        location: 'PUT /items/{id}'
+      }
+    ])
+  })
+
+  it('CA-15 unresolvable structural references are treated as absent', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/p': {
+            get: {
+              operationId: 'getP',
+              security: [{ gone: [] }],
+              parameters: [
+                { $ref: '#/components/parameters/Gone' },
+                { name: 'keep', in: 'query', schema: { type: 'string' } }
+              ],
+              requestBody: { $ref: '#/components/requestBodies/Gone' },
+              responses: ok
+            }
+          },
+          '/ghost': { $ref: '#/paths/~1nowhere' },
+          '/after': { get: { operationId: 'getAfter', responses: ok } }
+        },
+        { securitySchemes: { gone: { $ref: '#/components/x/none' } } }
+      )
+    )
+    const p = op(r, 'getP').editorState
+    expect(p.params.map((x) => x.key)).toEqual(['keep'])
+    expect(p.bodyType).toBe('none')
+    expect(p.auth).toEqual({ type: 'none' })
+    expect(r.schema.operations.map((o) => o.name)).toEqual(['getP', 'getAfter'])
+    expect(unresolved(r)).toEqual([
+      { message: '#/components/parameters/Gone — not found in the document', location: 'GET /p' },
+      {
+        message: '#/components/requestBodies/Gone — not found in the document',
+        location: 'GET /p'
+      },
+      { message: '#/components/x/none — not found in the document', location: 'GET /p' },
+      { message: '#/paths/~1nowhere — not found in the document', location: '#/paths/~1ghost' }
+    ])
+  })
+
+  it('D1 responses, response headers and Example objects are never read, so never reported', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/r': {
+          post: {
+            operationId: 'postR',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: { type: 'string' },
+                  examples: { a: { $ref: '#/components/examples/Gone' } }
+                }
+              }
+            },
+            responses: {
+              '200': { $ref: '#/components/responses/Gone' },
+              '201': {
+                description: 'ok',
+                headers: { 'X-Rate': { $ref: '#/components/headers/Gone' } }
+              }
+            }
+          }
+        }
+      })
+    )
+    expect(unresolved(r)).toEqual([])
+    expect(bodyOf(r, 'postR')).toBe('string')
+  })
+
+  it('CA-16 a broken reference inside an unused component is silent', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/u': {
+            post: { operationId: 'postU', requestBody: jsonBody(schemaRef('User')), responses: ok }
+          }
+        },
+        {
+          schemas: { User: USER, Unused: { type: 'object', properties: { x: { $ref: MISSING } } } }
+        }
+      )
+    )
+    expect(unresolved(r)).toEqual([])
+    expect(bodyOf(r, 'postU')).toEqual({ id: 0, email: 'user@example.com' })
+  })
+
+  it('D13 an inherited path-level parameter counts once per operation that needs it', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/inh': {
+          parameters: [{ $ref: '#/components/parameters/Gone' }],
+          get: { operationId: 'getInh', responses: ok },
+          delete: { operationId: 'deleteInh', responses: ok }
+        }
+      })
+    )
+    expect(unresolved(r)).toEqual([
+      {
+        message: '#/components/parameters/Gone — not found in the document (used in 2 places)',
+        location: 'GET /inh'
+      }
+    ])
+  })
+
+  it('CA-17 a broken link inside a chain reports the failing reference', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/c': {
+            post: { operationId: 'postC', requestBody: jsonBody(schemaRef('A')), responses: ok }
+          }
+        },
+        { schemas: { A: { $ref: MISSING } } }
+      )
+    )
+    expect(bodyOf(r, 'postC')).toBe(notFound(MISSING))
+    expect(unresolved(r)).toEqual([
+      { message: `${MISSING} — not found in the document`, location: 'POST /c' }
+    ])
+  })
+
+  it('CA-18 a pure reference loop is unresolvable in value and structural positions', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/l': {
+            post: {
+              operationId: 'postL',
+              parameters: [{ $ref: '#/components/parameters/P' }],
+              requestBody: jsonBody(schemaRef('X')),
+              responses: ok
+            }
+          }
+        },
+        {
+          schemas: { X: schemaRef('X') },
+          parameters: {
+            P: { $ref: '#/components/parameters/Q' },
+            Q: { $ref: '#/components/parameters/P' }
+          }
+        }
+      )
+    )
+    expect(bodyOf(r, 'postL')).toBe(notFound('#/components/schemas/X'))
+    expect(op(r, 'postL').editorState.params).toEqual([])
+    expect(unresolved(r)).toEqual([
+      { message: '#/components/parameters/P — circular reference chain', location: 'POST /l' },
+      { message: '#/components/schemas/X — circular reference chain', location: 'POST /l' }
+    ])
+  })
+
+  it('CA-19 (unit part) external references get the marker and an external warning', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/e': {
+          post: {
+            operationId: 'postE',
+            parameters: [
+              { name: 'q', in: 'query', schema: { $ref: 'https://api.example.com/s.yaml#/Q' } }
+            ],
+            requestBody: jsonBody({ $ref: './common.yaml#/Body' }),
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(bodyOf(r, 'postE')).toBe(notFound('./common.yaml#/Body'))
+    expect(op(r, 'postE').editorState.params[0].value).toBe(
+      notFound('https://api.example.com/s.yaml#/Q')
+    )
+    expect(unresolved(r)).toEqual([
+      {
+        message: 'https://api.example.com/s.yaml#/Q — external references are not resolved',
+        location: 'POST /e'
+      },
+      { message: './common.yaml#/Body — external references are not resolved', location: 'POST /e' }
+    ])
+  })
+
+  it('Swagger 2.0 body parameter with an unresolvable schema gets the marker', async () => {
+    const r = await importOpenApi(
+      JSON.stringify({
+        swagger: '2.0',
+        info: { title: 'S', version: '1' },
+        host: 'api.example.com',
+        paths: {
+          '/b': {
+            post: {
+              operationId: 'postB',
+              parameters: [{ in: 'body', name: 'body', schema: { $ref: '#/definitions/Missing' } }],
+              responses: ok
+            }
+          }
+        }
+      })
+    )
+    expect(bodyOf(r, 'postB')).toBe(notFound('#/definitions/Missing'))
+    expect(unresolved(r)).toHaveLength(1)
+  })
+
+  it('CA-28 a malformed escape does not fail the import', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/m': {
+          post: {
+            operationId: 'postM',
+            requestBody: jsonBody({ $ref: '#/components/schemas/Bad%ZZ' }),
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(bodyOf(r, 'postM')).toBe(notFound('#/components/schemas/Bad%ZZ'))
+    expect(unresolved(r)).toHaveLength(1)
+  })
+
+  it('CA-29 (D4) a missing security scheme behaves as undeclared, located at the operation', async () => {
+    const r = await importOpenApi(
+      v3(
+        { '/s': { get: { operationId: 'getS', responses: ok } } },
+        { securitySchemes: { ApiKey: { $ref: '#/components/x/ApiKey' } } },
+        { security: [{ ApiKey: [] }] }
+      )
+    )
+    expect(op(r, 'getS').editorState.auth).toEqual({ type: 'none' })
+    expect(unresolved(r)).toEqual([
+      { message: '#/components/x/ApiKey — not found in the document', location: 'GET /s' }
+    ])
+  })
+})
+
+describe('importOpenApi — literal data and non-references', () => {
+  it('CA-21 literal example data is never resolved; Example objects and const are never read', async () => {
+    const literal = { $ref: '#/components/schemas/Missing' }
+    const r = await importOpenApi(
+      v3({
+        '/lit': {
+          post: {
+            operationId: 'postLit',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { d: { type: 'object', default: literal }, c: { const: literal } }
+                  },
+                  examples: { one: { value: literal } }
+                }
+              }
+            },
+            responses: ok
+          },
+          put: {
+            operationId: 'putLit',
+            requestBody: { content: { 'application/json': { example: literal } } },
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(bodyOf(r, 'postLit')).toEqual({ d: literal, c: {} })
+    expect(bodyOf(r, 'putLit')).toEqual(literal)
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('CA-22 a property named $ref and non-string $ref values are plain data', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/n': {
+          post: {
+            operationId: 'postN',
+            requestBody: jsonBody({
+              type: 'object',
+              properties: {
+                $ref: { type: 'string' },
+                ok: { type: 'boolean' },
+                num: { $ref: 42, type: 'integer' },
+                nul: { $ref: null, type: 'string' }
+              }
+            }),
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(bodyOf(r, 'postN')).toEqual({ $ref: 'string', ok: false, num: 0, nul: 'string' })
+    expect(unresolved(r)).toEqual([])
+  })
+
+  it('CA-27 non-object targets do not fail the import', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/t1': {
+            post: {
+              operationId: 't1',
+              requestBody: jsonBody({ $ref: '#/components/schemas/User/type' }),
+              responses: ok
+            }
+          },
+          '/t2': {
+            post: {
+              operationId: 't2',
+              requestBody: jsonBody({ $ref: '#/info/version' }),
+              responses: ok
+            }
+          },
+          '/t3': {
+            post: { operationId: 't3', requestBody: jsonBody({ $ref: '#' }), responses: ok }
+          }
+        },
+        { schemas: { User: USER } }
+      )
+    )
+    expect([bodyOf(r, 't1'), bodyOf(r, 't2'), bodyOf(r, 't3')]).toEqual([{}, {}, {}])
+    expect(unresolved(r)).toEqual([])
+  })
+})
+
+describe('importOpenApi — recursion end to end', () => {
+  it('CA-09 a recursive body schema carries the circular marker and no warning', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/tree': {
+            post: {
+              operationId: 'postTree',
+              requestBody: jsonBody(schemaRef('Node')),
+              responses: ok
+            }
+          }
+        },
+        {
+          schemas: {
+            Node: {
+              type: 'object',
+              properties: { name: { type: 'string' }, child: schemaRef('Node') }
+            }
+          }
+        }
+      )
+    )
+    expect(bodyOf(r, 'postTree')).toEqual({
+      name: 'string',
+      child: '<Circular reference to #/components/schemas/Node detected>'
+    })
+    expect(unresolved(r)).toEqual([])
   })
 })

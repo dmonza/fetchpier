@@ -1,0 +1,9 @@
+# @id <id>
+# @auth
+# type: api-key
+# location: header
+# key: X-API-Key
+# value: 
+# @end-auth
+GET https://api.example.com/v1/legacy/orders/string
+X-API-Key: 

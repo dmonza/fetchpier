@@ -1,0 +1,2 @@
+# @id <id>
+GET https://pets.example.com/v2/pets/0

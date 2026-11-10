@@ -13,7 +13,26 @@ type JsonSchema = {
   [k: string]: unknown
 }
 
+import {
+  TOO_DEEP_MARKER,
+  circularMarker,
+  isReference,
+  notFoundMarker,
+  type RefResult
+} from './ref-resolver'
+
 const MAX_DEPTH = 6
+
+/**
+ * Reference handling for generation. `resolve` follows a `$ref` (recording
+ * unresolvable ones against the caller's location); `ancestors` are the
+ * references being expanded on the current branch — meeting one of them again
+ * is recursion and yields the circular marker instead of expanding further.
+ */
+export interface ExampleRefContext {
+  resolve: (node: unknown) => RefResult
+  ancestors?: readonly string[]
+}
 
 function pickType(schema: JsonSchema): string | undefined {
   const t = schema.type
@@ -21,10 +40,38 @@ function pickType(schema: JsonSchema): string | undefined {
   return t
 }
 
-export function generateExampleFromJsonSchema(schema: JsonSchema | undefined, depth = 0): unknown {
+/**
+ * Example value for a JSON Schema. Without `refs`, a `$ref` is an ordinary
+ * member (the schema is used as written). With `refs`, a reference is replaced
+ * by its target — sibling members ignored, no depth consumed by the hop — and
+ * unresolvable / recursive / too-deep references become marker strings.
+ */
+export function generateExampleFromJsonSchema(
+  schema: JsonSchema | undefined,
+  depth = 0,
+  refs?: ExampleRefContext
+): unknown {
   if (!schema || typeof schema !== 'object') return null
   if (depth > MAX_DEPTH) return null
 
+  if (refs && isReference(schema)) {
+    const ancestors = refs.ancestors ?? []
+    if (ancestors.includes(schema.$ref)) return circularMarker(schema.$ref)
+    const result = refs.resolve(schema)
+    if (result.status === 'unresolved') return notFoundMarker(result.ref)
+    if (result.status === 'too-deep') return TOO_DEEP_MARKER
+    const recurring = result.chain.find((r) => ancestors.includes(r))
+    if (recurring) return circularMarker(recurring)
+    // The hop itself consumes no depth: a referenced schema generates exactly as if inlined.
+    return generateExampleFromJsonSchema(result.value as JsonSchema, depth, {
+      resolve: refs.resolve,
+      ancestors: [...ancestors, ...result.chain]
+    })
+  }
+  return generateFromSchema(schema, depth, refs)
+}
+
+function generateFromSchema(schema: JsonSchema, depth: number, refs?: ExampleRefContext): unknown {
   if (schema.example !== undefined) return schema.example
   if (schema.default !== undefined) return schema.default
   if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0]
@@ -32,7 +79,7 @@ export function generateExampleFromJsonSchema(schema: JsonSchema | undefined, de
   if (schema.allOf && schema.allOf.length > 0) {
     const merged: Record<string, unknown> = {}
     for (const sub of schema.allOf) {
-      const value = generateExampleFromJsonSchema(sub, depth + 1)
+      const value = generateExampleFromJsonSchema(sub, depth + 1, refs)
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         Object.assign(merged, value)
       }
@@ -40,10 +87,10 @@ export function generateExampleFromJsonSchema(schema: JsonSchema | undefined, de
     if (Object.keys(merged).length > 0) return merged
   }
   if (schema.oneOf && schema.oneOf.length > 0) {
-    return generateExampleFromJsonSchema(schema.oneOf[0], depth + 1)
+    return generateExampleFromJsonSchema(schema.oneOf[0], depth + 1, refs)
   }
   if (schema.anyOf && schema.anyOf.length > 0) {
-    return generateExampleFromJsonSchema(schema.anyOf[0], depth + 1)
+    return generateExampleFromJsonSchema(schema.anyOf[0], depth + 1, refs)
   }
 
   const type = pickType(schema)
@@ -76,7 +123,7 @@ export function generateExampleFromJsonSchema(schema: JsonSchema | undefined, de
       return null
     case 'array': {
       const items = Array.isArray(schema.items) ? schema.items[0] : schema.items
-      const example = generateExampleFromJsonSchema(items, depth + 1)
+      const example = generateExampleFromJsonSchema(items, depth + 1, refs)
       return example === null ? [] : [example]
     }
     case 'object':
@@ -84,7 +131,7 @@ export function generateExampleFromJsonSchema(schema: JsonSchema | undefined, de
       const out: Record<string, unknown> = {}
       if (schema.properties) {
         for (const [key, sub] of Object.entries(schema.properties)) {
-          out[key] = generateExampleFromJsonSchema(sub, depth + 1)
+          out[key] = generateExampleFromJsonSchema(sub, depth + 1, refs)
         }
       }
       return out

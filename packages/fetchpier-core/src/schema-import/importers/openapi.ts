@@ -1,4 +1,3 @@
-import { dereference } from '@readme/openapi-parser'
 import yaml from 'js-yaml'
 import { randomUUID } from 'crypto'
 import type {
@@ -14,9 +13,56 @@ import type {
 } from '@shared/types'
 import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import { sanitizeName, sanitizeSegments } from '../sanitize'
-import { generateExampleFromJsonSchema, prettyJson } from '../example-generator'
+import {
+  generateExampleFromJsonSchema,
+  prettyJson,
+  type ExampleRefContext
+} from '../example-generator'
+import {
+  TOO_DEEP_MARKER,
+  createRefResolver,
+  isReference,
+  notFoundMarker,
+  pathItemLocation,
+  type RefResolver
+} from '../ref-resolver'
 
 type AnyDoc = Record<string, unknown>
+
+/**
+ * Reference access bound to the place that needs it (an operation, or a path
+ * item's pointer). Every read of an object the importer might find written as
+ * a `$ref` goes through here — resolution is on demand (see ref-resolver.ts).
+ */
+interface Refs {
+  /** Structural position: the resolved object, or `undefined` when it is absent. */
+  object(node: unknown): AnyDoc | undefined
+  /** Value position: the resolved schema, or the marker string to emit instead. */
+  schema(node: unknown): { schema: Record<string, unknown> | undefined } | { marker: string }
+  /** Context for the example generator (markers, per-branch recursion). */
+  generator: ExampleRefContext
+}
+
+function bindRefs(resolver: RefResolver, location: string): Refs {
+  return {
+    object(node) {
+      const value = resolver.resolveObject(node, location)
+      return value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as AnyDoc)
+        : undefined
+    },
+    schema(node) {
+      const result = resolver.resolve(node, location)
+      if (result.status === 'unresolved') return { marker: notFoundMarker(result.ref) }
+      if (result.status === 'too-deep') return { marker: TOO_DEEP_MARKER }
+      const value = result.value
+      return {
+        schema: value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
+      }
+    },
+    generator: { resolve: (node) => resolver.resolve(node, location) }
+  }
+}
 
 const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const
 
@@ -70,9 +116,33 @@ interface ParamInfo {
   type?: string
 }
 
-function normalizeParams(raw: unknown): ParamInfo[] {
+function normalizeParams(raw: unknown, refs: Refs): ParamInfo[] {
   if (!Array.isArray(raw)) return []
-  return raw.map((p) => p as ParamInfo).filter((p) => p && p.in && p.name)
+  return raw
+    .map((p) => refs.object(p) as ParamInfo | undefined)
+    .filter((p): p is ParamInfo => !!p && !!p.in && !!p.name)
+}
+
+/** Value for a query / header / form parameter: its example, a marker, or a type placeholder. */
+function paramValue(p: ParamInfo, refs: Refs): string {
+  if (p.example !== undefined) return String(p.example)
+  if (p.schema === undefined) return examplePrimitive(p.type)
+  const resolved = refs.schema(p.schema)
+  if ('marker' in resolved) return resolved.marker
+  return examplePrimitive((resolved.schema?.type as string | undefined) ?? p.type)
+}
+
+/**
+ * Value inlined into the URL path. Never a marker — markers contain spaces and
+ * `#`, which would break the URL — so an unresolvable schema falls back to the
+ * type placeholder (the warning carries the signal).
+ */
+function pathParamValue(p: ParamInfo, refs: Refs): string {
+  if (p.example !== undefined) return String(p.example)
+  if (p.schema === undefined) return examplePrimitive(p.type)
+  const resolved = refs.schema(p.schema)
+  const type = 'marker' in resolved ? undefined : (resolved.schema?.type as string | undefined)
+  return examplePrimitive(type ?? p.type)
 }
 
 function examplePrimitive(type?: string): string {
@@ -87,29 +157,26 @@ function examplePrimitive(type?: string): string {
   }
 }
 
-function buildUrlWithPathParams(url: string, pathParams: ParamInfo[]): string {
+function buildUrlWithPathParams(url: string, pathParams: ParamInfo[], refs: Refs): string {
   let out = url
   for (const p of pathParams) {
     const placeholder = `{${p.name}}`
-    const value =
-      p.example !== undefined
-        ? String(p.example)
-        : examplePrimitive((p.schema?.type as string | undefined) ?? p.type)
-    out = out.split(placeholder).join(value)
+    out = out.split(placeholder).join(pathParamValue(p, refs))
   }
   return out
 }
 
-function paramsToKeyValuePairs(params: ParamInfo[], kind: 'query' | 'header'): KeyValuePair[] {
+function paramsToKeyValuePairs(
+  params: ParamInfo[],
+  kind: 'query' | 'header',
+  refs: Refs
+): KeyValuePair[] {
   return params
     .filter((p) => p.in === kind)
     .map((p) => ({
       id: `${kind}-${p.name}`,
       key: p.name,
-      value:
-        p.example !== undefined
-          ? String(p.example)
-          : examplePrimitive((p.schema?.type as string | undefined) ?? p.type),
+      value: paramValue(p, refs),
       enabled: p.required !== false
     }))
 }
@@ -117,15 +184,13 @@ function paramsToKeyValuePairs(params: ParamInfo[], kind: 'query' | 'header'): K
 function pickRequestBodyContent(
   requestBody: unknown,
   warnings: SchemaImportWarning[],
-  location: string
+  location: string,
+  refs: Refs
 ): { contentType?: string; bodyText?: string; bodyType?: BodyType; formFields?: KeyValuePair[] } {
-  if (!requestBody || typeof requestBody !== 'object') return {}
-  const content = (
-    requestBody as {
-      content?: Record<string, { schema?: Record<string, unknown>; example?: unknown }>
-    }
-  ).content
-  if (!content) return {}
+  const resolvedBody = refs.object(requestBody)
+  if (!resolvedBody) return {}
+  const content = resolvedBody['content'] as Record<string, unknown> | undefined
+  if (!content || typeof content !== 'object') return {}
 
   const order = [
     'application/json',
@@ -146,9 +211,12 @@ function pickRequestBodyContent(
   if (!chosen) chosen = Object.keys(content)[0]
   if (!chosen) return {}
 
-  const entry = content[chosen]
+  const entry = refs.object(content[chosen]) as
+    { schema?: Record<string, unknown>; example?: unknown } | undefined
+  if (!entry) return {}
   if (chosen === 'application/json') {
-    const example = entry.example ?? generateExampleFromJsonSchema(entry.schema as never)
+    const example =
+      entry.example ?? generateExampleFromJsonSchema(entry.schema as never, 0, refs.generator)
     return {
       contentType: chosen,
       bodyType: 'raw',
@@ -156,15 +224,18 @@ function pickRequestBodyContent(
     }
   }
   if (chosen === 'application/x-www-form-urlencoded') {
-    const schema = entry.schema as
-      { properties?: Record<string, { type?: string; example?: unknown }> } | undefined
-    const props = schema?.properties ?? {}
-    const formFields: KeyValuePair[] = Object.entries(props).map(([k, v]) => ({
-      id: `form-${k}`,
-      key: k,
-      value: v?.example !== undefined ? String(v.example) : examplePrimitive(v?.type),
-      enabled: true
-    }))
+    const schema = refs.object(entry.schema)
+    const props = (schema?.['properties'] as Record<string, unknown> | undefined) ?? {}
+    const formFields: KeyValuePair[] = Object.entries(props).map(([k, raw]) => {
+      const field = refs.schema(raw)
+      const value =
+        'marker' in field
+          ? field.marker
+          : field.schema?.['example'] !== undefined
+            ? String(field.schema['example'])
+            : examplePrimitive(field.schema?.['type'] as string | undefined)
+      return { id: `form-${k}`, key: k, value, enabled: true }
+    })
     return { contentType: chosen, bodyType: 'x-www-form-urlencoded', formFields }
   }
   if (chosen === 'multipart/form-data') {
@@ -176,21 +247,19 @@ function pickRequestBodyContent(
     return { contentType: chosen, bodyType: 'raw', bodyText: '' }
   }
   // xml / text / unknown
-  const example = entry.example ?? generateExampleFromJsonSchema(entry.schema as never)
+  const example =
+    entry.example ?? generateExampleFromJsonSchema(entry.schema as never, 0, refs.generator)
   const body = typeof example === 'string' ? example : prettyJson(example ?? null)
   return { contentType: chosen, bodyType: 'raw', bodyText: body }
 }
 
-function buildSwaggerFormBody(params: ParamInfo[]): KeyValuePair[] {
+function buildSwaggerFormBody(params: ParamInfo[], refs: Refs): KeyValuePair[] {
   return params
     .filter((p) => p.in === 'formData')
     .map((p) => ({
       id: `form-${p.name}`,
       key: p.name,
-      value:
-        p.example !== undefined
-          ? String(p.example)
-          : examplePrimitive((p.schema?.type as string | undefined) ?? p.type),
+      value: paramValue(p, refs),
       enabled: p.required !== false
     }))
 }
@@ -199,7 +268,8 @@ function buildSwaggerBody(
   params: ParamInfo[],
   consumes: string[] | undefined,
   warnings: SchemaImportWarning[],
-  location: string
+  location: string,
+  refs: Refs
 ): { contentType?: string; bodyType?: BodyType; bodyText?: string; formFields?: KeyValuePair[] } {
   const bodyParam = params.find((p) => p.in === 'body')
   const hasForm = params.some((p) => p.in === 'formData')
@@ -211,19 +281,20 @@ function buildSwaggerBody(
     return {
       contentType: 'application/x-www-form-urlencoded',
       bodyType: 'x-www-form-urlencoded',
-      formFields: buildSwaggerFormBody(params)
+      formFields: buildSwaggerFormBody(params, refs)
     }
   }
   if (bodyParam) {
+    const example =
+      bodyParam.example ??
+      generateExampleFromJsonSchema(bodyParam.schema as never, 0, refs.generator)
     if (contentType === 'application/json' || contentType === undefined) {
-      const example = bodyParam.example ?? generateExampleFromJsonSchema(bodyParam.schema as never)
       return {
         contentType: contentType ?? 'application/json',
         bodyType: 'raw',
         bodyText: prettyJson(example ?? {})
       }
     }
-    const example = bodyParam.example ?? generateExampleFromJsonSchema(bodyParam.schema as never)
     const bodyText = typeof example === 'string' ? example : prettyJson(example ?? null)
     return { contentType, bodyType: 'raw', bodyText }
   }
@@ -242,17 +313,19 @@ function detectAuthFromSecurity(
   doc: AnyDoc,
   security: unknown,
   warnings: SchemaImportWarning[],
-  location: string
+  location: string,
+  refs: Refs
 ): AuthConfig {
   if (!Array.isArray(security) || security.length === 0) return { type: 'none' }
   const firstRequirement = security[0] as Record<string, unknown>
   const schemes =
-    (doc['components'] as { securitySchemes?: Record<string, Record<string, unknown>> } | undefined)
-      ?.securitySchemes ??
-    (doc['securityDefinitions'] as Record<string, Record<string, unknown>> | undefined)
+    (doc['components'] as { securitySchemes?: Record<string, unknown> } | undefined)
+      ?.securitySchemes ?? (doc['securityDefinitions'] as Record<string, unknown> | undefined)
   if (!schemes) return { type: 'none' }
   const [schemeKey] = Object.keys(firstRequirement)
-  const scheme = schemes[schemeKey]
+  const scheme = Object.prototype.hasOwnProperty.call(schemes, schemeKey)
+    ? refs.object(schemes[schemeKey])
+    : undefined
   if (!scheme) return { type: 'none' }
   const type = String(scheme['type'])
   const schemeName = (scheme['scheme'] as string | undefined)?.toLowerCase()
@@ -282,11 +355,14 @@ function buildOperation(args: {
   op: AnyDoc
   baseUrl: string | undefined
   isSwagger: boolean
-  inheritedParams: ParamInfo[]
+  /** The path item's `parameters`, as written (resolved here, per operation). */
+  pathParameters: unknown
   doc: AnyDoc
   consumes?: string[]
   warnings: SchemaImportWarning[]
   usedNames: Map<string, Set<string>>
+  location: string
+  refs: Refs
 }): IntermediateOperation {
   const {
     method,
@@ -294,15 +370,17 @@ function buildOperation(args: {
     op,
     baseUrl,
     isSwagger,
-    inheritedParams,
+    pathParameters,
     doc,
     consumes,
     warnings,
-    usedNames
+    usedNames,
+    location,
+    refs
   } = args
 
-  const location = `${method.toUpperCase()} ${pathKey}`
-  const opParams = normalizeParams(op['parameters'])
+  const inheritedParams = normalizeParams(pathParameters, refs)
+  const opParams = normalizeParams(op['parameters'], refs)
   const allParams: ParamInfo[] = [
     ...inheritedParams.filter(
       (ip) => !opParams.some((op) => op.name === ip.name && op.in === ip.in)
@@ -311,11 +389,11 @@ function buildOperation(args: {
   ]
 
   const pathParams = allParams.filter((p) => p.in === 'path')
-  const substitutedPath = buildUrlWithPathParams(pathKey, pathParams)
+  const substitutedPath = buildUrlWithPathParams(pathKey, pathParams, refs)
   const fullUrl = joinUrl(baseUrl, substitutedPath)
 
-  const headers = paramsToKeyValuePairs(allParams, 'header')
-  const params = paramsToKeyValuePairs(allParams, 'query')
+  const headers = paramsToKeyValuePairs(allParams, 'header', refs)
+  const params = paramsToKeyValuePairs(allParams, 'query', refs)
 
   let bodyType: BodyType = 'none'
   let body = ''
@@ -324,7 +402,7 @@ function buildOperation(args: {
 
   if (isSwagger) {
     const opConsumes = (op['consumes'] as string[] | undefined) ?? consumes
-    const b = buildSwaggerBody(allParams, opConsumes, warnings, location)
+    const b = buildSwaggerBody(allParams, opConsumes, warnings, location, refs)
     if (b.bodyType) {
       bodyType = b.bodyType
       body = b.bodyText ?? ''
@@ -332,7 +410,7 @@ function buildOperation(args: {
       contentType = b.contentType
     }
   } else {
-    const b = pickRequestBodyContent(op['requestBody'], warnings, location)
+    const b = pickRequestBodyContent(op['requestBody'], warnings, location, refs)
     if (b.bodyType) {
       bodyType = b.bodyType
       body = b.bodyText ?? ''
@@ -354,7 +432,7 @@ function buildOperation(args: {
   // sending surface (never written into the generated `.http` file).
 
   const security = op['security'] ?? doc['security']
-  const auth = detectAuthFromSecurity(doc, security, warnings, location)
+  const auth = detectAuthFromSecurity(doc, security, warnings, location, refs)
 
   const tag = ((op['tags'] as string[] | undefined) ?? [])[0] ?? 'default'
   const folderSegments = sanitizeSegments([tag])
@@ -430,18 +508,10 @@ export async function importOpenApi(raw: string): Promise<{
   warnings: SchemaImportWarning[]
 }> {
   const warnings: SchemaImportWarning[] = []
-  const rawDoc = parseSchemaText(raw)
-
-  let doc: AnyDoc
-  try {
-    doc = (await dereference(rawDoc as never)) as unknown as AnyDoc
-  } catch (err) {
-    warnings.push({
-      kind: 'other',
-      message: `dereference failed: ${(err as Error).message}. Continuing with raw doc.`
-    })
-    doc = rawDoc
-  }
+  const doc = parseSchemaText(raw)
+  // References are resolved on demand, at each point below that reads an
+  // object; the document itself is never rewritten.
+  const resolver = createRefResolver(doc)
 
   const isV3 = isOpenAPIv3(doc)
   const isV2 = isSwaggerV2(doc)
@@ -454,15 +524,22 @@ export async function importOpenApi(raw: string): Promise<{
   const baseUrl = isV3 ? getBaseUrlV3(doc) : getBaseUrlV2(doc)
   const consumes = isV2 ? ((doc['consumes'] as string[] | undefined) ?? undefined) : undefined
 
-  const paths = (doc['paths'] as Record<string, AnyDoc> | undefined) ?? {}
+  const paths = (doc['paths'] as Record<string, unknown> | undefined) ?? {}
   const operations: IntermediateOperation[] = []
   const usedNames = new Map<string, Set<string>>()
 
-  for (const [pathKey, pathItem] of Object.entries(paths)) {
-    if (!pathItem || typeof pathItem !== 'object') continue
-    const inheritedParams = normalizeParams(pathItem['parameters'])
+  for (const [pathKey, rawPathItem] of Object.entries(paths)) {
+    if (!rawPathItem || typeof rawPathItem !== 'object') continue
+    // A path item is needed before any of its operations exist, so a broken
+    // path-item reference is located by its pointer rather than an operation.
+    const pathItem = bindRefs(resolver, pathItemLocation(pathKey)).object(rawPathItem)
+    if (!pathItem) continue
     for (const method of HTTP_METHODS) {
-      const op = pathItem[method] as AnyDoc | undefined
+      const rawOp = pathItem[method]
+      if (!rawOp) continue
+      const location = `${method.toUpperCase()} ${pathKey}`
+      const refs = bindRefs(resolver, location)
+      const op = isReference(rawOp) ? refs.object(rawOp) : (rawOp as AnyDoc)
       if (!op) continue
       try {
         const operation = buildOperation({
@@ -471,22 +548,26 @@ export async function importOpenApi(raw: string): Promise<{
           op,
           baseUrl,
           isSwagger: isV2,
-          inheritedParams,
+          pathParameters: pathItem['parameters'],
           doc,
           consumes,
           warnings,
-          usedNames
+          usedNames,
+          location,
+          refs
         })
         operations.push(operation)
       } catch (err) {
         warnings.push({
           kind: 'skipped-operation',
           message: (err as Error).message,
-          location: `${method.toUpperCase()} ${pathKey}`
+          location
         })
       }
     }
   }
+
+  warnings.push(...resolver.warnings())
 
   return {
     schema: {

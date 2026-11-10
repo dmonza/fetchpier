@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import en from './locales/en.json'
 import es from './locales/es.json'
+import { SCHEMA_IMPORT_WARNING_KINDS } from '../../shared/types'
 
 const locales = { en, es } as const
 
@@ -41,6 +42,19 @@ describe.each(Object.entries(locales))('%s locale', (_name, locale) => {
       return typeof value === 'string' && /redistribu/i.test(value)
     })
     expect(offending).toEqual([])
+  })
+
+  // The import summary groups warnings under `schemaImport.warningKind.<kind>`;
+  // a kind without a label would render as a raw key (REQ "In-house OpenAPI
+  // reference resolution", CA-24).
+  it.each(SCHEMA_IMPORT_WARNING_KINDS)('labels the %s schema-import warning kind', (kind) => {
+    const label = (locale.schemaImport.warningKind as Record<string, unknown>)[kind]
+    expect(typeof label).toBe('string')
+    expect((label as string).trim()).not.toBe('')
+  })
+
+  it('includes the unresolved-reference warning kind', () => {
+    expect(SCHEMA_IMPORT_WARNING_KINDS).toContain('unresolved-ref')
   })
 
   it('defines the license-block chrome keys', () => {

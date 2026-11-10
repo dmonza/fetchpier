@@ -1673,18 +1673,28 @@ export interface SchemaImportRequest {
   postman?: PostmanImportOptions
 }
 
-export type SchemaImportWarningKind =
-  | 'unsupported-auth'
-  | 'missing-example'
-  | 'skipped-operation'
-  | 'name-collision'
-  | 'script-copied-asis'
-  | 'path-param-converted'
-  | 'response-example-ignored'
-  | 'variable-collected'
-  | 'body-binary-placeholder'
-  | 'unknown-field'
-  | 'other'
+/**
+ * Every kind a schema-import warning can carry. Kept as data so the renderer's
+ * locale test can assert each kind has a label in every locale (the import
+ * summary groups warnings under `schemaImport.warningKind.<kind>`).
+ */
+export const SCHEMA_IMPORT_WARNING_KINDS = [
+  'unsupported-auth',
+  'missing-example',
+  'skipped-operation',
+  'name-collision',
+  'script-copied-asis',
+  'path-param-converted',
+  'response-example-ignored',
+  'variable-collected',
+  'body-binary-placeholder',
+  'unknown-field',
+  /** An OpenAPI `$ref` the import needed could not be resolved (missing, external, loop, too deep). */
+  'unresolved-ref',
+  'other'
+] as const
+
+export type SchemaImportWarningKind = (typeof SCHEMA_IMPORT_WARNING_KINDS)[number]
 
 export interface SchemaImportWarning {
   kind: SchemaImportWarningKind

@@ -1,0 +1,15 @@
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+# @rawSubtype: json
+POST https://api.example.com/v1/spaced
+Content-Type: application/json
+
+{
+  "street": "string",
+  "city": "string",
+  "zip": "12345",
+  "note": "string"
+}

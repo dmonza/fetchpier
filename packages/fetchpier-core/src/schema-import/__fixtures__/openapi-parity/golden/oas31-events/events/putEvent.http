@@ -1,0 +1,22 @@
+# @id <id>
+# @rawSubtype: json
+PUT https://events.example.com/events/string
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "title": "Launch party",
+  "startsAt": "2026-01-01T00:00:00Z",
+  "capacity": 0,
+  "attendees": [
+    {
+      "name": "string",
+      "email": "user@example.com"
+    }
+  ],
+  "host": {
+    "name": "string",
+    "email": "user@example.com"
+  },
+  "visibility": "public"
+}

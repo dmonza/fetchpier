@@ -1,0 +1,13 @@
+{
+  "detectedFormat": "openapi",
+  "schemaTitle": "Parity Events",
+  "operationsCreated": 4,
+  "foldersCreated": 1,
+  "warnings": [],
+  "files": [
+    "events/createEvent.http",
+    "events/getEvent.http",
+    "events/listEvents.http",
+    "events/putEvent.http"
+  ]
+}

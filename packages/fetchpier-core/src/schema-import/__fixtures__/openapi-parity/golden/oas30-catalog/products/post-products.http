@@ -1,0 +1,32 @@
+# Create a product
+# @id <id>
+# @auth
+# type: basic
+# username: 
+# password: 
+# @end-auth
+# @rawSubtype: json
+POST https://catalog.example.com/api/products
+X-Tenant: string
+Content-Type: application/json
+
+{
+  "sku": "string",
+  "name": "string",
+  "price": {
+    "value": 9.99,
+    "currency": "USD"
+  },
+  "variants": [
+    {
+      "color": "string",
+      "size": "S",
+      "price": {
+        "value": 9.99,
+        "currency": "USD"
+      }
+    }
+  ],
+  "launchDate": "2026-01-01",
+  "manual": "https://example.com"
+}

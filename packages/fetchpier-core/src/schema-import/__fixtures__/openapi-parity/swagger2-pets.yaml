@@ -1,0 +1,141 @@
+swagger: '2.0'
+info:
+  title: Parity Pets
+  version: 1.0.0
+host: pets.example.com
+basePath: /v2
+schemes: [https]
+consumes: [application/json]
+securityDefinitions:
+  apiKeyQuery:
+    type: apiKey
+    in: query
+    name: key
+  basic:
+    type: basic
+security:
+  - apiKeyQuery: []
+paths:
+  /pets:
+    get:
+      tags: [pets]
+      operationId: listPets
+      parameters:
+        - $ref: '#/parameters/Limit'
+        - name: X-Request-Id
+          in: header
+          type: string
+          required: true
+      responses:
+        '200':
+          $ref: '#/responses/PetList'
+    post:
+      tags: [pets]
+      operationId: addPet
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            $ref: '#/definitions/Pet'
+      responses:
+        '201':
+          description: created
+  /pets/{petId}:
+    parameters:
+      - name: petId
+        in: path
+        required: true
+        type: integer
+    get:
+      tags: [pets]
+      operationId: getPet
+      security:
+        - basic: []
+      responses:
+        '200':
+          description: ok
+    post:
+      tags: [pets]
+      operationId: updatePetForm
+      consumes: [application/x-www-form-urlencoded]
+      parameters:
+        - name: name
+          in: formData
+          type: string
+        - name: status
+          in: formData
+          type: string
+          required: false
+      responses:
+        '200':
+          description: ok
+  /pets/{petId}/photo:
+    put:
+      tags: [photos]
+      operationId: uploadPhoto
+      consumes: [application/xml]
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          type: integer
+        - in: body
+          name: body
+          schema:
+            $ref: '#/definitions/Photo'
+      responses:
+        '200':
+          description: ok
+parameters:
+  Limit:
+    name: limit
+    in: query
+    type: integer
+    required: false
+responses:
+  PetList:
+    description: ok
+    schema:
+      type: array
+      items:
+        $ref: '#/definitions/Pet'
+definitions:
+  Category:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+  Tag:
+    type: object
+    properties:
+      label:
+        type: string
+  Pet:
+    type: object
+    required: [name]
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+        example: doggie
+      category:
+        $ref: '#/definitions/Category'
+      tags:
+        type: array
+        items:
+          $ref: '#/definitions/Tag'
+      status:
+        type: string
+        enum: [available, pending, sold]
+  Photo:
+    type: object
+    properties:
+      url:
+        type: string
+        format: uri
+      caption:
+        type: string

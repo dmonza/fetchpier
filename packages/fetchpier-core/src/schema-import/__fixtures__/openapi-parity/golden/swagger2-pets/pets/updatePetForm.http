@@ -1,0 +1,12 @@
+# @id <id>
+# @auth
+# type: api-key
+# location: query
+# key: key
+# value: 
+# @end-auth
+# @disabled field 1 status=string
+POST https://pets.example.com/v2/pets/0?key=
+Content-Type: application/x-www-form-urlencoded
+
+name=string

@@ -1,0 +1,24 @@
+{
+  "detectedFormat": "openapi",
+  "schemaTitle": "Parity Store",
+  "operationsCreated": 15,
+  "foldersCreated": 5,
+  "warnings": [],
+  "files": [
+    "customers/getCustomer.http",
+    "customers/updateCustomerForm.http",
+    "items/createItem.http",
+    "items/createSpaced.http",
+    "misc/pointerIntoSchema.http",
+    "orders/createOrder.http",
+    "orders/deleteOrder-2.http",
+    "orders/deleteOrder.http",
+    "orders/getOrder-2.http",
+    "orders/getOrder.http",
+    "orders/listOrders.http",
+    "orders/replaceOrder-2.http",
+    "orders/replaceOrder.http",
+    "reports/submitNote.http",
+    "reports/submitReport.http"
+  ]
+}

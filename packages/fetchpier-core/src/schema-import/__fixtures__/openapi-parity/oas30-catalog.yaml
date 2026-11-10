@@ -1,0 +1,188 @@
+openapi: 3.0.1
+info:
+  title: Parity Catalog
+  version: '2.1'
+servers:
+  - url: https://catalog.example.com/api/
+security:
+  - basicAuth: []
+x-shared:
+  headers:
+    Tenant:
+      name: X-Tenant
+      in: header
+      required: true
+      schema:
+        type: string
+        example: acme
+paths:
+  /products:
+    parameters:
+      - $ref: '#/x-shared/headers/Tenant'
+    get:
+      tags: [products]
+      summary: Browse products
+      parameters:
+        - name: page
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: sort
+          in: query
+          schema:
+            $ref: '#/components/schemas/SortOrder'
+        - name: Accept-Language
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+    post:
+      tags: [products]
+      summary: Create a product
+      requestBody:
+        $ref: '#/components/requestBodies/ProductBody'
+      responses:
+        '201':
+          description: created
+  /products/{sku}/variants:
+    get:
+      tags: [products, variants]
+      operationId: listVariants
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+    patch:
+      tags: [variants]
+      operationId: patchVariants
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Variant'
+      responses:
+        '200':
+          description: ok
+  /search:
+    post:
+      tags: [search]
+      operationId: search
+      security:
+        - apiKeyQuery: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchQuery'
+      responses:
+        '200':
+          description: ok
+  /export:
+    get:
+      tags: [export]
+      operationId: exportCatalog
+      security:
+        - oauth: [read]
+      responses:
+        '200':
+          description: ok
+components:
+  schemas:
+    SortOrder:
+      type: string
+      enum: [asc, desc]
+    Price:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: number
+          example: 9.99
+        currency:
+          type: string
+          default: USD
+    Variant:
+      type: object
+      properties:
+        color:
+          type: string
+        size:
+          type: string
+          enum: [S, M, L]
+        price:
+          $ref: '#/components/schemas/Price'
+    Product:
+      type: object
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        price:
+          $ref: '#/components/schemas/Price'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Variant'
+        launchDate:
+          type: string
+          format: date
+        manual:
+          type: string
+          format: url
+    SearchQuery:
+      oneOf:
+        - $ref: '#/components/schemas/TextQuery'
+        - $ref: '#/components/schemas/SkuQuery'
+    TextQuery:
+      type: object
+      properties:
+        text:
+          type: string
+        filters:
+          anyOf:
+            - $ref: '#/components/schemas/SortOrder'
+            - type: integer
+    SkuQuery:
+      type: object
+      properties:
+        sku:
+          type: string
+  requestBodies:
+    ProductBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Product'
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+    oauth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.com/token
+          scopes:
+            read: read access

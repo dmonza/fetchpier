@@ -1,0 +1,95 @@
+openapi: 3.1.0
+info:
+  title: Parity Events
+  version: 0.3.0
+servers:
+  - url: https://events.example.com
+paths:
+  /events:
+    $ref: '#/components/pathItems/EventCollection'
+  /events/{eventId}:
+    get:
+      tags: [events]
+      operationId: getEvent
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: ok
+    put:
+      tags: [events]
+      operationId: putEvent
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+      responses:
+        '200':
+          description: ok
+components:
+  pathItems:
+    EventCollection:
+      get:
+        tags: [events]
+        operationId: listEvents
+        parameters:
+          - name: since
+            in: query
+            schema:
+              type: [string, 'null']
+              format: date-time
+        responses:
+          '200':
+            description: ok
+      post:
+        tags: [events]
+        operationId: createEvent
+        requestBody:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        responses:
+          '201':
+            description: created
+  parameters:
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    Attendee:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: [string, 'null']
+          format: email
+    Event:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: Launch party
+        startsAt:
+          type: string
+          format: date-time
+        capacity:
+          type: [integer, 'null']
+        attendees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attendee'
+        host:
+          $ref: '#/components/schemas/Attendee'
+        visibility:
+          enum: [public, private]

@@ -1,0 +1,10 @@
+# @id <id>
+# @auth
+# type: api-key
+# location: query
+# key: key
+# value: 
+# @end-auth
+# @disabled param 0 limit=0
+GET https://pets.example.com/v2/pets?key=
+X-Request-Id: string

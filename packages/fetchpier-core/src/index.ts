@@ -8,8 +8,8 @@
 //
 // `schemaImport` se sirve por una segunda entrada (`@fetchpier/core/schema-import`,
 // resuelta vía el campo `exports` del package.json). El barrel principal NO la
-// re-exporta: cargarla acá traería `@readme/openapi-parser`, `graphql`,
-// `js-yaml` y `ajv` al cold path del main process (REQ-0063). El handler
+// re-exporta: cargarla acá traería `graphql`, `js-yaml` y los importers al
+// cold path del main process (REQ-0063). El handler
 // `src/main/ipc/schema.ipc.ts` hace `await import('@fetchpier/core/schema-import')`
 // en la primera llamada y cachea el módulo.
 export { CoreError } from './shared/context'

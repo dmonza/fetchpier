@@ -1,0 +1,6 @@
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+GET https://api.example.com/v1/pointer?customerId=0

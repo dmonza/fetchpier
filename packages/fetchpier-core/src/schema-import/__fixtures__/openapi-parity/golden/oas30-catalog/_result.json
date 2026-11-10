@@ -1,0 +1,21 @@
+{
+  "detectedFormat": "openapi",
+  "schemaTitle": "Parity Catalog",
+  "operationsCreated": 6,
+  "foldersCreated": 4,
+  "warnings": [
+    {
+      "kind": "unsupported-auth",
+      "message": "OAuth2 not yet supported — using bearer placeholder",
+      "location": "GET /export"
+    }
+  ],
+  "files": [
+    "export/exportCatalog.http",
+    "products/get-products.http",
+    "products/listVariants.http",
+    "products/post-products.http",
+    "search/search.http",
+    "variants/patchVariants.http"
+  ]
+}

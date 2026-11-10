@@ -1004,6 +1004,7 @@
       "variable-collected": "Variable collected into environment",
       "body-binary-placeholder": "Binary body placeholder",
       "unknown-field": "Unknown field ignored",
+      "unresolved-ref": "Unresolved reference",
       "other": "Other"
     },
     "postman": {

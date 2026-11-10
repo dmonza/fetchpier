@@ -2,7 +2,7 @@
 //
 // Re-exports the public surface of the schema-import domain so it can be
 // loaded on demand instead of at boot. Pulling this subpath drags in
-// `@readme/openapi-parser`, `graphql`, `js-yaml`, `ajv` and its kin — a
+// `graphql`, `js-yaml` and every importer — a
 // ~200–300 ms one-shot cost the desktop now pays only when the user opens
 // the Import Schema wizard (REQ-0063). The main entry (`@fetchpier/core`)
 // deliberately does **not** re-export this namespace; the IPC handler in

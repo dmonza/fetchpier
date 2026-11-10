@@ -1,0 +1,8 @@
+# List orders
+# @id <id>
+# @auth
+# type: bearer
+# token: 
+# @end-auth
+GET https://api.example.com/v1/orders?limit=0&status=string
+X-Trace-Id: trace-0001

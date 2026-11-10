@@ -5,8 +5,8 @@ export default defineConfig((options) => ({
   // (`workspace`, `requests`, `scripting`, `tls`, `shared`); `src/schema-import.ts`
   // is a lazy secondary entry that the Electron main process loads only on the
   // first `schema:detectFormat`/`schema:import` IPC call. Splitting at the
-  // build artifact level is the only way to keep `@readme/openapi-parser`,
-  // `graphql`, `js-yaml`, `ajv` & co out of the cold-path bundle — a dynamic
+  // build artifact level is the only way to keep `graphql`, `js-yaml` and the
+  // importers out of the cold-path bundle — a dynamic
   // import that resolves into the same monolith would gain nothing.
   entry: [
     'src/index.ts',
@@ -42,8 +42,8 @@ export default defineConfig((options) => ({
   },
   // `@shared/*` no es un package npm: esbuild lo resuelve vía los `paths` de
   // tsconfig.json y lo inlinea en el bundle. Las deps npm declaradas en
-  // package.json (undici, fast-xml-parser, @readme/openapi-parser, graphql,
-  // js-yaml) se externalizan automáticamente. Electron NUNCA se importa desde
+  // package.json (undici, fast-xml-parser, graphql, js-yaml, …) se
+  // externalizan automáticamente. Electron NUNCA se importa desde
   // core, así que no aparece acá ni en deps.
   tsconfig: './tsconfig.json'
 }))

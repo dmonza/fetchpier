@@ -1,0 +1,14 @@
+{
+  "detectedFormat": "swagger",
+  "schemaTitle": "Parity Pets",
+  "operationsCreated": 5,
+  "foldersCreated": 2,
+  "warnings": [],
+  "files": [
+    "pets/addPet.http",
+    "pets/getPet.http",
+    "pets/listPets.http",
+    "pets/updatePetForm.http",
+    "photos/uploadPhoto.http"
+  ]
+}

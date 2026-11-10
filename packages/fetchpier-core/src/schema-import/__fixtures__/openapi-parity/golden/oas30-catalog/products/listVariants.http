@@ -1,0 +1,7 @@
+# @id <id>
+# @auth
+# type: basic
+# username: 
+# password: 
+# @end-auth
+GET https://catalog.example.com/api/products/string/variants

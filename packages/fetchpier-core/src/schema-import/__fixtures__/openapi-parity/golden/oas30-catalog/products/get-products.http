@@ -1,0 +1,10 @@
+# Browse products
+# @id <id>
+# @auth
+# type: basic
+# username: 
+# password: 
+# @end-auth
+GET https://catalog.example.com/api/products?page=0&sort=string
+X-Tenant: string
+Accept-Language: string
