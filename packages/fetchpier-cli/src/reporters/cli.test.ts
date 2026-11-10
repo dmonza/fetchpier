@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { Chalk } from 'chalk'
+import { createColors } from '../output/colors'
 import { CliReporter } from './cli'
 import { ASCII_GLYPHS, UNICODE_GLYPHS } from '../output/glyphs'
 import type { RequestUnit, RunSummary } from '../types'
 import type { RunMeta, UnitStart } from './types'
 
-const NO_COLOR = new Chalk({ level: 0 })
+const NO_COLOR = createColors({ noColor: true })
 
 interface Captured {
   out: string

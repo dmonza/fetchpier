@@ -21,3 +21,27 @@ describe('createColors', () => {
     expect(createColors({ isTTY: false, env: {} }).level).toBe(0)
   })
 })
+
+describe('color output', () => {
+  const on = createColors({ isTTY: true, env: {} })
+  const off = createColors({ isTTY: false, env: {} })
+
+  it.each([
+    ['red', 31],
+    ['green', 32],
+    ['yellow', 33]
+  ] as const)('wraps %s text in SGR %i and resets the foreground when enabled', (name, code) => {
+    expect(on[name]('ok')).toBe(`\u001b[${code}mok\u001b[39m`)
+  })
+
+  it.each(['red', 'green', 'yellow'] as const)(
+    'returns %s text unchanged when disabled',
+    (name) => {
+      expect(off[name]('ok')).toBe('ok')
+    }
+  )
+
+  it('leaves an empty string empty even when enabled', () => {
+    expect(on.red('')).toBe('')
+  })
+})

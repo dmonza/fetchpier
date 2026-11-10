@@ -1,5 +1,5 @@
 import { request } from 'undici'
-import semver from 'semver'
+import * as semver from './semver'
 import type { UpdateCheckResponse, UpdateCheckErrorKind } from '../../shared/types'
 
 const PRODUCTS_URL = 'https://public.sincrum.com/products.json'

@@ -22,9 +22,8 @@ export default defineConfig((options) => ({
   // self-contained: core is `"private": true` and cannot be resolved from the
   // public registry, so a `require('@fetchpier/core')` against a global install
   // would crash (REQ-0071). Inlining core's *own source* dodges that without
-  // making core a public package. The CLI deps — commander and the ESM-only
-  // chalk — are bundled too: the bin is CJS, so a `require('chalk')` against an
-  // ESM-only package would crash; esbuild down-converts them instead. `@shared/*`
+  // making core a public package. The CLI's own dependency, commander, is
+  // bundled too, so the bin carries no CLI-only runtime dependency. `@shared/*`
   // is not a package: esbuild inlines it via the tsconfig `paths` (type-only,
   // erased — no Electron pulled in).
   //
@@ -44,7 +43,7 @@ export default defineConfig((options) => ({
   // `dependencies` in a shipped tarball, where it surfaced as "invalid
   // workspace key" rather than as a missing module.
   external: ['undici', 'fast-xml-parser', 'mime'],
-  noExternal: ['commander', 'chalk', '@fetchpier/core'],
+  noExternal: ['commander', '@fetchpier/core'],
   // Inlining third-party code obliges us to ship its license notices. Written
   // to dist/ on every build from the exact bundled inputs, so the tarball
   // (`files: ["dist", …]`) always carries them — see tooling/bundled-licenses.ts.

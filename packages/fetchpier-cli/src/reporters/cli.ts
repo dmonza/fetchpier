@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import type { ChalkInstance } from 'chalk'
+import type { Colors } from '../output/colors'
 import { activityLog } from '@fetchpier/core'
 import type { RequestUnit, RunSummary, Verbosity } from '../types'
 import { formatDuration, formatSize, truncateBody } from '../output/formatters'
@@ -9,7 +9,7 @@ import { notRun } from './unit-outcome'
 
 export interface CliReporterOptions {
   glyphs: GlyphSet
-  colors: ChalkInstance
+  colors: Colors
   /** When true, suppress all stdout (errors still go to stderr). */
   silent?: boolean
   /** stdout sink — injectable for tests. */
@@ -48,7 +48,7 @@ const COMPACT_LABEL_WIDTH = 30
  */
 export class CliReporter implements Reporter {
   private readonly g: GlyphSet
-  private readonly c: ChalkInstance
+  private readonly c: Colors
   private readonly silent: boolean
   private readonly out: (line: string) => void
   private readonly err: (line: string) => void

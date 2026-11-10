@@ -2,7 +2,7 @@
  * License notices for the third-party code bundled into `dist/`.
  *
  * `@fetchpier/cli` inlines some packages into its bundle (`noExternal`:
- * commander, chalk, and whatever `@fetchpier/core` pulls in, such as
+ * commander, and whatever `@fetchpier/core` pulls in, such as
  * tough-cookie and tldts). Their licenses require the copyright notice to
  * travel with every copy, and only a few of them carry a `/*!` legal comment
  * esbuild would preserve. This writes `dist/THIRD_PARTY_LICENSES.txt` on every
