@@ -31,9 +31,11 @@ import { SaveRequestDialog } from './SaveRequestDialog'
 import { serializeRequest, splitUrlAndParams, computeFullUrl } from '@shared/lib/http-serializer'
 import { hashString } from '@shared/lib/hash'
 import { authEcho } from '@shared/lib/auth-echo'
-import { mapHttpRequestToEditorState } from './request-loader'
 import { implicitDefaultHeaderEntries } from './implicit-headers'
 import { serializeTab } from '../../lib/tab-dirty'
+import { loadedTabFields } from '../../lib/loaded-tab'
+import { requestAfterSave } from '../../lib/request-after-save'
+import { LoadNotices } from './LoadNotices'
 import { buildHistoryEntry, viewerResponse } from '../../lib/send-result'
 import { buildHttpRequestPayload } from './build-send-payload'
 import { defaultReqTabForMethod } from './req-tab'
@@ -200,25 +202,19 @@ function RequestEditorInner(): React.JSX.Element {
     window.api.request
       .parseFile(activeTab.filePath)
       .then((parsed) => {
-        if (parsed.requests.length === 0) return
-
-        const first = parsed.requests[0]
-        const newRequest = mapHttpRequestToEditorState(first)
-
-        // Apply requestId from file if present; keep the in-memory one otherwise
-        const tabUpdates: Parameters<typeof updateTab>[1] = { request: newRequest }
-        if (parsed.requestId) tabUpdates.requestId = parsed.requestId
-        // Preserve the verbatim multi-request tail so a save re-emits the
-        // additional requests byte-for-byte (`.http` round-trip fidelity).
-        tabUpdates.tail = parsed.tail
-        // Modified-with-a-reason when the parse dropped content a save normalizes
-        // away (stray line / relocated comment).
-        tabUpdates.normalizedOnLoad = first.normalizedOnLoad
+        // The request, the file's id (or the tab's own), the verbatim
+        // multi-request tail a save re-emits byte-for-byte, and the reasons the
+        // load leaves the tab modified: content a save normalizes away (stray
+        // line / relocated comment) and load warnings (a directive a save drops
+        // or rewrites).
+        const loaded = loadedTabFields(parsed, activeTab.requestId)
+        if (!loaded) return
+        const tabUpdates: Parameters<typeof updateTab>[1] = { ...loaded }
 
         // Hydrate persisted UI state (active tab, response sub-tab, script phase)
         // from the on-disk map. Only apply fields that exist; missing ones leave
         // the tab to its current defaults.
-        const effectiveId = parsed.requestId ?? activeTab.requestId
+        const effectiveId = loaded.requestId
         const uiState = effectiveId ? useUiStateStore.getState().get(effectiveId) : null
         if (uiState) {
           if (uiState.activeReqTab !== undefined) tabUpdates.activeReqTab = uiState.activeReqTab
@@ -456,17 +452,17 @@ function RequestEditorInner(): React.JSX.Element {
         tail: activeTab.tail
       })
       await window.api.filesystem.writeFile(activeTab.filePath, content)
-      // REQ-0095: the serializer drops malformed params on save; mirror that in
-      // memory so the in-memory request matches what was written, then recapture
-      // the baseline against exactly what was written (`hashString(content)`) so
-      // an edit made during the async write survives as still-modified.
-      if (request.params.some((p) => p.malformed)) {
-        updateTab(activeTab.id, {
-          request: { ...request, params: request.params.filter((p) => !p.malformed) }
-        })
-      }
-      // The save normalized away any stray content — clear the reason flag.
+      // REQ-0095: the serializer drops what it cannot write back (malformed
+      // params, multipart parts carrying a parse error); mirror that in memory
+      // so the in-memory request matches what was written, then recapture the
+      // baseline against exactly what was written (`hashString(content)`) so an
+      // edit made during the async write survives as still-modified.
+      const saved = requestAfterSave(request)
+      if (saved !== request) updateTab(activeTab.id, { request: saved })
+      // The save normalized away any stray content and acted on the load
+      // warnings — clear both reasons.
       if (activeTab.normalizedOnLoad) updateTab(activeTab.id, { normalizedOnLoad: false })
+      if (activeTab.loadWarnings) updateTab(activeTab.id, { loadWarnings: undefined })
       // A deliberate save on a removed-on-disk tab re-persists the file at its
       // path; clear the flag optimistically (the watcher add will confirm it).
       if (activeTab.removedOnDisk) updateTab(activeTab.id, { removedOnDisk: false })
@@ -484,20 +480,10 @@ function RequestEditorInner(): React.JSX.Element {
     if (!activeTab?.filePath) return
     try {
       const parsed = await window.api.request.parseFile(activeTab.filePath)
-      if (parsed.requests.length === 0) return
-      const mapped = mapHttpRequestToEditorState(parsed.requests[0])
-      const effectiveId = parsed.requestId ?? activeTab.requestId
-      updateTab(activeTab.id, {
-        request: mapped,
-        requestId: effectiveId,
-        tail: parsed.tail,
-        normalizedOnLoad: parsed.requests[0].normalizedOnLoad,
-        conflict: false
-      })
-      markClean(
-        activeTab.id,
-        hashString(serializeTab({ request: mapped, requestId: effectiveId, tail: parsed.tail }))
-      )
+      const loaded = loadedTabFields(parsed, activeTab.requestId)
+      if (!loaded) return
+      updateTab(activeTab.id, { ...loaded, conflict: false })
+      markClean(activeTab.id, hashString(serializeTab(loaded)))
     } catch (err) {
       console.error('[RequestEditor] Failed to reload from disk:', err)
     }
@@ -518,12 +504,9 @@ function RequestEditorInner(): React.JSX.Element {
         const content = serializeRequest(request, activeTab.requestId)
         await window.api.filesystem.writeFile(filePath, content)
         const title = name.replace(/\.http$/, '')
-        // REQ-0095: mirror the serializer's malformed-param drop in memory, set the
-        // new path/title, then recapture the baseline.
-        const cleanedRequest = request.params.some((p) => p.malformed)
-          ? { ...request, params: request.params.filter((p) => !p.malformed) }
-          : request
-        updateTab(activeTab.id, { filePath, title, request: cleanedRequest })
+        // REQ-0095: mirror the serializer's drops in memory, set the new
+        // path/title, then recapture the baseline.
+        updateTab(activeTab.id, { filePath, title, request: requestAfterSave(request) })
         markClean(activeTab.id, hashString(content))
       } catch (err) {
         console.error('[RequestEditor] Failed to save new request:', err)
@@ -835,6 +818,11 @@ function RequestEditorInner(): React.JSX.Element {
           </div>
         </div>
       )}
+
+      {/* What the file said that the editor could not take as written: load
+          warnings (a save drops or rewrites them) and an invalid binary
+          reference (kept, but the send is refused until a file is attached). */}
+      {activeTab && <LoadNotices request={request} loadWarnings={activeTab.loadWarnings} />}
 
       {/* Stray, non-comment/non-header content was dropped on load; a save
           normalizes it away (CA-10 / D19). */}

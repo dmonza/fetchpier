@@ -88,6 +88,11 @@ export function buildHttpRequestPayload(
     settings: state.settings,
     bodyType,
     binaryFile: bodyType === 'binary' ? state.binaryFile : undefined,
+    // A reference the file held that is not valid, while no file replaces it:
+    // the engine refuses the request instead of sending it without the file.
+    ...(bodyType === 'binary' && !state.binaryFile?.ref && state.invalidBinaryRef !== undefined
+      ? { invalidBinaryRef: state.invalidBinaryRef }
+      : {}),
     multipartParts: bodyType === 'multipart-form' ? state.multipartParts : undefined
   }
 }

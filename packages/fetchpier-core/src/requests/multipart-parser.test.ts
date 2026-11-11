@@ -211,6 +211,58 @@ describe('parseMultipartBlock', () => {
     expect(r.parts[0].disabled).toBe(true)
   })
 
+  // A file part that fails validation stays a file part carrying `parseError`,
+  // so a save removes it honestly. Downgrading it to a text part (which has no
+  // `parseError`) made the save rewrite it as `type=text`, dropping the
+  // reference without notice.
+  describe('an invalid file part stays a file part with parseError', () => {
+    it.each([
+      ['an invalid reference shape', 'file=not-a-ref', 'not-a-ref', /invalid file ref/],
+      ['a variable reference', 'file={{somePath}}', '{{somePath}}', /variable interpolation/],
+      ['no reference at all', '', '', /missing required attribute "file"/]
+    ])('%s', (_label, fileAttr, ref, error) => {
+      const r = parseMultipartBlock(
+        blockLines(`# @multipart-part name=avatar type=file ${fileAttr} filename=me.png`.trim()),
+        0
+      )
+      const part = r.parts[0]
+      expect(part.kind).toBe('file')
+      if (part.kind !== 'file') return
+      expect(part.name).toBe('avatar')
+      expect(part.file.ref).toBe(ref)
+      expect(part.filename).toBe('me.png')
+      expect(part.disabled).toBe(true)
+      expect(part.parseError).toMatch(error)
+      // The diagnostic is still reported, and marked as carried by the part.
+      expect(r.warnings.join('\n')).toMatch(error)
+      expect(r.representedWarnings).toEqual(r.warnings.filter((w) => error.test(w)))
+    })
+
+    it('a valid reference with a missing name is carried by the part too', () => {
+      const r = parseMultipartBlock(blockLines(`# @multipart-part type=file file=${REF}`), 0)
+      expect(r.parts[0]).toMatchObject({ kind: 'file', disabled: true })
+      expect(r.representedWarnings).toEqual([
+        'Multipart part "(no name)": missing required attribute "name"'
+      ])
+    })
+
+    it('an invalid text part is not carried by a part, only reported', () => {
+      const r = parseMultipartBlock(blockLines('# @multipart-part type=text', 'orphan value'), 0)
+      expect(r.parts[0].kind).toBe('text')
+      expect(r.warnings).toHaveLength(1)
+      expect(r.representedWarnings).toEqual([])
+    })
+
+    it('an unknown attribute on an invalid file part is reported, not carried', () => {
+      const r = parseMultipartBlock(
+        blockLines('# @multipart-part name=p type=file file=bad rogue=1'),
+        0
+      )
+      expect(r.warnings.some((w) => /unknown attribute "rogue"/.test(w))).toBe(true)
+      expect(r.representedWarnings.some((w) => /rogue/.test(w))).toBe(false)
+    })
+  })
+
   it('warns on unknown attribute and skips it', () => {
     const lines = blockLines(`# @multipart-part name=x type=text rogue=val`, 'v')
     const r = parseMultipartBlock(lines, 0)

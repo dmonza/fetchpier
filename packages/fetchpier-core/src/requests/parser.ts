@@ -54,9 +54,14 @@ function extractVariables(text: string): string[] {
 // collects into this sink, which `parseHttpFile` installs for the duration of
 // one (synchronous) parse and returns as `ParsedHttpFile.warnings`.
 let warningSink: string[] | null = null
+// The request block being parsed collects, besides, the diagnostics a save of
+// that request would act on (`HttpRequest.loadWarnings`). `kept` marks the ones
+// it would not: a save keeps the content, or another field already carries it.
+let blockSink: string[] | null = null
 
-function parseWarning(message: string): void {
+function parseWarning(message: string, options: { kept?: boolean } = {}): void {
   warningSink?.push(message)
+  if (!options.kept) blockSink?.push(message)
 }
 
 function isComment(line: string): boolean {
@@ -388,6 +393,18 @@ function recoverTrailingPostScript(body: string): { script: string; body: string
  * body-region exception, recognized as the first non-blank body line.
  */
 function parseRequestBlock(block: string): HttpRequest | null {
+  const outer = blockSink
+  const loadWarnings: string[] = []
+  blockSink = loadWarnings
+  try {
+    const req = parseRequestBlockInner(block)
+    return req && loadWarnings.length > 0 ? { ...req, loadWarnings } : req
+  } finally {
+    blockSink = outer
+  }
+}
+
+function parseRequestBlockInner(block: string): HttpRequest | null {
   const normalized = block.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const lines = normalized.split('\n')
 
@@ -410,9 +427,13 @@ function parseRequestBlock(block: string): HttpRequest | null {
       binaryFile = { ref, originalName, sizeBytes: 0, mimeType: lookupMimeType(originalName) }
     } else {
       // Recorded on the request so the engine refuses to send it: dropping the
-      // reference alone used to send the request with no body at all.
+      // reference alone used to send the request with no body at all. A save
+      // keeps it (the editor re-emits it), so it is not a load warning of the
+      // request — `invalidBinaryRef` is how the editor learns of it.
       invalidBinaryRef = ref
-      parseWarning(`ignoring invalid # @binary-file: ref "${ref}" (expected <64-hex>__<name>)`)
+      parseWarning(`ignoring invalid # @binary-file: ref "${ref}" (expected <64-hex>__<name>)`, {
+        kept: true
+      })
     }
   }
   const readRawSubtype = (value: string): void => {
@@ -551,7 +572,15 @@ function parseRequestBlock(block: string): HttpRequest | null {
       // Multipart block — recognized only as the first non-blank body line.
       const result = parseMultipartBlock(lines, firstContent)
       multipartParts = result.parts
-      for (const w of result.warnings) parseWarning(w)
+      // A file part's own errors are carried by its `parseError` (the editor
+      // shows it and a save removes the part); everything else is a load
+      // warning of the request.
+      const carried = [...result.representedWarnings]
+      for (const w of result.warnings) {
+        const at = carried.indexOf(w)
+        if (at !== -1) carried.splice(at, 1)
+        parseWarning(w, { kept: at !== -1 })
+      }
     } else if (
       firstContent < lines.length &&
       rawSubtype === undefined &&
@@ -591,6 +620,15 @@ function parseRequestBlock(block: string): HttpRequest | null {
   if (binaryFile && body !== undefined && body.trim() !== '') {
     parseWarning(
       '`# @binary-file:` is set but the body section is non-empty; the binary is sent and the body is discarded'
+    )
+    body = undefined
+  }
+  // The same rule for a reference that is not valid: the request is binary
+  // (the engine refuses it until the file is attached again), and the body
+  // beside it is discarded, with the same notice.
+  if (!binaryFile && invalidBinaryRef !== undefined && body !== undefined && body.trim() !== '') {
+    parseWarning(
+      '`# @binary-file:` reference is not valid and the body section is non-empty; the reference is kept and the body is discarded'
     )
     body = undefined
   }

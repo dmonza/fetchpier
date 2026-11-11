@@ -102,6 +102,42 @@ describe('buildHttpRequestPayload (REQ-0081)', () => {
     })
   })
 
+  // The engine refuses a request whose binary reference is not valid instead of
+  // sending it without the file — the payload must tell it.
+  describe('invalid binary reference', () => {
+    const file = {
+      ref: `${'a'.repeat(64)}__a.bin`,
+      originalName: 'a.bin',
+      sizeBytes: 1,
+      mimeType: 'application/octet-stream'
+    }
+
+    it('is forwarded while binary mode has no file', () => {
+      const payload = buildHttpRequestPayload(
+        baseState({ method: 'POST', bodyType: 'binary', invalidBinaryRef: 'not-a-ref' }),
+        {}
+      )
+      expect(payload.invalidBinaryRef).toBe('not-a-ref')
+    })
+
+    it('is not forwarded once a valid file is attached', () => {
+      const payload = buildHttpRequestPayload(
+        baseState({ bodyType: 'binary', binaryFile: file, invalidBinaryRef: 'not-a-ref' }),
+        {}
+      )
+      expect(payload).not.toHaveProperty('invalidBinaryRef')
+      expect(payload.binaryFile).toEqual(file)
+    })
+
+    it('is not forwarded once the body leaves binary mode', () => {
+      const payload = buildHttpRequestPayload(
+        baseState({ bodyType: 'raw', body: 'x', invalidBinaryRef: 'not-a-ref' }),
+        {}
+      )
+      expect(payload).not.toHaveProperty('invalidBinaryRef')
+    })
+  })
+
   it('derives the raw Content-Type from the subtype unless set explicitly', () => {
     const payload = buildHttpRequestPayload(
       baseState({ bodyType: 'raw', rawSubtype: 'json', body: '{"a":1}' }),

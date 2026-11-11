@@ -68,6 +68,24 @@ X-Tag: one
     warn.mockRestore()
   })
 
+  // A save must not delete the reference the author wrote: the editor keeps it
+  // (binary mode, no file — the state `request-loader` builds) and the
+  // serializer re-emits it, so the file is byte-identical after a save.
+  it('an invalid reference survives a save byte-identical', () => {
+    const text =
+      '# @id 9e3a4f72-1234-4abc-9def-0123456789ab\n# @binary-file: not-a-valid-ref\nPOST https://example.com/x\n'
+    const parsed = parseHttpFile(text)
+    const r = parsed.requests[0]
+    const state: RequestEditorState = {
+      ...DEFAULT_REQUEST_STATE,
+      method: r.method,
+      url: r.url,
+      bodyType: 'binary',
+      invalidBinaryRef: r.invalidBinaryRef
+    }
+    expect(serializeRequest(state, parsed.requestId)).toBe(text)
+  })
+
   it('warns and prefers the binary ref when a body coexists with the marker', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const text = `POST https://example.com/x

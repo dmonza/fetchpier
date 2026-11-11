@@ -102,6 +102,33 @@ describe('computeTabDirty', () => {
     expect(computeTabDirty(makeTab({ request: jar(to), cleanHash }))).toBe(true)
   })
 
+  // A load warning names content a save would drop or rewrite (a malformed
+  // `# @auth` block, an invalid `# @settings` entry): modified-with-a-reason.
+  it('is true when the edited request has load warnings', () => {
+    const tab = makeTab({
+      cleanHash: cleanHashOf(makeTab()),
+      loadWarnings: ['invalid # @auth block: unknown type "digest"']
+    })
+    expect(computeTabDirty(tab)).toBe(true)
+  })
+
+  it('is false with an empty load-warnings list', () => {
+    expect(computeTabDirty(makeTab({ cleanHash: cleanHashOf(makeTab()), loadWarnings: [] }))).toBe(
+      false
+    )
+  })
+
+  // A reference a save keeps is not a reason: the file does not change.
+  it('is false for an invalid binary reference alone', () => {
+    const request: RequestEditorState = {
+      ...DEFAULT_REQUEST_STATE,
+      bodyType: 'binary',
+      invalidBinaryRef: 'not-a-ref'
+    }
+    const tab = makeTab({ request })
+    expect(computeTabDirty(makeTab({ request, cleanHash: cleanHashOf(tab) }))).toBe(false)
+  })
+
   it('is false for read-only / history tabs', () => {
     const tab = makeTab({
       isReadOnly: true,

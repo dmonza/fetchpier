@@ -15,13 +15,8 @@ import {
   ContextMenuItem,
   ContextMenuSeparator
 } from '../ui/context-menu'
-import type {
-  HistoryEntry,
-  HistoryEntryListItem,
-  BodyType,
-  KeyValuePair,
-  RawSubtype
-} from '../../../shared/types'
+import type { HistoryEntry, HistoryEntryListItem } from '../../../shared/types'
+import { historyRepeatRequest, historyViewRequest } from './history-request'
 import {
   historyEntryFromRaw,
   parseActivityLog,
@@ -240,51 +235,8 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
 
   const openViewForEntry = useCallback(
     (entry: HistoryEntry) => {
-      const { method, url, headers, body } = entry.request
+      const { method, url } = entry.request
       const title = `${method} ${url.length > 40 ? url.slice(0, 40) + '…' : url}`
-
-      const contentType =
-        Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] ?? ''
-      const ct = contentType.toLowerCase()
-
-      let bodyType: BodyType = 'none'
-      let rawSubtype: RawSubtype = 'json'
-      let resolvedBody = body ?? ''
-      let formFields: KeyValuePair[] = []
-
-      if (ct.includes('application/x-www-form-urlencoded')) {
-        bodyType = 'x-www-form-urlencoded'
-        if (entry.request.formFields?.length) {
-          let fieldId = 0
-          formFields = entry.request.formFields.map((f) => ({
-            id: `f-${fieldId++}`,
-            key: f.key,
-            value: f.value,
-            enabled: f.enabled ?? true
-          }))
-        } else if (body) {
-          let fieldId = 0
-          formFields = body
-            .split('&')
-            .filter(Boolean)
-            .map((pair) => {
-              const eqIdx = pair.indexOf('=')
-              const key =
-                eqIdx === -1 ? decodeURIComponent(pair) : decodeURIComponent(pair.slice(0, eqIdx))
-              const value = eqIdx === -1 ? '' : decodeURIComponent(pair.slice(eqIdx + 1))
-              return { id: `f-${fieldId++}`, key, value, enabled: true }
-            })
-        }
-        resolvedBody = ''
-      } else if (body) {
-        bodyType = 'raw'
-        if (ct.includes('application/json')) rawSubtype = 'json'
-        else if (ct.includes('xml')) rawSubtype = 'xml'
-        else if (ct.includes('javascript')) rawSubtype = 'javascript'
-        else if (ct.includes('text/html') || ct.includes('application/html')) rawSubtype = 'html'
-        else if (ct.includes('text/')) rawSubtype = 'text'
-      }
-
       openTab({
         title,
         filePath: null,
@@ -295,25 +247,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
         response: entry.response,
         isLoading: false,
         error: null,
-        request: {
-          method,
-          url,
-          params: [],
-          headers: Object.entries(headers).map(([key, value], i) => ({
-            id: `h-${i}`,
-            key,
-            value,
-            enabled: true
-          })),
-          bodyType,
-          rawSubtype,
-          body: resolvedBody,
-          formFields,
-          auth: { type: 'none' },
-          preRequestScript: entry.request.preRequestScript ?? '',
-          postResponseScript: entry.request.postResponseScript ?? '',
-          settings: {}
-        },
+        request: historyViewRequest(entry),
         scriptResults: entry.scriptResults
       })
     },
@@ -382,7 +316,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
 
   const repeatFromEntry = useCallback(
     (entry: HistoryEntry) => {
-      const { method, url, headers, body } = entry.request
+      const { method, url } = entry.request
       const absSourceFile =
         entry.sourceFile && workspacePath
           ? (() => {
@@ -401,25 +335,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
       openTab({
         title: `${method} ${url.slice(0, 30)}`,
         filePath: null,
-        request: {
-          method,
-          url,
-          params: [],
-          headers: Object.entries(headers).map(([key, value], i) => ({
-            id: `h-${i}`,
-            key,
-            value,
-            enabled: true
-          })),
-          bodyType: body ? 'raw' : 'none',
-          rawSubtype: 'json',
-          body: body ?? '',
-          formFields: [],
-          auth: { type: 'none' },
-          preRequestScript: entry.request.preRequestScript ?? '',
-          postResponseScript: entry.request.postResponseScript ?? '',
-          settings: {}
-        }
+        request: historyRepeatRequest(entry)
       })
     },
     [workspacePath, openTab]

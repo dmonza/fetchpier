@@ -5,7 +5,7 @@ import { computeTabDirty, serializeTab } from '../lib/tab-dirty'
 import { reconcileContentChange, removedFlagChanges } from '../lib/tab-reconcile'
 import { collectAllPaths } from '../lib/tree-paths'
 import { isRepointing } from '../lib/repoint-guard'
-import { mapHttpRequestToEditorState } from '../components/request/request-loader'
+import { loadedTabFields } from '../lib/loaded-tab'
 import type { WorkspaceTree } from '../../shared/types'
 
 /**
@@ -50,28 +50,20 @@ export function useFileSyncReconciliation(): void {
         .parseFile(filePath)
         .then((parsed) => {
           if (parsed.requests.length === 0) return
-          const mapped = mapHttpRequestToEditorState(parsed.requests[0])
 
           // Re-read the live tabs — they may have changed during the async parse.
           const { tabs: live, updateTab, markClean } = useRequestStore.getState()
           for (const tab of live.filter((t) => t.filePath === filePath)) {
-            const effectiveId = parsed.requestId ?? tab.requestId
-            const newHash = hashString(
-              serializeTab({ request: mapped, requestId: effectiveId, tail: parsed.tail })
-            )
+            const loaded = loadedTabFields(parsed, tab.requestId)
+            if (!loaded) continue
+            const newHash = hashString(serializeTab(loaded))
             const action = reconcileContentChange({
               cleanHash: tab.cleanHash,
               newHash,
               isDirty: computeTabDirty(tab)
             })
             if (action === 'reload') {
-              updateTab(tab.id, {
-                request: mapped,
-                requestId: effectiveId,
-                tail: parsed.tail,
-                normalizedOnLoad: parsed.requests[0].normalizedOnLoad,
-                conflict: false
-              })
+              updateTab(tab.id, { ...loaded, conflict: false })
               markClean(tab.id, newHash)
             } else if (action === 'conflict') {
               updateTab(tab.id, { conflict: true })

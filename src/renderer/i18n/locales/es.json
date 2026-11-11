@@ -217,6 +217,14 @@
       "title": "Se eliminará contenido no reconocido",
       "detail": "Este archivo tiene una línea que no es ni un header ni un comentario. Al guardar el request se normaliza y se elimina."
     },
+    "loadWarnings": {
+      "title": "No se pudieron leer partes de este archivo",
+      "detail": "Al guardar el request se van a eliminar o reescribir. Corregí el archivo primero si querés conservarlas tal como están. Detalle:"
+    },
+    "invalidBinaryRef": {
+      "title": "La referencia al archivo adjunto no es válida",
+      "detail": "El request no se va a enviar hasta que vuelvas a adjuntar el archivo. Al guardar se conserva la referencia tal como está: {{ref}}"
+    },
     "multiRequest": {
       "title": "Este archivo contiene más de un request",
       "detail": "Solo se muestra y ejecuta el primero. Los demás se conservan y se guardan sin cambios."

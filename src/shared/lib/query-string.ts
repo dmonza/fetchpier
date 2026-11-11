@@ -1,5 +1,5 @@
 import type { KeyValuePair, QueryDecodeWarning } from '../types'
-import { mapTokenLiteralsSafe } from './token-grammar'
+import { mapTokenLiterals, mapTokenLiteralsSafe } from './token-grammar'
 
 /**
  * URL ↔ structured-query primitives shared by the renderer (load path), the
@@ -117,6 +117,18 @@ export function splitUrlAndParams(rawUrl: string): {
  */
 export function encodeQueryComponent(component: string): string {
   return encodeURIComponent(component)
+}
+
+/**
+ * Percent-encodes the literal segments of one **template** query component (an
+ * unresolved key or value) and keeps `{{variable}}` tokens verbatim, through the
+ * shared token grammar — the form a `.http` file stores, and the one
+ * {@link splitUrlAndParams} reads back to the authored values. Pass it to
+ * {@link assembleQuery} to rebuild a template URL from structured parameters
+ * (the activity log's `# @path-raw`).
+ */
+export function encodeTemplateComponent(component: string): string {
+  return mapTokenLiterals(component, encodeURIComponent)
 }
 
 /** Secret log mask shape (`{secret:<name>}`, from `createSecretMasker().logRender`). */

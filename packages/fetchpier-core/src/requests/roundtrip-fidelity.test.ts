@@ -245,30 +245,43 @@ describe('round-trip fidelity — query, malformed part, capstone (Phase C)', ()
     ])
   })
 
-  it('CA-11: a malformed multipart part is dropped on save (Q1 resolution)', () => {
-    const parts: MultipartPart[] = [
-      { kind: 'text', id: 'p0', name: 'ok', value: 'v' },
-      {
+  // Built from what the parser actually produces for a file part whose
+  // reference it cannot accept — not a hand-made shape: the parser used to
+  // downgrade such a part to a text part, which no `parseError` filter catches,
+  // so the save rewrote it as `type=text` instead of removing it.
+  it.each([
+    ['an invalid reference', 'file=bad-ref'],
+    ['a variable reference', 'file={{uploadRef}}'],
+    ['no reference', '']
+  ])(
+    'CA-11: a multipart file part with %s is removed on save, never rewritten as text',
+    (_l, attr) => {
+      const file = [
+        'POST https://api.example.com/upload',
+        '',
+        '# @multipart begin',
+        '# @multipart-part name=ok type=text',
+        'v',
+        `# @multipart-part name=broken type=file ${attr}`.trim(),
+        '# @multipart end',
+        ''
+      ].join('\n')
+      const parts: MultipartPart[] = parseHttpFile(file).requests[0].multipartParts!
+      expect(parts[1]).toMatchObject({
         kind: 'file',
-        id: 'p1',
         name: 'broken',
-        file: {
-          ref: 'bad-ref',
-          originalName: 'x',
-          sizeBytes: 0,
-          mimeType: 'application/octet-stream'
-        },
-        disabled: true,
-        parseError: 'unreadable reference'
-      }
-    ]
-    const text = serializeRequest(
-      editorState({ method: 'POST', bodyType: 'multipart-form', multipartParts: parts })
-    )
-    expect(text).toContain('name=ok')
-    expect(text).not.toContain('broken')
-    expect(text).not.toContain('bad-ref')
-  })
+        parseError: expect.any(String)
+      })
+
+      const text = serializeRequest(
+        editorState({ method: 'POST', bodyType: 'multipart-form', multipartParts: parts })
+      )
+      expect(text).toContain('name=ok')
+      expect(text).not.toContain('broken')
+      expect(text).not.toContain('bad-ref')
+      expect(text).not.toContain('uploadRef')
+    }
+  )
 
   it('CA-10: comments are preserved; a stray line is flagged and removed', () => {
     const text = [

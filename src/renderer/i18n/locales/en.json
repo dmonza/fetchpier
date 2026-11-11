@@ -217,6 +217,14 @@
       "title": "Unrecognized content will be removed",
       "detail": "This file contains a line that is neither a header nor a comment. Saving the request normalizes it away."
     },
+    "loadWarnings": {
+      "title": "Parts of this file could not be read",
+      "detail": "Saving the request will remove or rewrite them. Fix the file first to keep them as written. Details:"
+    },
+    "invalidBinaryRef": {
+      "title": "The attached file reference is not valid",
+      "detail": "The request will not be sent until you attach the file again. Saving keeps the reference as written: {{ref}}"
+    },
     "multiRequest": {
       "title": "This file contains more than one request",
       "detail": "Only the first request is shown and executed. The others are preserved and saved unchanged."

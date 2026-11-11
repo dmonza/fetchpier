@@ -4,12 +4,38 @@ import {
   assembleQuery,
   encodeQueryComponent,
   encodeQueryComponentPreservingMasks,
+  encodeTemplateComponent,
   splitUrlAndParams
 } from './query-string'
 
 function param(key: string, value: string, enabled = true): KeyValuePair {
   return { id: `${key}-${value}`, key, value, enabled }
 }
+
+// The template form of a query component: what a `.http` file or a run's
+// `# @path-raw` stores. Tokens stay resolvable, literals are made URL-safe.
+describe('encodeTemplateComponent', () => {
+  it.each([
+    ['a plain literal', 'page', 'page'],
+    ['a literal needing escapes', 'a b&c=d', 'a%20b%26c%3Dd'],
+    ['a token, verbatim', '{{token}}', '{{token}}'],
+    ['a token inside literals', 'v-{{id}} x', 'v-{{id}}%20x'],
+    ['the empty string', '', '']
+  ])('%s', (_label, input, expected) => {
+    expect(encodeTemplateComponent(input)).toBe(expected)
+  })
+
+  it('splits back to the authored values through splitUrlAndParams', () => {
+    const params = [param('q', 'a b'), param('tok', '{{t}}'), param('amp', 'x&y')]
+    const url = assembleQuery('{{baseUrl}}/s', params, true, encodeTemplateComponent)
+    expect(url).toBe('{{baseUrl}}/s?q=a%20b&tok={{t}}&amp=x%26y')
+    expect(splitUrlAndParams(url).params.map((p) => [p.key, p.value])).toEqual([
+      ['q', 'a b'],
+      ['tok', '{{t}}'],
+      ['amp', 'x&y']
+    ])
+  })
+})
 
 describe('assembleQuery — contextual encoding (REQ-0081 §6.1)', () => {
   // CA-04: a resolved value with a space encodes to %20 (never `+`).

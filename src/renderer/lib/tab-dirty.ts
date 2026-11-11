@@ -38,6 +38,9 @@ export function computeTabDirty(tab: Tab): boolean {
   // The file held content a save would normalize away (stray line / relocated
   // comment) — modified-with-a-reason on load (D19/§6.9, CA-13 flag).
   if (tab.normalizedOnLoad) return true
+  // The edited request's load warnings name content a save drops or rewrites (a
+  // malformed `# @auth` block, an invalid `# @settings` entry, …).
+  if (tab.loadWarnings && tab.loadWarnings.length > 0) return true
   if (tab.request.params.some((p) => p.malformed)) return true
   // A malformed multipart part is dropped on save — surface it as modified-with-
   // a-reason so the byte-changing normalization is visible before saving (CA-11).

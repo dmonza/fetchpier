@@ -105,6 +105,8 @@ export function parseHeredocOpener(line: string): { delimiter: string } | null {
 interface PartParseContext {
   /** Per-block warning sink. */
   warnings: string[]
+  /** The subset of `warnings` a part carries itself, as its `parseError`. */
+  represented: string[]
   /** Per-block part counter (used to assign deterministic ids). */
   partCounter: { value: number }
 }
@@ -248,24 +250,25 @@ function buildPart(
     }
   }
 
-  if (errors.length > 0) {
-    for (const e of errors) {
-      ctx.warnings.push(`Multipart part "${name ?? '(no name)'}": ${e}`)
-    }
-    disabled = true
-  }
+  const errorWarnings = errors.map((e) => `Multipart part "${name ?? '(no name)'}": ${e}`)
+  ctx.warnings.push(...errorWarnings)
+  if (errors.length > 0) disabled = true
 
-  // Disable annotation: when the part is invalid OR the type is unknown, we
-  // surface as a file part if a fileRef-looking value was supplied, else a
-  // text part — preserving as much metadata as possible.
-  if (type === 'file' && fileRef !== undefined && FILE_REF_PATTERN.test(fileRef)) {
-    const originalName = fileRef.slice(66)
+  // A declared file part stays a file part even when it is invalid — an
+  // unacceptable or variable `file=`, or none at all. It carries the errors as
+  // `parseError`, so a save removes it and the editor says so beforehand.
+  // Downgrading it to a text part (which has no `parseError`) used to rewrite
+  // it on save as `type=text`, losing the reference without notice.
+  if (type === 'file') {
+    const ref = fileRef ?? ''
+    const originalName = FILE_REF_PATTERN.test(ref) ? ref.slice(66) : ''
+    if (errors.length > 0) ctx.represented.push(...errorWarnings)
     const filePart: MultipartFilePart = {
       kind: 'file',
       id,
       name: name ?? '',
       file: {
-        ref: fileRef,
+        ref,
         originalName,
         sizeBytes: 0,
         mimeType: lookupMimeType(originalName)
@@ -278,8 +281,9 @@ function buildPart(
     return filePart
   }
 
-  // Fall back to text part shape so the data survives a round-trip even when
-  // the part was malformed (file= without a valid ref, etc.).
+  // Any other part — a text part, or a part with no recognized type — keeps the
+  // text shape. Its validation errors are reported through the warnings only
+  // (the text union carries no `parseError`).
   const textPart: MultipartTextPart = {
     kind: 'text',
     id,
@@ -288,9 +292,6 @@ function buildPart(
     contentType,
     disabled: disabled || undefined
   }
-  // We carry the parseError on text parts via the warnings sink; only file
-  // parts expose `parseError` in the type. This keeps the text union shape
-  // narrow.
   return textPart
 }
 
@@ -300,6 +301,11 @@ export interface MultipartParseResult {
   endIdx: number
   /** Warnings to log; never fatal. */
   warnings: string[]
+  /**
+   * The subset of `warnings` that a returned file part carries as its
+   * `parseError` — already surfaced by the part itself.
+   */
+  representedWarnings: string[]
 }
 
 /**
@@ -311,12 +317,13 @@ export interface MultipartParseResult {
  */
 export function parseMultipartBlock(lines: string[], startIdx: number): MultipartParseResult {
   const warnings: string[] = []
+  const represented: string[] = []
   const partCounter = { value: 0 }
   const parts: MultipartPart[] = []
 
   if (!MULTIPART_BEGIN_MARKER.test(lines[startIdx])) {
     warnings.push('parseMultipartBlock called on a line that is not # @multipart begin')
-    return { parts, endIdx: startIdx, warnings }
+    return { parts, endIdx: startIdx, warnings, representedWarnings: represented }
   }
 
   let i = startIdx + 1
@@ -337,7 +344,7 @@ export function parseMultipartBlock(lines: string[], startIdx: number): Multipar
 
   while (i < lines.length) {
     if (MULTIPART_END_MARKER.test(lines[i])) {
-      return { parts, endIdx: i + 1, warnings }
+      return { parts, endIdx: i + 1, warnings, representedWarnings: represented }
     }
     const markerMatch = MULTIPART_PART_MARKER.exec(lines[i])
     if (!markerMatch) {
@@ -349,12 +356,12 @@ export function parseMultipartBlock(lines: string[], startIdx: number): Multipar
     }
     const attrs = parsePartAttributeList(markerMatch[1] ?? '')
     const { value, nextIdx } = extractValueRegion(lines, i + 1, warnings)
-    parts.push(buildPart(attrs, value, { warnings, partCounter }))
+    parts.push(buildPart(attrs, value, { warnings, represented, partCounter }))
     i = nextIdx
   }
 
   warnings.push('Multipart block: missing closing # @multipart end marker.')
-  return { parts, endIdx: lines.length, warnings }
+  return { parts, endIdx: lines.length, warnings, representedWarnings: represented }
 }
 
 /**

@@ -80,4 +80,54 @@ describe('serializeRequest — binary body marker', () => {
     )
     expect(out).not.toContain('# @binary-file:')
   })
+
+  // The reference the file held when it was not valid: kept on save until a
+  // valid file replaces it, or the user leaves binary mode.
+  describe('an invalid reference from the file', () => {
+    const file = {
+      ref: VALID_REF,
+      originalName: 'report.pdf',
+      sizeBytes: 1234,
+      mimeType: 'application/pdf'
+    }
+
+    it('is re-emitted as written while binary mode has no file', () => {
+      const out = serializeRequest(
+        state({
+          method: 'POST',
+          url: 'https://x/',
+          bodyType: 'binary',
+          invalidBinaryRef: 'not-a-ref'
+        })
+      )
+      expect(out).toBe('# @binary-file: not-a-ref\nPOST https://x/\n')
+    })
+
+    it('gives way to a valid file once one is attached', () => {
+      const out = serializeRequest(
+        state({
+          method: 'POST',
+          url: 'https://x/',
+          bodyType: 'binary',
+          binaryFile: file,
+          invalidBinaryRef: 'not-a-ref'
+        })
+      )
+      expect(out).toContain(`# @binary-file: ${VALID_REF}`)
+      expect(out).not.toContain('not-a-ref')
+    })
+
+    it('is not written once the body leaves binary mode', () => {
+      const out = serializeRequest(
+        state({
+          method: 'POST',
+          url: 'https://x/',
+          bodyType: 'raw',
+          body: 'hi',
+          invalidBinaryRef: 'not-a-ref'
+        })
+      )
+      expect(out).not.toContain('# @binary-file:')
+    })
+  })
 })

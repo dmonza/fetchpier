@@ -356,6 +356,10 @@ export function serializeRequest(state: RequestEditorState, requestId?: string):
   }
   if (isBinary && state.binaryFile?.ref) {
     lines.push(`# @binary-file: ${state.binaryFile.ref}`)
+  } else if (isBinary && state.invalidBinaryRef !== undefined) {
+    // The file's reference was not valid and no file replaced it: kept as
+    // written, so a save never deletes what the author attached.
+    lines.push(`# @binary-file: ${state.invalidBinaryRef}`)
   }
 
   // Disabled rows (`# @disabled`) — one per disabled header / param / field, with

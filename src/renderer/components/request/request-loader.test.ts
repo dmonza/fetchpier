@@ -312,6 +312,23 @@ describe('mapHttpRequestToEditorState', () => {
     expect(result.settings.disableCookieJar).toEqual({ inherit: false, value: true })
   })
 
+  // The author attached a file the reference no longer points at validly: the
+  // request opens in binary mode with no file, holding the reference, so the
+  // editor can say so, a save keeps it and a send is refused.
+  it('opens an invalid binary reference in binary mode with no file', () => {
+    const result = mapHttpRequestToEditorState(
+      makeRequest({ method: 'POST', invalidBinaryRef: 'not-a-ref' })
+    )
+    expect(result.bodyType).toBe('binary')
+    expect(result.binaryFile).toBeUndefined()
+    expect(result.invalidBinaryRef).toBe('not-a-ref')
+    expect(result.body).toBe('')
+  })
+
+  it('carries no invalid reference for a request without one', () => {
+    expect(mapHttpRequestToEditorState(makeRequest({})).invalidBinaryRef).toBeUndefined()
+  })
+
   it('keeps a "use the jar" override from the settings block', () => {
     const result = mapHttpRequestToEditorState(
       makeRequest({ settings: { disableCookieJar: { inherit: false, value: false } } })

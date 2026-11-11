@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { historyEntryToActivityLog } from './history-format'
-import type { HistoryEntry, ResolvedRequestSnapshot } from '@shared/types'
+import type { HistoryEntry, KeyValuePair, ResolvedRequestSnapshot } from '@shared/types'
 
 function baseEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
@@ -245,6 +245,68 @@ describe('historyEntryToActivityLog — request body faithfulness', () => {
     expect(file.requestRaw).toContain('POST https://api.test/x HTTP/1.1')
     expect(file.requestRaw).toContain('{"name":"world"}')
     expect(file.requestRaw).not.toContain('{{who}}')
+  })
+})
+
+// `# @path-raw` is the template URL Open and Repeat rebuild the request from.
+// The desktop sends the query as structured params next to a base URL, so the
+// directive used to record the base alone and Repeat sent a different request.
+describe('historyEntryToActivityLog — # @path-raw', () => {
+  const pathRaw = (request: HistoryEntry['request']): string | undefined => {
+    const header = historyEntryToActivityLog(baseEntry({ request })).header
+    const item = header.find((h) => h.kind === 'directive' && h.key === 'path-raw')
+    return item && item.kind === 'directive' ? item.value : undefined
+  }
+  const kv = (key: string, value: string, extra: Partial<KeyValuePair> = {}): KeyValuePair => ({
+    id: key,
+    key,
+    value,
+    enabled: true,
+    ...extra
+  })
+
+  it('records the structured query: tokens verbatim, literals encoded, flags without `=`', () => {
+    expect(
+      pathRaw({
+        method: 'GET',
+        url: '{{baseUrl}}/users',
+        headers: {},
+        params: [
+          kv('page', '2'),
+          kv('q', 'a b'),
+          kv('token', '{{token}}'),
+          kv('wsdl', '', { valueless: true })
+        ]
+      })
+    ).toBe('{{baseUrl}}/users?page=2&q=a%20b&token={{token}}&wsdl')
+  })
+
+  it('leaves out disabled and key-less params, keeps a malformed one as written', () => {
+    expect(
+      pathRaw({
+        method: 'GET',
+        url: '{{baseUrl}}/users',
+        headers: {},
+        params: [
+          kv('off', '1', { enabled: false }),
+          kv('', 'orphan'),
+          kv('bad%E0', 'v', { malformed: true }),
+          kv('ok', '1')
+        ]
+      })
+    ).toBe('{{baseUrl}}/users?bad%E0=v&ok=1')
+  })
+
+  it('records the base alone when the structured query is empty', () => {
+    expect(pathRaw({ method: 'GET', url: '{{baseUrl}}/users', headers: {}, params: [] })).toBe(
+      '{{baseUrl}}/users'
+    )
+  })
+
+  it('records a flat URL (command line) as written', () => {
+    expect(pathRaw({ method: 'GET', url: '{{baseUrl}}/users?page=2&flag', headers: {} })).toBe(
+      '{{baseUrl}}/users?page=2&flag'
+    )
   })
 })
 

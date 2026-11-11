@@ -633,6 +633,13 @@ export interface RequestEditorState {
   comments?: string[]
   /** Staged binary file reference. Only meaningful when `bodyType === 'binary'`. */
   binaryFile?: BinaryFileAttachment
+  /**
+   * The file's `# @binary-file:` reference, when it does not have the accepted
+   * shape. While the body is binary and no valid file is attached, a save
+   * re-emits it as written and a send hands it to the engine, which refuses the
+   * request instead of sending it without the file.
+   */
+  invalidBinaryRef?: string
   /** Multipart parts. Only meaningful when `bodyType === 'multipart-form'`. */
   multipartParts?: MultipartPart[]
 }
@@ -806,6 +813,12 @@ export interface Tab {
    * modified-with-a-reason on load; cleared on save. Transient — not persisted.
    */
   normalizedOnLoad?: boolean
+  /**
+   * The edited request's load-time diagnostics a save would act on
+   * (`HttpRequest.loadWarnings`). Shown on open and marks the tab
+   * modified-with-a-reason; cleared on save. Transient — not persisted.
+   */
+  loadWarnings?: string[]
 }
 
 // ── HTTP ───────────────────────────────────────────────────────────────────
@@ -958,6 +971,16 @@ export interface HttpRequest {
    * bodiless would silently drop the file the author attached.
    */
   invalidBinaryRef?: string
+  /**
+   * This request's load-time diagnostics that a save of the request would act
+   * on — a directive dropped or rewritten (a malformed `# @auth` block, an
+   * unknown or invalid `# @settings` entry, unreadable multipart content, a body
+   * discarded beside a binary reference). A subset of `ParsedHttpFile.warnings`,
+   * which also lists diagnostics a save keeps (an invalid binary reference, see
+   * `invalidBinaryRef`) or that a part carries itself (a multipart file part's
+   * `parseError`). Absent when there are none. Set by the parser only.
+   */
+  loadWarnings?: string[]
   body?: string
   /** Form field pairs for x-www-form-urlencoded — resolved and URL-encoded in main process */
   formFields?: KeyValuePair[]

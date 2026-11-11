@@ -206,3 +206,39 @@ describe('HistoryList expansion (REQ-0069 CA-01..CA-08)', () => {
     unmount(root, container)
   })
 })
+
+describe('HistoryList — Repeat keeps the recorded query', () => {
+  beforeEach(() => {
+    document.body.replaceChildren()
+    useHistoryExpansionStore.getState().reset()
+    requestStoreState.openTab.mockClear()
+  })
+
+  it('opens a tab whose parameters come from # @path-raw', async () => {
+    installApi([ITEM_A], async () =>
+      RAW.replace(
+        '# @path-raw: https://api.example.com/foo\n',
+        '# @path-raw: {{baseUrl}}/foo?page=2&token={{token}}\n'
+      )
+    )
+    const { container, root } = await mountList()
+    const repeat = container.querySelector('button[title="history.repeat"]') as HTMLButtonElement
+    await act(async () => {
+      repeat.click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(requestStoreState.openTab).toHaveBeenCalledTimes(1)
+    const opened = requestStoreState.openTab.mock.calls[0][0] as {
+      request: { url: string; params: { key: string; value: string }[] }
+    }
+    expect(opened.request.url).toBe('{{baseUrl}}/foo')
+    expect(opened.request.params.map((p) => [p.key, p.value])).toEqual([
+      ['page', '2'],
+      ['token', '{{token}}']
+    ])
+    unmount(root, container)
+  })
+})

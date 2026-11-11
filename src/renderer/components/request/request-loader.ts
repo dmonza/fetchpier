@@ -50,6 +50,11 @@ export function mapHttpRequestToEditorState(first: HttpRequest): RequestEditorSt
   } else if (first.bodyType === 'binary' && first.binaryFile) {
     bodyType = 'binary'
     body = ''
+  } else if (first.invalidBinaryRef !== undefined) {
+    // The author attached a file whose reference is not valid: binary mode with
+    // no file, holding the reference (advisory, kept on save, send refused).
+    bodyType = 'binary'
+    body = ''
   } else if (first.body) {
     const ctLower = contentType.toLowerCase()
     if (ctLower.includes('application/x-www-form-urlencoded')) {
@@ -144,6 +149,9 @@ export function mapHttpRequestToEditorState(first: HttpRequest): RequestEditorSt
     settings: loadedSettings,
     comments: first.comments,
     binaryFile,
+    ...(first.invalidBinaryRef !== undefined && !binaryFile
+      ? { invalidBinaryRef: first.invalidBinaryRef }
+      : {}),
     multipartParts
   }
 }

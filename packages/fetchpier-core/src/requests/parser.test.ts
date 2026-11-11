@@ -583,3 +583,91 @@ describe('parseHttpFile — load-time diagnostics (CLI readiness)', () => {
     expect(parseHttpFile('GET https://x/\n').warnings).toBeUndefined()
   })
 })
+
+// Each request carries the diagnostics a save of **that** request would act on
+// (drop or rewrite) — the desktop shows them and marks the tab modified. The
+// file-level list keeps every diagnostic for the command line.
+describe('parseHttpFile — per-request load warnings', () => {
+  const REF = `${'a'.repeat(64)}__photo.png`
+  const first = (content: string) => parseHttpFile(content).requests[0]
+
+  it.each([
+    [
+      'a malformed # @auth block',
+      '# @auth\n# type: digest\n# @end-auth\nGET https://x/\n',
+      /invalid # @auth block/
+    ],
+    [
+      'an unterminated # @auth block',
+      '# @auth\n# type: bearer\nGET https://x/\n',
+      /missing "# @end-auth"/
+    ],
+    [
+      'an unknown # @settings key',
+      '# @settings\n# bogusKey: 1\n# @end-settings\nGET https://x/\n',
+      /unknown # @settings key "bogusKey"/
+    ],
+    [
+      'an invalid # @settings value',
+      '# @settings\n# verifySsl: maybe\n# @end-settings\nGET https://x/\n',
+      /invalid # @settings value for "verifySsl"/
+    ],
+    [
+      'a binary reference beside a body',
+      `# @binary-file: ${REF}\nPOST https://x/\n\nbody text\n`,
+      /the body is discarded/
+    ],
+    [
+      'an unknown multipart attribute',
+      'POST https://x/\n\n# @multipart begin\n# @multipart-part name=a type=text rogue=1\nv\n# @multipart end\n',
+      /unknown attribute "rogue"/
+    ],
+    [
+      'an invalid multipart text part',
+      'POST https://x/\n\n# @multipart begin\n# @multipart-part type=text\nv\n# @multipart end\n',
+      /missing required attribute "name"/
+    ]
+  ])('%s is a load warning of its request', (_label, content, pattern) => {
+    const r = first(content)
+    expect(r.loadWarnings).toEqual([expect.stringMatching(pattern)])
+    expect(parseHttpFile(content).warnings).toEqual(r.loadWarnings)
+  })
+
+  it('a clean request carries none', () => {
+    expect(first('GET https://x/\n').loadWarnings).toBeUndefined()
+  })
+
+  it('warnings stay with the request that produced them', () => {
+    const parsed = parseHttpFile(
+      'GET https://x/one\n\n###\n# @settings\n# bogusKey: 1\n# @end-settings\nGET https://x/two\n'
+    )
+    expect(parsed.requests[0].loadWarnings).toBeUndefined()
+    expect(parsed.requests[1].loadWarnings).toEqual(['unknown # @settings key "bogusKey"'])
+    expect(parsed.warnings).toEqual(['unknown # @settings key "bogusKey"'])
+  })
+
+  it('an invalid binary reference is kept by a save, so it is not a load warning of the request', () => {
+    const content = '# @binary-file: not-a-ref\nPOST https://x/\n'
+    const r = first(content)
+    expect(r.invalidBinaryRef).toBe('not-a-ref')
+    expect(r.loadWarnings).toBeUndefined()
+    expect(parseHttpFile(content).warnings).toEqual([expect.stringContaining('not-a-ref')])
+  })
+
+  it('an invalid binary reference beside a body drops the body, with a load warning', () => {
+    const content = '# @binary-file: not-a-ref\nPOST https://x/\n\nbody text\n'
+    const r = first(content)
+    expect(r.invalidBinaryRef).toBe('not-a-ref')
+    expect(r.body).toBeUndefined()
+    expect(r.loadWarnings).toEqual([expect.stringMatching(/the body is discarded/)])
+  })
+
+  it('an invalid multipart file part is carried by its parseError, not a load warning', () => {
+    const content =
+      'POST https://x/\n\n# @multipart begin\n# @multipart-part name=f type=file file=bad\n# @multipart end\n'
+    const r = first(content)
+    expect(r.multipartParts?.[0]).toMatchObject({ kind: 'file', parseError: expect.any(String) })
+    expect(r.loadWarnings).toBeUndefined()
+    expect(parseHttpFile(content).warnings).toEqual([expect.stringMatching(/invalid file ref/)])
+  })
+})

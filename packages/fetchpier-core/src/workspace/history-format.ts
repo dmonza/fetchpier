@@ -38,6 +38,7 @@ import type {
   ScriptTestResult,
   WorkspaceHttpSettings
 } from '@shared/types'
+import { assembleQuery, encodeTemplateComponent } from '@shared/lib/query-string'
 
 // ── Header construction ───────────────────────────────────────────────────
 
@@ -72,6 +73,20 @@ function scriptSummary(result: ScriptExecutionResult | undefined): string {
   return 'ok'
 }
 
+/**
+ * The request's template URL — `{{tokens}}` unresolved — with its query, for
+ * `# @path-raw` (what Open and Repeat rebuild the request from). The desktop
+ * sends the query as structured `params` beside a base `url`, so they are
+ * assembled here the way the engine assembles them (enabled and keyed only,
+ * value-less flags without `=`, a malformed pair as it was sent), with the
+ * template encoding a `.http` file uses. A flat URL (command line) already holds
+ * its query.
+ */
+function templateUrl(request: HttpRequest): string {
+  if (!request.params) return request.url
+  return assembleQuery(request.url, request.params, true, encodeTemplateComponent)
+}
+
 function buildHeader(entry: HistoryEntry): HeaderItem[] {
   const h: HeaderItem[] = []
   h.push({ kind: 'directive', key: 'timestamp', value: entry.timestamp })
@@ -83,7 +98,7 @@ function buildHeader(entry: HistoryEntry): HeaderItem[] {
     key: 'duration-ms',
     value: String(entry.response.timingMs ?? 0)
   })
-  h.push({ kind: 'directive', key: 'path-raw', value: entry.request.url })
+  h.push({ kind: 'directive', key: 'path-raw', value: templateUrl(entry.request) })
   if (entry.remoteIp) h.push({ kind: 'directive', key: 'remote-ip', value: entry.remoteIp })
   // REQ-0070: flag that this entry is redacted (not a byte-faithful replay).
   const secretsMasked = entry.wireRequest?.secretsMasked
