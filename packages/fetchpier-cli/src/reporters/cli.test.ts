@@ -105,6 +105,102 @@ const okUnit: RequestUnit = {
   durationMs: 158
 }
 
+describe('CliReporter — passive security findings', () => {
+  const withFindings = (findings: RequestUnit['findings']): RequestUnit => ({
+    ...okUnit,
+    findings
+  })
+  const evaluated = (
+    items: NonNullable<Extract<RequestUnit['findings'], { items: unknown }>>['items'],
+    over: Partial<Extract<RequestUnit['findings'], { items: unknown }>> = {}
+  ): RequestUnit['findings'] => ({
+    rulesApplied: 14,
+    tls: 'captured',
+    finalOrigin: 'https://api.example.com',
+    items,
+    ...over
+  })
+  const hsts = {
+    ruleId: 'headers.hsts-missing',
+    severity: 'medium' as const,
+    category: 'headers' as const,
+    evidence: {},
+    title: 'Strict-Transport-Security is missing'
+  }
+  const banner = {
+    ruleId: 'headers.version-disclosure',
+    severity: 'info' as const,
+    category: 'headers' as const,
+    evidence: { header: 'Server' },
+    title: 'Server software version disclosed'
+  }
+
+  it('lists each finding with its glyph, severity, title and evidence at the default level', () => {
+    const u = withFindings(evaluated([hsts, banner]))
+    const { out } = render({ workspace: '/tmp/ws', environment: 'default', plannedUnits: 1 }, [u], {
+      ...summaryOf([u], 0, 10),
+      findingsSummary: { bySeverity: { high: 0, medium: 1, low: 0, info: 1 }, unitsWithFindings: 1 }
+    })
+    expect(out).toContain('Security findings:')
+    expect(out).toContain('* MEDIUM Strict-Transport-Security is missing')
+    expect(out).toContain('* INFO   Server software version disclosed (header: Server)')
+    expect(out).not.toContain('Reference:')
+    expect(out).toContain('Security findings: 0 high, 1 medium, 0 low, 1 info (in 1 of 1 request)')
+  })
+
+  it('adds the rationale and reference at -v', () => {
+    const u = withFindings(evaluated([hsts]))
+    const { out } = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1, verbosity: 1 },
+      [u],
+      summaryOf([u], 0, 10)
+    )
+    expect(out).toContain('Reference: RFC 6797')
+    expect(out).toContain('Browsers may fall back to plain HTTP on a later visit.')
+  })
+
+  it('uses the Unicode glyph without --ascii, never the pass or fail mark', () => {
+    const u = withFindings(evaluated([hsts]))
+    const { out } = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1 },
+      [u],
+      summaryOf([u], 0, 10),
+      false
+    )
+    expect(out).toContain('◆ MEDIUM Strict-Transport-Security is missing')
+  })
+
+  it('states the rules applied when nothing fired, and the TLS state when unavailable', () => {
+    const u = withFindings(evaluated([], { rulesApplied: 9, tls: 'unavailable' }))
+    const { out } = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 2 },
+      [u, u],
+      summaryOf([u, u], 0, 10)
+    )
+    expect(out).toContain('Security findings: No findings from the rules applied (9).')
+    expect(out).toContain('TLS details not available for this connection.')
+  })
+
+  it('says when the evaluation failed', () => {
+    const u = withFindings({ evaluationFailed: true })
+    const { out } = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1 },
+      [u],
+      summaryOf([u], 0, 10)
+    )
+    expect(out).toContain('Security findings: could not be evaluated for this request.')
+  })
+
+  it('prints nothing about findings for a unit without them', () => {
+    const { out } = render(
+      { workspace: '/tmp/ws', environment: 'default', plannedUnits: 1 },
+      [okUnit],
+      summaryOf([okUnit], 0, 10)
+    )
+    expect(out).not.toContain('Security findings')
+  })
+})
+
 describe('CliReporter — single request', () => {
   it('renders the passing block (ASCII)', () => {
     const { out } = render(

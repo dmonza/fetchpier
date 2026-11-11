@@ -34,6 +34,38 @@ function validatePartial(partial: Partial<WorkspaceHttpSettings>): void {
       throw new Error('binaryFileLimits: warnBytes must be ≤ blockBytes')
     }
   }
+  if (partial.findings !== undefined) validateFindingsPatch(partial.findings)
+}
+
+/**
+ * The findings block the Workspace Settings section sends. Rule ids are not
+ * checked against the catalog on purpose: an id this version does not know may
+ * belong to a newer one, and the section keeps it verbatim on save.
+ */
+function validateFindingsPatch(findings: unknown): void {
+  if (typeof findings !== 'object' || findings === null || Array.isArray(findings)) {
+    throw new Error('findings: expected an object')
+  }
+  const f = findings as Record<string, unknown>
+  if (f.enabled !== undefined && typeof f.enabled !== 'boolean') {
+    throw new Error('findings: enabled must be a boolean')
+  }
+  if (
+    f.disabledRules !== undefined &&
+    (!Array.isArray(f.disabledRules) || f.disabledRules.some((id) => typeof id !== 'string'))
+  ) {
+    throw new Error('findings: disabledRules must be a list of rule ids')
+  }
+  if (
+    f.certExpiryWarnDays !== undefined &&
+    !(
+      typeof f.certExpiryWarnDays === 'number' &&
+      Number.isInteger(f.certExpiryWarnDays) &&
+      f.certExpiryWarnDays >= 0
+    )
+  ) {
+    throw new Error('findings: certExpiryWarnDays must be an integer ≥ 0')
+  }
 }
 
 export async function updateHttpSettings(

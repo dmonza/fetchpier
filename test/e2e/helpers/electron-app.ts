@@ -90,6 +90,12 @@ export type LaunchOptions = {
        */
       workspaceState?: unknown
       /**
+       * Replace the copied fixture's shared settings —
+       * `<workspace>/.fetchpier/settings.json` — with this document, as a team
+       * member would have committed it. Absent by default (the fixture's own).
+       */
+      workspaceSettings?: unknown
+      /**
        * More workspace paths appended to the seeded recent list, so a spec can
        * switch to them from the workspace dropdown. The spec owns these paths
        * and their cleanup.
@@ -101,6 +107,7 @@ export type LaunchOptions = {
       fixture?: never
       autoOpen?: never
       workspaceState?: never
+      workspaceSettings?: never
       extraRecent?: never
       /**
        * Boot with NO existing workspace. The helper creates an empty tmpdir and
@@ -209,6 +216,12 @@ export async function launchApp(options: LaunchOptions): Promise<ElectronAppCont
     workspace = await copyWorkspaceFixture(options.fixture)
     if (options.workspaceState !== undefined) {
       await seedWorkspaceState(workspace.path, options.workspaceState)
+    }
+    if (options.workspaceSettings !== undefined) {
+      await fs.writeFile(
+        join(workspace.path, '.fetchpier', 'settings.json'),
+        JSON.stringify(options.workspaceSettings, null, 2)
+      )
     }
   }
 

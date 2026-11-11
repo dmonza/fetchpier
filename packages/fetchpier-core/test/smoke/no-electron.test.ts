@@ -41,7 +41,7 @@ describe('@fetchpier/core boundary', () => {
     const out = execFileSync(process.execPath, ['-e', script], { encoding: 'utf-8' })
     const keys = JSON.parse(out) as string[]
     expect(keys).toEqual(
-      expect.arrayContaining(['CoreError', 'workspace', 'scripting', 'requests', 'tls'])
+      expect.arrayContaining(['CoreError', 'workspace', 'scripting', 'requests', 'tls', 'findings'])
     )
     expect(keys).not.toContain('schemaImport')
   }, 60000)

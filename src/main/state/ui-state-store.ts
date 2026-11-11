@@ -23,7 +23,8 @@ const VALID_REQ_TABS: ReadonlySet<RequestEditorTab> = new Set<RequestEditorTab>(
 const VALID_RESPONSE_TABS: ReadonlySet<ResponseViewerTab> = new Set<ResponseViewerTab>([
   'body',
   'headers',
-  'tests'
+  'tests',
+  'security'
 ])
 
 const VALID_SCRIPT_PHASES: ReadonlySet<ScriptPhase> = new Set<ScriptPhase>(['pre', 'post'])

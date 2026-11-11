@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { escapeHtml } from '../output/escape'
 import { formatDuration, formatSize } from '../output/formatters'
+import { findingMessage } from '../output/findings-messages'
 import type { RequestUnit, RunSummary } from '../types'
 import type { Reporter, RunMeta, UnitStart } from './types'
 import { responselessLabel } from './unit-outcome'
@@ -74,7 +75,18 @@ export class HtmlReporter implements Reporter {
   <div class="card"><span class="n">${requests.total}</span><span>requests</span></div>
   <div class="card ${tests.failed ? 'bad' : 'good'}"><span class="n">${tests.passed}/${tests.total}</span><span>tests passed</span></div>
   <div class="card ${tests.failed ? 'bad' : ''}"><span class="n">${tests.failed}</span><span>failed</span></div>
-  <div class="card ${scriptErrors ? 'bad' : ''}"><span class="n">${scriptErrors}</span><span>script errors</span></div>
+  <div class="card ${scriptErrors ? 'bad' : ''}"><span class="n">${scriptErrors}</span><span>script errors</span></div>${
+    s.findingsSummary
+      ? `\n  <div class="card"><span class="n">${
+          s.findingsSummary.bySeverity.high +
+          s.findingsSummary.bySeverity.medium +
+          s.findingsSummary.bySeverity.low +
+          s.findingsSummary.bySeverity.info
+        }</span><span>security findings (${s.findingsSummary.bySeverity.high} high, ${
+          s.findingsSummary.bySeverity.medium
+        } medium, ${s.findingsSummary.bySeverity.low} low, ${s.findingsSummary.bySeverity.info} info)</span></div>`
+      : ''
+  }
 </section>
 <main>
 ${s.units.map((u) => this.renderUnit(u)).join('\n')}
@@ -134,9 +146,44 @@ ${s.units.map((u) => this.renderUnit(u)).join('\n')}
         : ''
     }
     ${tests || scriptErrs ? `<h3>Tests</h3><ul class="tests">${tests}${scriptErrs}</ul>` : ''}
+    ${findingsBlock(u)}
   </div>
 </details>`
   }
+}
+
+/**
+ * Passive security findings of a unit (`--findings`). Never affects the unit's
+ * pass/fail class nor the "only failures" filter; an empty result states the
+ * rules applied, never a verdict.
+ */
+function findingsBlock(u: RequestUnit): string {
+  const f = u.findings
+  if (!f) return ''
+  if ('evaluationFailed' in f) {
+    return `<h3>Security findings</h3><p class="muted">Findings could not be evaluated for this request.</p>`
+  }
+  const tls =
+    f.tls === 'unavailable'
+      ? `<p class="muted">TLS details not available for this connection.</p>`
+      : ''
+  if (f.items.length === 0) {
+    return `<h3>Security findings</h3><p class="muted">No findings from the rules applied (${f.rulesApplied}).</p>${tls}`
+  }
+  const rows = f.items
+    .map((item) => {
+      const m = findingMessage(item.ruleId)
+      const evidence = Object.entries(item.evidence)
+        .map(([k, v]) => `${escapeHtml(k)}: <code>${escapeHtml(v)}</code>`)
+        .join(', ')
+      return `<li><span class="sev sev-${item.severity}">${item.severity}</span> <strong>${escapeHtml(
+        item.title
+      )}</strong>${evidence ? ` <span class="muted">(${evidence})</span>` : ''}${
+        m.rationale ? `<div class="muted">${escapeHtml(m.rationale)}</div>` : ''
+      }${m.reference ? `<div class="muted">Reference: ${escapeHtml(m.reference)}</div>` : ''}</li>`
+    })
+    .join('')
+  return `<h3>Security findings</h3><ul class="findings">${rows}</ul>${tls}`
 }
 
 function headerBlock(headers: Record<string, string>): string {
@@ -160,6 +207,9 @@ h1{font-size:18px;margin:0 0 12px}h3{margin:12px 0 4px;font-size:13px;color:var(
 .status{font-weight:600}.muted{color:var(--muted)}
 pre{background:rgba(127,127,127,.12);padding:8px;border-radius:6px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 .tests{list-style:none;padding:0}.tests .pass{color:var(--good)}.tests .fail{color:var(--bad)}
+.findings{list-style:none;padding:0}.findings li{margin:4px 0}
+.sev{font-weight:700;padding:1px 6px;border-radius:4px;font-size:10px;text-transform:uppercase;background:rgba(127,127,127,.25)}
+.sev-high{background:var(--bad);color:#fff}.sev-medium{background:#d97706;color:#fff}
 body.only-failures .unit-pass{display:none}
 `
 

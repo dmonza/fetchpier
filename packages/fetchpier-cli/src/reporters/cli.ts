@@ -4,6 +4,7 @@ import { activityLog } from '@fetchpier/core'
 import type { RequestUnit, RunSummary, Verbosity } from '../types'
 import { formatDuration, formatSize, truncateBody } from '../output/formatters'
 import type { GlyphSet } from '../output/glyphs'
+import { findingMessage } from '../output/findings-messages'
 import type { Reporter, RunMeta, UnitStart } from './types'
 import { notRun } from './unit-outcome'
 
@@ -120,6 +121,53 @@ export class CliReporter implements Reporter {
 
     this.printScriptSection('post-response script', unit.scripts.postResponse, '  ')
     this.printTests(unit, '  ')
+    this.printFindings(unit, '  ')
+  }
+
+  // ── Passive security findings (`--findings`) ──────────────────────────────
+  //
+  // Neutral by construction: its own glyph (never the pass/fail mark), red only
+  // for high, yellow for medium, and — when nothing fired — a count of the rules
+  // applied, never a verdict.
+
+  private severityLabel(severity: 'high' | 'medium' | 'low' | 'info'): string {
+    const label = severity.toUpperCase().padEnd(6)
+    if (severity === 'high') return this.c.red(label)
+    if (severity === 'medium') return this.c.yellow(label)
+    return label
+  }
+
+  private printFindings(unit: RequestUnit, indent: string): void {
+    const f = unit.findings
+    if (!f) return
+    if ('evaluationFailed' in f) {
+      this.line(`${indent}Security findings: could not be evaluated for this request.`)
+      return
+    }
+    if (f.items.length === 0) {
+      this.line(
+        `${indent}Security findings: No findings from the rules applied (${f.rulesApplied}).`
+      )
+    } else {
+      this.line(`${indent}Security findings:`)
+      for (const item of f.items) {
+        const evidence = Object.entries(item.evidence)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(', ')
+        this.line(
+          `${indent}  ${this.g.finding} ${this.severityLabel(item.severity)} ${item.title}` +
+            (evidence ? ` (${evidence})` : '')
+        )
+        if (this.verbosity >= 1) {
+          const m = findingMessage(item.ruleId)
+          if (m.rationale) this.line(`${indent}      ${m.rationale}`)
+          if (m.reference) this.line(`${indent}      Reference: ${m.reference}`)
+        }
+      }
+    }
+    if (f.tls === 'unavailable') {
+      this.line(`${indent}  TLS details not available for this connection.`)
+    }
   }
 
   private printScriptSection(
@@ -262,6 +310,8 @@ export class CliReporter implements Reporter {
     }
     this.printScriptSection('post-response script', unit.scripts.postResponse, '    ')
     if (this.verbosity >= 1) this.printTests(unit, '    ')
+    // Asked for explicitly with `--findings`, so shown at every level.
+    this.printFindings(unit, '    ')
   }
 
   // ── Footer + Failures ─────────────────────────────────────────────────────
@@ -286,6 +336,14 @@ export class CliReporter implements Reporter {
 
     this.line()
     this.line(this.footer(summary))
+    if (summary.findingsSummary) {
+      const { bySeverity: s, unitsWithFindings } = summary.findingsSummary
+      const total = summary.units.length
+      this.line(
+        `Security findings: ${s.high} high, ${s.medium} medium, ${s.low} low, ${s.info} info ` +
+          `(in ${unitsWithFindings} of ${total} ${total === 1 ? 'request' : 'requests'})`
+      )
+    }
   }
 
   private footer(summary: RunSummary): string {

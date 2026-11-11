@@ -419,6 +419,30 @@ export interface UndefinedEnvReferenceWarning {
   envName: string
 }
 
+/**
+ * `http.findings.disabledRules` names a rule id this version does not know. It is
+ * ignored (and kept on save — it may belong to a newer version). Names the id only.
+ */
+export interface FindingsRuleUnknownWarning {
+  code: 'FINDINGS_RULE_UNKNOWN'
+  ruleId: string
+}
+
+/**
+ * A field of `http.findings` holds an invalid value; its default was used. Names
+ * the field, never the value.
+ */
+export interface FindingsSettingInvalidWarning {
+  code: 'FINDINGS_SETTING_INVALID'
+  /** `findings` when the block itself is not an object. */
+  field: 'findings' | 'enabled' | 'disabledRules' | 'certExpiryWarnDays'
+}
+
+/** The findings evaluation failed internally for a send. The send itself is unaffected. */
+export interface FindingsEvaluationFailedWarning {
+  code: 'FINDINGS_EVALUATION_FAILED'
+}
+
 /** Non-fatal advisories a send can produce. Consumers switch on `code`. */
 export type ExecutionWarning =
   | UndefinedEnvReferenceWarning
@@ -433,6 +457,66 @@ export type ExecutionWarning =
   | Http2DowngradedWarning
   | ContentTypeReplacedWarning
   | EnvWriteNotPersistedWarning
+  | FindingsRuleUnknownWarning
+  | FindingsSettingInvalidWarning
+  | FindingsEvaluationFailedWarning
+
+// ── Security findings (passive) ───────────────────────────────────────────────
+
+/** How serious a finding is. `info` never lights the response viewer's badge. */
+export type FindingSeverity = 'high' | 'medium' | 'low' | 'info'
+
+/** The area a rule inspects. */
+export type FindingCategory = 'transport' | 'tls' | 'headers' | 'cookies' | 'auth' | 'cache'
+
+/**
+ * One fired rule. Structured data only — no human text: each surface maps
+ * `ruleId` to its own messages. `evidence` names things (a header, a cookie, a
+ * parameter, a hop origin, a protocol) and never carries a value.
+ */
+export interface Finding {
+  ruleId: string
+  severity: FindingSeverity
+  category: FindingCategory
+  evidence: Record<string, string>
+}
+
+/**
+ * TLS details of the connection that delivered the final response:
+ * `captured`, `unavailable` (an `https` connection whose facts could not be
+ * read — nothing is inferred), or `not-applicable` (a plain `http` final origin).
+ */
+export type FindingsTlsState = 'captured' | 'unavailable' | 'not-applicable'
+
+/**
+ * The outcome of evaluating one send. `failed` means the evaluation itself
+ * broke; the send and its other results are unaffected.
+ */
+export type FindingsEvaluation =
+  | {
+      status: 'evaluated'
+      /** Ordered by severity (high → info), then rule id. */
+      items: Finding[]
+      /** Enabled rules whose scope held for this exchange. */
+      rulesApplied: number
+      tls: FindingsTlsState
+      /** `scheme://host[:port]` of the final response — never the full URL. */
+      finalOrigin: string
+    }
+  | { status: 'failed' }
+
+/**
+ * `http.findings` in `.fetchpier/settings.json`, as stored. Every field is
+ * optional and may hold anything a hand edit put there; it is interpreted only
+ * through `resolveFindingsSettings` (`@shared/lib/findings`), which applies the
+ * defaults and reports what it could not use.
+ */
+export interface FindingsSettings {
+  /** Governs the desktop's automatic evaluation. The command line ignores it. */
+  enabled?: boolean
+  disabledRules?: string[]
+  certExpiryWarnDays?: number
+}
 
 export type BodyType = 'none' | 'x-www-form-urlencoded' | 'raw' | 'binary' | 'multipart-form'
 
@@ -557,7 +641,7 @@ export interface RequestEditorState {
 export type RequestEditorTab = 'params' | 'headers' | 'body' | 'auth' | 'scripts' | 'settings'
 
 /** Sub-pestaña activa dentro del response viewer. */
-export type ResponseViewerTab = 'body' | 'cookies' | 'headers' | 'tests'
+export type ResponseViewerTab = 'body' | 'cookies' | 'headers' | 'tests' | 'security'
 
 /** Fase activa del editor de scripts (pre-request o post-response). */
 export type ScriptPhase = 'pre' | 'post'
@@ -694,6 +778,12 @@ export interface Tab {
    * still unsurfaced in the desktop (see the REQ's follow-up).
    */
   warnings?: ExecutionWarning[]
+  /**
+   * Security findings of the last send (when the workspace has them enabled).
+   * Drives the response viewer's Security tab. Transient UI state; never
+   * persisted to the session, the `.http` or the activity log.
+   */
+  findings?: FindingsEvaluation
   /** Set while a send is in-flight — drives the Send → Cancel button toggle and `http:cancel` correlation. */
   inFlightExecutionId?: string
   /** Sub-pestaña activa del editor de request (Params/Headers/Body/...). Estado de UI, no se persiste al .http. */
@@ -767,6 +857,11 @@ export interface WorkspaceHttpSettings {
    * absent means `DEFAULT_BINARY_FILE_LIMITS` is enforced.
    */
   binaryFileLimits?: BinaryFileLimits
+  /**
+   * Passive security findings policy (workspace-wide, no per-request override).
+   * Optional: absent means every default applies. See {@link FindingsSettings}.
+   */
+  findings?: FindingsSettings
 }
 
 // ── TLS Certificates ───────────────────────────────────────────────────────
@@ -1026,11 +1121,17 @@ export interface ExecutedRequestResult {
    */
   request?: ResolvedRequestSnapshot
   /**
-   * Remote server address resolved by the HTTP client (REQ-0068). Used by the
-   * activity log's `# @remote-ip` directive. Absent when the lookup is not
-   * available (e.g. cached / mocked transport).
+   * Remote address of the direct connection that delivered the final response
+   * (REQ-0068, populated since "Passive security findings"). Used by the activity
+   * log's `# @remote-ip` directive. Absent through a proxy — the connection's
+   * address would be the proxy's — and when the connection could not be observed.
    */
   remoteIp?: string
+  /**
+   * Passive security findings of this send. Present when the adapter asked for
+   * evaluation and the send produced a response.
+   */
+  findings?: FindingsEvaluation
   /**
    * Non-fatal advisories from the send — a malformed percent-encoded query
    * parameter kept raw (REQ-0086), or a `{{reference}}` with no value (REQ-0111).

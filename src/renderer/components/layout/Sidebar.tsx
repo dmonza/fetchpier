@@ -22,6 +22,7 @@ import { useSchemaImportStore } from '../../stores/schemaImport'
 import { useTreeSelectionStore, resolveTargetFolder } from '../../stores/treeSelection'
 import { useTreeStateStore } from '../../stores/treeState'
 import { WorkspaceSettingsDialog } from '../workspace/WorkspaceSettingsDialog'
+import { useWorkspaceSettingsDialogStore } from '../../stores/workspaceSettingsDialog'
 
 interface WorkspaceHeaderProps {
   workspacePath: string | null
@@ -229,7 +230,9 @@ export function Sidebar(): React.JSX.Element {
   }
 
   const [pendingRootCreate, setPendingRootCreate] = useState<'collection' | 'request' | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // Shared with the response viewer's Security tab, which opens it on a section.
+  const settingsOpen = useWorkspaceSettingsDialogStore((s) => s.open)
+  const setSettingsOpen = useWorkspaceSettingsDialogStore((s) => s.setOpen)
 
   const handleNewCollection = (): void => {
     setPendingRootCreate('collection')

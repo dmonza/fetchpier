@@ -54,6 +54,10 @@ export function addRunOptions(cmd: Command): Command {
     .option('--reporter-junit <file>', 'write a JUnit XML report')
     .option('--reporter-html <file>', 'write a standalone HTML report')
     .option('--reporter-html-only-failures', 'open the HTML report with the failures filter active')
+    .option(
+      '--findings',
+      'report passive security findings for each request (never changes the exit code)'
+    )
     .option('--save-history', 'persist each run to <workspace>/requests/.runs/')
     .option('--suppress-exit-code', 'always exit 0 (still nonzero on fatal errors)')
     .option(
@@ -127,6 +131,7 @@ interface RawRunOpts {
   reporterJunit?: string
   reporterHtml?: string
   reporterHtmlOnlyFailures?: boolean
+  findings?: boolean
   saveHistory?: boolean
   suppressExitCode?: boolean
   showSecrets?: boolean
@@ -183,6 +188,7 @@ export function toRunOptions(paths: string[], raw: RawRunOpts): RunOptions {
     verbosity,
     saveHistory: raw.saveHistory ?? false,
     suppressExitCode: raw.suppressExitCode ?? false,
-    showSecrets: raw.showSecrets ?? false
+    showSecrets: raw.showSecrets ?? false,
+    ...(raw.findings ? { findings: true } : {})
   }
 }

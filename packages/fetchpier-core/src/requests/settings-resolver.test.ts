@@ -24,6 +24,16 @@ describe('resolveSettings', () => {
     expect(resolveSettings(req, ws)).toEqual(ws)
   })
 
+  it('passes the workspace-only findings policy through unchanged, and omits it when absent', () => {
+    const findings = {
+      enabled: false,
+      disabledRules: ['headers.csp-missing'],
+      certExpiryWarnDays: 7
+    }
+    expect(resolveSettings(undefined, { ...ws, findings }).findings).toEqual(findings)
+    expect('findings' in resolveSettings(undefined, ws)).toBe(false)
+  })
+
   it('uses request value when inherit=false', () => {
     const req: RequestSettings = {
       verifySsl: { inherit: false, value: false },

@@ -9,6 +9,7 @@ import type {
   WorkspaceHttpSettings
 } from '../../shared/types'
 import { desktopUserAgent } from '../../shared/types'
+import { resolveFindingsSettings } from '../../shared/lib/findings'
 import { getCachedHttpSettings, loadHttpSettings } from '../config/workspace-settings-store'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../config/defaults'
 import { requireActiveWorkspaceHandle } from '../state/active-workspace'
@@ -247,7 +248,11 @@ export function registerRequestHandlers(): void {
             }),
           onCookiesCaptured: (envId) => broadcastCookiesChanged(envId),
           workspacePath: workspacePathForCore,
-          secrets: prepared?.masker
+          secrets: prepared?.masker,
+          // Passive security findings: the desktop evaluates every send unless
+          // the workspace turned it off (`http.findings.enabled`). What is
+          // evaluated comes from the same settings, inside the engine.
+          evaluateFindings: resolveFindingsSettings(workspaceSettings.findings).enabled
         })
       } catch (err) {
         // The pipeline surfaces request/script failures in-band; a thrown error

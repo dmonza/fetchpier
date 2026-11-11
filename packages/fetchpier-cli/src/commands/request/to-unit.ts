@@ -3,8 +3,27 @@ import type {
   ScriptExecutionResult,
   ScriptLog as CoreScriptLog
 } from '@shared/types'
-import type { RequestUnit, ScriptError, ScriptLog, ScriptMutationSummary } from '../../types'
+import type {
+  RequestUnit,
+  ScriptError,
+  ScriptLog,
+  ScriptMutationSummary,
+  UnitFindings
+} from '../../types'
 import { redactHeaders, redactUrl, type ApiKeyCredential } from '../../output/formatters'
+import { findingMessage } from '../../output/findings-messages'
+
+/** The engine's evaluation as reported, with each rule's English title. */
+function mapFindings(f: ExecutedRequestResult['findings']): UnitFindings | undefined {
+  if (!f) return undefined
+  if (f.status === 'failed') return { evaluationFailed: true }
+  return {
+    rulesApplied: f.rulesApplied,
+    tls: f.tls,
+    finalOrigin: f.finalOrigin,
+    items: f.items.map((i) => ({ ...i, title: findingMessage(i.ruleId).title }))
+  }
+}
 
 export interface ResolvedRequestView {
   method: string
@@ -122,6 +141,8 @@ export function toRequestUnit(args: {
   // The response is masked unless `--show-secrets`, which shows it as received.
   // The history never reads this: it records `result.response`, always masked.
   const response = (showSecrets ? result.unmaskedResponse : undefined) ?? result.response
+  // Present only when the run asked for findings and the request got a response.
+  const findings = result.response ? mapFindings(result.findings) : undefined
 
   return {
     type: 'request',
@@ -159,6 +180,7 @@ export function toRequestUnit(args: {
     // failure to send, whatever else went wrong with it.
     ...(!result.response && result.error ? { error: result.error } : {}),
     ...(!result.response && result.notSent ? { notRun: true as const } : {}),
+    ...(findings ? { findings } : {}),
     durationMs
   }
 }

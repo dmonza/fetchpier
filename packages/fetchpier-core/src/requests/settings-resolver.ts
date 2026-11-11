@@ -41,7 +41,8 @@ export function resolveSettings(
     ...(workspaceSettings.tls !== undefined ? { tls: workspaceSettings.tls } : {}),
     ...(workspaceSettings.binaryFileLimits !== undefined
       ? { binaryFileLimits: workspaceSettings.binaryFileLimits }
-      : {})
+      : {}),
+    ...(workspaceSettings.findings !== undefined ? { findings: workspaceSettings.findings } : {})
   }
 }
 

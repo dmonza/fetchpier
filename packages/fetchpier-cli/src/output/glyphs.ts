@@ -15,6 +15,8 @@ export interface GlyphSet {
   fail: string
   /** Inline separator between metrics. */
   sep: string
+  /** A security finding (neutral: never the pass or fail mark). */
+  finding: string
 }
 
 export const UNICODE_GLYPHS: GlyphSet = Object.freeze({
@@ -23,7 +25,8 @@ export const UNICODE_GLYPHS: GlyphSet = Object.freeze({
   arrowIn: '←',
   pass: '✓',
   fail: '✗',
-  sep: '·'
+  sep: '·',
+  finding: '◆'
 })
 
 export const ASCII_GLYPHS: GlyphSet = Object.freeze({
@@ -32,7 +35,8 @@ export const ASCII_GLYPHS: GlyphSet = Object.freeze({
   arrowIn: '<-',
   pass: '[OK]',
   fail: '[FAIL]',
-  sep: '-'
+  sep: '-',
+  finding: '*'
 })
 
 /** Pick the glyph set. ASCII when `--ascii` is set; Unicode otherwise. */

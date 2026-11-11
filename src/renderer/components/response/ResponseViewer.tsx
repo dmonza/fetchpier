@@ -1,9 +1,12 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { AlertTriangle, Copy, Check, AlignLeft, Code, Zap } from 'lucide-react'
+import { AlertTriangle, Copy, Check, AlignLeft, Code, Shield, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/utils'
 import { useRequestStore } from '../../stores/request'
 import { useUiStateStore } from '../../stores/uiState'
+import { useWorkspaceSettingsStore } from '../../stores/workspaceSettings'
+import { useWorkspaceSettingsDialogStore } from '../../stores/workspaceSettingsDialog'
+import { resolveFindingsSettings } from '../../../shared/lib/findings'
 import { useCodeMirror } from '../../hooks/useCodeMirror'
 import type { CodeMirrorLanguage } from '../../hooks/useCodeMirror'
 import type { HttpResponse, ResponseViewerTab, ScriptResultsBundle } from '../../../shared/types'
@@ -11,6 +14,7 @@ import { prettyPrintJson, prettyPrintXml, sniffLanguage } from '../../lib/format
 import { TestsTab, countTestFailures } from './TestsTab'
 import { CookiesTab, cookieRowCount, cookieWarningsOf } from './CookiesTab'
 import { ExecutionNotices } from './ExecutionNotices'
+import { SecurityTab, securityBadge } from './SecurityTab'
 
 type ResponseTab = ResponseViewerTab
 
@@ -294,8 +298,17 @@ export function ResponseViewer(): React.JSX.Element {
     (s) => s.tabs.find((tab) => tab.id === s.activeTabId) ?? null
   )
   const updateTab = useRequestStore((s) => s.updateTab)
+  const findingsEnabled = useWorkspaceSettingsStore(
+    (s) => resolveFindingsSettings(s.httpSettings.findings).enabled
+  )
+  // Findings are not recorded in the activity log, so a tab opened from history
+  // has none to show: the Security tab is not offered there at all, rather than
+  // an empty state that would read as "no findings".
+  const securityOffered = activeWorkspaceTab?.historyEntryId === undefined
   // Persisted per-request: read from the tab (hydrated by openTab) and fall back to 'body'.
-  const activeTab: ResponseTab = activeWorkspaceTab?.activeResponseTab ?? 'body'
+  const persistedTab: ResponseTab = activeWorkspaceTab?.activeResponseTab ?? 'body'
+  const activeTab: ResponseTab =
+    persistedTab === 'security' && !securityOffered ? 'body' : persistedTab
   const setActiveTab = useCallback(
     (key: ResponseTab) => {
       if (!activeWorkspaceTab) return
@@ -323,12 +336,14 @@ export function ResponseViewer(): React.JSX.Element {
   // *failures*, so red is the message. A Cookies count is neutral information —
   // painting it red says "something is wrong" on every ordinary send, which
   // drains the colour of meaning by the time it matters.
+  const findingsBadge = findingsEnabled ? securityBadge(activeWorkspaceTab?.findings) : null
   const tabs_: {
     key: ResponseTab
     label: string
     badge?: number
-    tone?: 'danger' | 'neutral'
+    tone?: 'danger' | 'warning' | 'neutral'
     mark?: boolean
+    icon?: React.ReactNode
   }[] = [
     { key: 'body', label: t('response.tabs.body') },
     {
@@ -342,7 +357,20 @@ export function ResponseViewer(): React.JSX.Element {
       mark: cookieWarnings.length > 0
     },
     { key: 'headers', label: t('response.tabs.headers') },
-    { key: 'tests', label: t('response.tabs.tests'), badge: failingTests, tone: 'danger' }
+    { key: 'tests', label: t('response.tabs.tests'), badge: failingTests, tone: 'danger' },
+    // A neutral shield, the same in every state: recognizable at a glance, and
+    // never a "checked" variant — that would read as a verdict. The badge carries
+    // the severity.
+    ...(securityOffered
+      ? [
+          {
+            key: 'security' as const,
+            label: t('response.tabs.security'),
+            icon: <Shield className="h-3 w-3" aria-hidden="true" />,
+            ...(findingsBadge ? { badge: findingsBadge.count, tone: findingsBadge.tone } : {})
+          }
+        ]
+      : [])
   ]
 
   return (
@@ -351,9 +379,10 @@ export function ResponseViewer(): React.JSX.Element {
       <div className="flex h-8 items-center justify-between border-b border-border bg-surface-2 px-3 shrink-0">
         {/* Tabs */}
         <div className="flex h-full items-center">
-          {tabs_.map(({ key, label, badge, tone, mark }) => (
+          {tabs_.map(({ key, label, badge, tone, mark, icon }) => (
             <button
               key={key}
+              data-response-tab={key}
               onClick={() => setActiveTab(key)}
               className={cn(
                 'flex h-8 items-center gap-1.5 px-4 text-xs transition-colors',
@@ -362,6 +391,7 @@ export function ResponseViewer(): React.JSX.Element {
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
+              {icon}
               {label}
               {/* `leading-none` matters: an arbitrary font size keeps the
                   inherited line-height, so the text's line box is taller than the
@@ -374,7 +404,9 @@ export function ResponseViewer(): React.JSX.Element {
                     // Destructive pair: white on the danger *fill* is below 4.5:1.
                     tone === 'danger'
                       ? 'bg-destructive text-destructive-foreground'
-                      : 'bg-muted text-muted-foreground'
+                      : tone === 'warning'
+                        ? 'bg-warning/20 text-warning-text'
+                        : 'bg-muted text-muted-foreground'
                   )}
                 >
                   {badge}
@@ -453,18 +485,36 @@ export function ResponseViewer(): React.JSX.Element {
           <CookiesTab cookies={cookies} warnings={activeWorkspaceTab?.warnings} />
         )}
 
-        {/* Error state (non-tests tab) */}
-        {!isLoading && error && activeTab !== 'tests' && activeTab !== 'cookies' && (
-          <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
-            <span className="text-xs font-medium text-danger-text">{t('response.error')}</span>
-            <span className="text-xs text-muted-foreground">{error}</span>
-          </div>
+        {/* Passive security findings: its own states, including a failed send. */}
+        {!isLoading && activeTab === 'security' && (
+          <SecurityTab
+            findings={activeWorkspaceTab?.findings}
+            enabled={findingsEnabled}
+            error={error}
+            onOpenSettings={() => useWorkspaceSettingsDialogStore.getState().openAt('security')}
+            emptyState={<EmptyResponseState />}
+          />
         )}
 
+        {/* Error state (body / headers) */}
+        {!isLoading &&
+          error &&
+          activeTab !== 'tests' &&
+          activeTab !== 'cookies' &&
+          activeTab !== 'security' && (
+            <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
+              <span className="text-xs font-medium text-danger-text">{t('response.error')}</span>
+              <span className="text-xs text-muted-foreground">{error}</span>
+            </div>
+          )}
+
         {/* Empty state */}
-        {!isLoading && !error && !response && activeTab !== 'tests' && activeTab !== 'cookies' && (
-          <EmptyResponseState />
-        )}
+        {!isLoading &&
+          !error &&
+          !response &&
+          activeTab !== 'tests' &&
+          activeTab !== 'cookies' &&
+          activeTab !== 'security' && <EmptyResponseState />}
 
         {/* Response content */}
         {!isLoading && !error && response && activeTab !== 'tests' && (

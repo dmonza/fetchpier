@@ -66,6 +66,13 @@ export interface RunOptions {
   suppressExitCode?: boolean
   /** Do not redact credentials (Authorization, API-key auth) and cookie values in output. */
   showSecrets?: boolean
+  /**
+   * Evaluate passive security findings for every request and add them to the
+   * terminal, JSON and HTML reports (`--findings`). Never moves the exit code.
+   * The workspace's `http.findings.enabled` does not apply here (it governs the
+   * desktop); its disabled rules and expiry window do.
+   */
+  findings?: boolean
   /** Cancellation signal (wired from SIGINT/SIGTERM by the binary). */
   signal?: AbortSignal
 }
@@ -141,7 +148,43 @@ export interface RequestUnit {
    * exclusion matched). Present only when the run has a proxy configured.
    */
   via?: 'proxy' | 'direct'
+  /**
+   * Passive security findings of this request — present only with `--findings`
+   * and when the request got a response. Optional and additive (`schemaVersion`
+   * stays `1.0`): consumers detect it by presence.
+   */
+  findings?: UnitFindings
   durationMs: number
+}
+
+/** One finding as reported. `title` is informational English text — do not match on it. */
+export interface ReportedFinding {
+  ruleId: string
+  severity: 'high' | 'medium' | 'low' | 'info'
+  category: 'transport' | 'tls' | 'headers' | 'cookies' | 'auth' | 'cache'
+  /** Names and non-secret facts only; never a value. */
+  evidence: Record<string, string>
+  title: string
+}
+
+export type UnitFindings =
+  | {
+      /** Enabled rules whose scope held for this exchange. */
+      rulesApplied: number
+      tls: 'captured' | 'unavailable' | 'not-applicable'
+      /** `scheme://host[:port]` of the final response — never the full URL. */
+      finalOrigin: string
+      /** Ordered by severity (high → info), then rule id. */
+      items: ReportedFinding[]
+    }
+  | { evaluationFailed: true }
+
+/** Run-level findings totals — present only with `--findings`. */
+export interface FindingsSummary {
+  bySeverity: { high: number; medium: number; low: number; info: number }
+  unitsWithFindings: number
+  /** Ids in `http.findings.disabledRules` this version does not know. */
+  ignoredRules?: string[]
 }
 
 // Open union — future domains add `FlowStepUnit | MockRuleUnit`. Consumers that
@@ -169,5 +212,7 @@ export interface RunSummary {
     tests: { total: number; passed: number; failed: number }
     scriptErrors: number
   }
+  /** Present only with `--findings`. Optional and additive (`schemaVersion` stays `1.0`). */
+  findingsSummary?: FindingsSummary
   units: RunUnit[]
 }

@@ -28,7 +28,9 @@ import {
   encodeQueryComponentPreservingMasks
 } from '@shared/lib/query-string'
 import { resolveSettings } from './settings-resolver'
-import { sendRequestWithRaw, type ProxyOption } from './client'
+import { sendRequestWithRaw, type ExchangeFacts, type ProxyOption } from './client'
+import { evaluateFindings } from '../findings/evaluate'
+import { resolveFindingsSettings } from '@shared/lib/findings'
 import { openCookieSession, type CookieRejection, type CookieSession } from './cookie-jar'
 import { snapshotFromSetCookie } from './cookie-store'
 import { encodeMultipart } from './multipart-encoder'
@@ -117,6 +119,14 @@ export interface ExecuteOptions {
    * then byte-identical to before.
    */
   secrets?: SecretMasker
+  /**
+   * Passive security findings: evaluate the exchange this send performed
+   * (`ExecutedRequestResult.findings`). The adapter decides *when* — the desktop
+   * when the workspace's `http.findings.enabled` holds, the command line under
+   * `--findings`; *what* is evaluated (disabled rules, expiry window) always comes
+   * from the resolved workspace settings. Never adds network activity.
+   */
+  evaluateFindings?: boolean
 }
 
 /** Apply a string transform across every interpolatable field of a resolved request. */
@@ -623,8 +633,9 @@ export async function execute(
   // proceed is not a request that failed to reach its server.
   let rawSetCookie: string[]
   let response: Awaited<ReturnType<typeof sendRequestWithRaw>>['response']
+  let exchange: ExchangeFacts | undefined
   try {
-    ;({ response, rawSetCookie } = await sendRequestWithRaw(
+    ;({ response, rawSetCookie, exchange } = await sendRequestWithRaw(
       {
         method: wireResolved.method,
         url: wireUrl,
@@ -649,7 +660,10 @@ export async function execute(
         // REQ-0115: from here the client owns the `Cookie` header, per hop. The
         // one set above on `finalHeaders` is what the snapshot reports; the
         // interceptor recomputes it for the wire against each hop's host.
-        cookies: cookieSession
+        cookies: cookieSession,
+        // Observation of the send's own connections and hops: the remote IP of
+        // the activity log and, when asked for, the findings evaluation.
+        observeExchange: true
       }
     ))
   } catch (err) {
@@ -817,6 +831,48 @@ export async function execute(
   // by substring against the same values as the script output. `response` is
   // always the masked one — what every log and report reads; the copy as
   // received travels only when the adapter asked for it and it differs.
+  // Passive security findings: evaluated over what the send already observed —
+  // its final hop as sent, every hop's `Set-Cookie`, the final response as
+  // received and the connection that delivered it. A defect in the evaluation is
+  // contained here: the send keeps its result, and the failure is surfaced.
+  const findingsWarnings: ExecutionWarning[] = []
+  let findings: ExecutedRequestResult['findings']
+  if (options.evaluateFindings && exchange) {
+    try {
+      const finalHop = exchange.hops[exchange.hops.length - 1]
+      findings = evaluateFindings(
+        {
+          finalUrl: exchange.finalUrl,
+          requestHeaders: finalHop?.requestHeaders ?? [],
+          response: {
+            headers: response.headers,
+            hasBody: (response.compressedBytes ?? response.sizeBytes) > 0
+          },
+          hops: exchange.hops.map((h) => ({ url: h.url, setCookie: h.setCookie })),
+          ...(exchange.finalConnection?.tls ? { tls: exchange.finalConnection.tls } : {}),
+          verifySsl: resolvedSettings.verifySsl,
+          // Only its header / parameter *name* is read, so the wire render is fine.
+          ...(resolvedAuth.auth
+            ? {
+                auth: secrets
+                  ? mapAuthStrings(resolvedAuth.auth, secrets.wireRender)
+                  : resolvedAuth.auth
+              }
+            : {})
+        },
+        resolveFindingsSettings(resolvedSettings.findings),
+        new Date()
+      )
+    } catch {
+      findings = { status: 'failed' }
+      findingsWarnings.push({ code: 'FINDINGS_EVALUATION_FAILED' })
+    }
+  }
+  // The remote address is the server's only on a direct connection: through a
+  // proxy the socket's peer is the proxy, and recording it would mislead.
+  const remoteIp =
+    exchange?.finalVia === 'direct' ? exchange.finalConnection?.remoteAddress : undefined
+
   const responseMask = secretValueMask(envChanges)
   const maskedBody = responseMask(response.body)
   const maskedHeaders = Object.fromEntries(
@@ -837,12 +893,10 @@ export async function execute(
     resolvedSettings,
     cookies: cookiesSummary,
     request: snapshot,
-    // REQ-0068 §4 Supuestos: optional remote-server IP. Today undici doesn't
-    // surface the socket address from `Agent#request`; capturing it via a
-    // custom `connect` hook is a follow-up. The activity-log serializer omits
-    // the `# @remote-ip` directive when this is undefined — graceful
-    // degradation, not a feature gate.
-    remoteIp: undefined,
+    // REQ-0068's remote IP, observed on the connection itself (see above). The
+    // activity-log serializer omits `# @remote-ip` when this is undefined.
+    ...(remoteIp ? { remoteIp } : {}),
+    ...(findings ? { findings } : {}),
     // Non-fatal advisories. Query-decode warnings arise only on the flat-URL
     // (CLI) path — desktop sends pass structured params already validated at
     // load — while unresolved references can arise on either.
@@ -853,14 +907,16 @@ export async function execute(
     ...(queryWarnings.length +
       unresolvedWarnings.length +
       cookieWarnings.length +
-      transportWarnings.length >
+      transportWarnings.length +
+      findingsWarnings.length >
     0
       ? {
           warnings: [
             ...queryWarnings,
             ...unresolvedWarnings,
             ...cookieWarnings,
-            ...transportWarnings
+            ...transportWarnings,
+            ...findingsWarnings
           ]
         }
       : {})

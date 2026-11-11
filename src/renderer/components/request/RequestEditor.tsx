@@ -357,6 +357,7 @@ function RequestEditorInner(): React.JSX.Element {
       scriptResults: undefined,
       cookies: undefined,
       warnings: undefined,
+      findings: undefined,
       inFlightExecutionId: executionId
     })
 
@@ -374,7 +375,10 @@ function RequestEditorInner(): React.JSX.Element {
         // REQ-0115: feeds the Cookies section. Cleared on every send (below) so a
         // stale chain never reads as belonging to the current response.
         cookies: cookiesSummary,
-        warnings: executed.warnings
+        warnings: executed.warnings,
+        // Passive security findings: drives the Security tab. Cleared on every
+        // send (above), like the cookies, so a stale result never shows.
+        findings: executed.findings
       })
 
       // REQ-0074: scripts that called fp.environment.set/remove are persisted to

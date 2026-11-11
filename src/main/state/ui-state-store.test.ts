@@ -79,6 +79,18 @@ describe('ui-state-store', () => {
     })
   })
 
+  it('persists the Security response tab', async () => {
+    const id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+    writeRequestFile(ws, 'e.http', id)
+    await loadFromWorkspace(ws)
+
+    setForRequest(id, { activeResponseTab: 'security' })
+    flushSync()
+
+    const onDisk = (await readJson(join(ws, FILE_REL))) as Record<string, unknown>
+    expect(onDisk[id]).toEqual({ activeResponseTab: 'security' })
+  })
+
   it('drops invalid enum values with a console.warn', async () => {
     const id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
     writeRequestFile(ws, 'c.http', id)

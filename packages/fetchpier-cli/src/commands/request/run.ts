@@ -1,6 +1,14 @@
 import { promises as fs } from 'node:fs'
 import { relative } from 'node:path'
-import { CoreError, describeError, requests, secrets, tls, workspace } from '@fetchpier/core'
+import {
+  CoreError,
+  describeError,
+  findings,
+  requests,
+  secrets,
+  tls,
+  workspace
+} from '@fetchpier/core'
 import type {
   CookieRejectionReason,
   ExecutedRequestResult,
@@ -18,7 +26,13 @@ import { resolveEnvironment } from '../../context/resolve-environment'
 import { resolveTlsConfig } from '../../context/resolve-tls-config'
 import { createReporters, type ReporterBuildContext } from '../../reporters'
 import type { Reporter } from '../../reporters/types'
-import type { RequestUnit, ReporterConfig, RunOptions, RunSummary } from '../../types'
+import type {
+  FindingsSummary,
+  RequestUnit,
+  ReporterConfig,
+  RunOptions,
+  RunSummary
+} from '../../types'
 import { expandPaths } from './expand-paths'
 import { toRequestUnit, type ResolvedRequestView } from './to-unit'
 import type { ApiKeyCredential } from '../../output/formatters'
@@ -159,6 +173,20 @@ function describeWarning(relPath: string, w: ExecutionWarning): string {
         : `${relPath}: secret variable "${w.name}" was set by a script but not saved: this environment's local ` +
             `values are encrypted with a previous workspace key. Open the workspace in the desktop app with the ` +
             `new key so it re-encrypts them. The value is still used for the rest of this run.`
+    case 'FINDINGS_RULE_UNKNOWN':
+      return (
+        `${relPath}: http.findings.disabledRules names "${w.ruleId}", a rule this version does not ` +
+        `know; it is ignored.`
+      )
+    case 'FINDINGS_SETTING_INVALID':
+      return w.field === 'findings'
+        ? `${relPath}: http.findings is not an object; every findings default applies.`
+        : `${relPath}: http.findings.${w.field} has an invalid value; its default applies.`
+    case 'FINDINGS_EVALUATION_FAILED':
+      return (
+        `${relPath}: security findings could not be evaluated for this request (a defect — please ` +
+        `report it). The request itself is unaffected.`
+      )
   }
 }
 
@@ -247,6 +275,12 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
   // an unparseable settings file stops the run (exit 4) instead of silently
   // running with defaults — which would drop its TLS material and HTTP settings.
   const workspaceSettings = await ws.settings.loadStrict()
+  // Passive security findings: `--findings` alone decides whether this run
+  // evaluates (the workspace's `enabled` governs the desktop). The rule set is the
+  // workspace's; what it could not use is reported once for the run.
+  const findingsSettings = options.findings
+    ? findings.resolveFindingsSettings(workspaceSettings.findings)
+    : undefined
 
   // REQ-0070: the key comes exclusively from FETCHPIER_WORKSPACE_KEY (CI-native,
   // mirrors SOPS_AGE_KEY), validated up front; the core asks for it lazily — a
@@ -314,6 +348,12 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
     ...(proxyRouting.active ? { proxy: proxyRouting.active } : {})
   }
   emit(reporters, (r) => r.runStart(meta))
+
+  if (findingsSettings) {
+    for (const w of findings.findingsSettingsWarnings(findingsSettings)) {
+      emit(reporters, (r) => r.warn(describeWarning('.fetchpier/settings.json', w), w))
+    }
+  }
 
   // REQ-0074/0076: the CLI never re-wraps or removes orphans (that would mutate
   // the working tree in CI). Encrypted overrides under a stale keyId are ignored
@@ -446,7 +486,8 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
             }),
           // REQ-0070: secret masking for this send (undefined when the request
           // references no secret).
-          secrets: masker
+          secrets: masker,
+          evaluateFindings: findingsSettings !== undefined
         })
       } catch (err) {
         // A contractual failure stays fatal and keeps its own exit code: an
@@ -530,7 +571,8 @@ export async function executeRun(options: RunOptions, deps: RunDeps = {}): Promi
     environment: resolvedEnv.id,
     environmentName: resolvedEnv.folder,
     startedAt,
-    endedAt
+    endedAt,
+    ...(findingsSettings ? { findings: { ignoredRules: findingsSettings.unknownRules } } : {})
   })
 
   emit(reporters, (r) => r.runComplete(summary))
@@ -558,6 +600,8 @@ function buildSummary(
     environmentName: string
     startedAt: Date
     endedAt: Date
+    /** Present when the run evaluated findings (`--findings`). */
+    findings?: { ignoredRules: string[] }
   }
 ): RunSummary {
   let testsPassed = 0
@@ -591,7 +635,26 @@ function buildSummary(
       tests: { total: testsPassed + testsFailed, passed: testsPassed, failed: testsFailed },
       scriptErrors
     },
+    ...(ctx.findings
+      ? { findingsSummary: summarizeFindings(units, ctx.findings.ignoredRules) }
+      : {}),
     units
+  }
+}
+
+/** Run-level findings totals. Findings never count toward passed / failed. */
+function summarizeFindings(units: RequestUnit[], ignoredRules: string[]): FindingsSummary {
+  const bySeverity = { high: 0, medium: 0, low: 0, info: 0 }
+  let unitsWithFindings = 0
+  for (const u of units) {
+    if (!u.findings || 'evaluationFailed' in u.findings) continue
+    if (u.findings.items.length > 0) unitsWithFindings += 1
+    for (const f of u.findings.items) bySeverity[f.severity] += 1
+  }
+  return {
+    bySeverity,
+    unitsWithFindings,
+    ...(ignoredRules.length > 0 ? { ignoredRules } : {})
   }
 }
 

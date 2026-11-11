@@ -29,9 +29,12 @@ vi.mock('./appsettings.ipc', () => ({
   })
 }))
 
+const workspaceSettingsState = vi.hoisted(() => ({
+  settings: { followRedirects: true } as Record<string, unknown>
+}))
 vi.mock('../config/workspace-settings-store', () => ({
-  getCachedHttpSettings: () => ({ followRedirects: true }),
-  loadHttpSettings: async () => ({ followRedirects: true })
+  getCachedHttpSettings: () => workspaceSettingsState.settings,
+  loadHttpSettings: async () => workspaceSettingsState.settings
 }))
 
 vi.mock('../tls/store', () => ({
@@ -333,5 +336,28 @@ describe('http:send — secrets in the response viewer', () => {
     // The masked one still travels: it is what the activity log records.
     expect(result.response).toEqual(masked)
     expect(result.unmaskedResponse).toEqual(asReceived)
+  })
+})
+
+describe('http:send — passive security findings', () => {
+  afterEach(() => {
+    workspaceSettingsState.settings = { followRedirects: true }
+  })
+
+  it('asks the engine to evaluate by default (a workspace with no findings block)', async () => {
+    await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-f1')
+    expect(executeMock.mock.calls[0][1]).toMatchObject({ evaluateFindings: true })
+  })
+
+  it('does not ask when the workspace turned findings off', async () => {
+    workspaceSettingsState.settings = { followRedirects: true, findings: { enabled: false } }
+    await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-f2')
+    expect(executeMock.mock.calls[0][1]).toMatchObject({ evaluateFindings: false })
+  })
+
+  it('treats an unusable enabled value as the default', async () => {
+    workspaceSettingsState.settings = { followRedirects: true, findings: { enabled: 'no' } }
+    await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-f3')
+    expect(executeMock.mock.calls[0][1]).toMatchObject({ evaluateFindings: true })
   })
 })

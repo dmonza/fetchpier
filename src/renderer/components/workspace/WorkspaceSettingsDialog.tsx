@@ -14,6 +14,11 @@ import { CertificatesPanel } from '../settings/CertificatesPanel'
 import { LazyBoundary } from '../ui/LazyBoundary'
 import { useAppearanceStore } from '../../stores/appearance'
 import { useThemeStore } from '../../stores/theme'
+import {
+  useWorkspaceSettingsDialogStore,
+  type WorkspaceSettingsSection
+} from '../../stores/workspaceSettingsDialog'
+import { FindingsSettingsSection } from './FindingsSettingsSection'
 import { DEFAULT_BINARY_FILE_LIMITS } from '../../../shared/types'
 
 // The panel carries the palette generator; loading it on demand keeps the
@@ -53,7 +58,12 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
   const update = useWorkspaceSettingsStore((s) => s.update)
   const resetToDefaults = useWorkspaceSettingsStore((s) => s.resetToDefaults)
   const [confirmReset, setConfirmReset] = useState(false)
-  const [tab, setTab] = useState('http')
+  // Shared, so the response viewer's Security tab can open the dialog on a section.
+  const tab = useWorkspaceSettingsDialogStore((s) => s.tab)
+  const setTab = useWorkspaceSettingsDialogStore((s) => s.setTab)
+  // A fresh dialog starts on HTTP, as it did when the section was local state:
+  // the selection survives close/reopen, not a remount.
+  useEffect(() => () => useWorkspaceSettingsDialogStore.getState().setTab('http'), [])
 
   const set = <K extends keyof WorkspaceHttpSettings>(
     key: K,
@@ -78,7 +88,7 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
       void useAppearanceStore.getState().flush()
     }
     setConfirmReset(false)
-    setTab(next)
+    setTab(next as WorkspaceSettingsSection)
   }
 
   return (
@@ -89,6 +99,7 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
       description={t('workspaceSettings.subtitle')}
       tabs={[
         { value: 'http', label: t('workspaceSettings.tabs.http') },
+        { value: 'security', label: t('workspaceSettings.tabs.security') },
         { value: 'certificates', label: t('workspaceSettings.tabs.certificates') },
         { value: 'appearance', label: t('workspaceSettings.tabs.appearance') }
       ]}
@@ -202,6 +213,12 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
             />
           </div>
         </TooltipProvider>
+      </SettingsTabPanel>
+      <SettingsTabPanel value="security">
+        <FindingsSettingsSection
+          value={settings.findings}
+          onChange={(next) => set('findings', next)}
+        />
       </SettingsTabPanel>
       <SettingsTabPanel value="certificates">
         <CertificatesPanel scope="workspace" />

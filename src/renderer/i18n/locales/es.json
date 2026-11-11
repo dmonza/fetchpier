@@ -425,7 +425,18 @@
       "body": "Body",
       "headers": "Headers",
       "tests": "Tests",
-      "cookies": "Cookies"
+      "cookies": "Cookies",
+      "security": "Seguridad"
+    },
+    "security": {
+      "heading": "Hallazgos de seguridad",
+      "noFindings": "Sin hallazgos en las reglas aplicadas ({{n}}).",
+      "turnedOff": "Los hallazgos de seguridad están desactivados en este workspace.",
+      "openSettings": "Abrir configuración del workspace",
+      "tlsUnavailable": "Los detalles TLS no están disponibles para esta conexión.",
+      "noResponse": "No hay respuesta para evaluar.",
+      "evaluationFailed": "No se pudieron evaluar los hallazgos de este envío.",
+      "reference": "Referencia"
     },
     "tests": {
       "empty": "Enviá un request con scripts para ver los resultados de los tests aquí.",
@@ -838,13 +849,201 @@
     "subtitle": "Defaults aplicados a cada request de este workspace.",
     "tabs": {
       "http": "HTTP",
+      "security": "Seguridad",
       "certificates": "Certificados",
       "appearance": "Apariencia"
+    },
+    "findings": {
+      "intro": "Chequeos pasivos sobre el intercambio que cada envío ya realizó. Nunca se envía nada extra, y ningún hallazgo certifica al endpoint.",
+      "enabled": "Evaluar hallazgos en cada envío",
+      "expiryLabel": "Avisar de certificados que vencen dentro de (días)",
+      "expiryInvalid": "Ingresá una cantidad entera de días, 0 o más.",
+      "unknownRules": "No reconocidas por esta versión — se ignoran:",
+      "invalidFields": "Estos valores guardados no se pudieron usar, así que aplican sus valores por defecto:"
     },
     "done": "Listo",
     "cancel": "Cancelar",
     "resetFactory": "Restaurar valores de fábrica",
     "confirmReset": "¿Seguro? Se sobrescribirán todos los defaults HTTP."
+  },
+  "findings": {
+    "severity": {
+      "high": "Alta",
+      "medium": "Media",
+      "low": "Baja",
+      "info": "Info"
+    },
+    "severityGroup": {
+      "high": "Alta ({{count}})",
+      "medium": "Media ({{count}})",
+      "low": "Baja ({{count}})",
+      "info": "Info ({{count}})"
+    },
+    "category": {
+      "transport": "Transporte",
+      "tls": "TLS",
+      "headers": "Headers",
+      "cookies": "Cookies",
+      "auth": "Autenticación",
+      "cache": "Caché"
+    },
+    "evidence": {
+      "carrier": "Viaja en",
+      "error": "Error",
+      "protocol": "Protocolo",
+      "cipher": "Cifrado",
+      "daysAgo": "Hace (días)",
+      "daysLeft": "Días restantes",
+      "keyType": "Tipo de clave",
+      "bits": "Bits",
+      "maxAge": "max-age",
+      "header": "Header",
+      "cookie": "Cookie",
+      "hop": "Seteada por",
+      "parameter": "Parámetro",
+      "from": "Desde",
+      "to": "Hacia",
+      "cookies": "Cookies"
+    },
+    "rules": {
+      "transport": {
+        "plaintext": {
+          "title": "Respuesta recibida por HTTP sin cifrar",
+          "rationale": "Cualquiera en el camino de red puede leer o alterar este tráfico.",
+          "reference": "OWASP Transport Layer Security Cheat Sheet"
+        },
+        "plaintext-credentials": {
+          "title": "Credenciales enviadas por HTTP sin cifrar",
+          "rationale": "La credencial viajó sin cifrar y puede capturarse en el camino de red.",
+          "reference": "OWASP Transport Layer Security Cheat Sheet"
+        },
+        "https-downgrade": {
+          "title": "Una redirección pasó el intercambio a HTTP sin cifrar",
+          "rationale": "Un servidor reenvió un request cifrado a una URL sin cifrar; lo que sigue puede leerse o alterarse en el camino de red.",
+          "reference": "OWASP Transport Layer Security Cheat Sheet; RFC 6797"
+        }
+      },
+      "tls": {
+        "verification-disabled": {
+          "title": "La verificación de certificados está desactivada",
+          "rationale": "No se comprobó la identidad del servidor; un impostor habría sido aceptado.",
+          "reference": "RFC 9525; RFC 5280"
+        },
+        "untrusted-certificate": {
+          "title": "El certificado del servidor no es de confianza",
+          "rationale": "El certificado no pasó la verificación; la conexión siguió solo porque la verificación está desactivada.",
+          "reference": "RFC 5280 §6"
+        },
+        "legacy-protocol": {
+          "title": "Se negoció un protocolo TLS heredado",
+          "rationale": "Las versiones anteriores a TLS 1.2 están deprecadas y tienen debilidades conocidas.",
+          "reference": "RFC 8996"
+        },
+        "non-aead-cipher": {
+          "title": "Se negoció un cifrado no AEAD",
+          "rationale": "Los cifrados CBC, RC4, 3DES y NULL no tienen cifrado autenticado y tienen ataques prácticos.",
+          "reference": "RFC 9325 §4.2"
+        },
+        "no-forward-secrecy": {
+          "title": "Sin forward secrecy",
+          "rationale": "Un intercambio de clave RSA estático permite que quien obtenga después la clave del servidor descifre el tráfico grabado.",
+          "reference": "RFC 9325 §7.3; NIST SP 800-52 Rev. 2"
+        },
+        "certificate-expired": {
+          "title": "El certificado del servidor venció",
+          "rationale": "Los clientes que verifican certificados rechazan esta conexión.",
+          "reference": "RFC 5280 §4.1.2.5"
+        },
+        "certificate-expiring": {
+          "title": "El certificado del servidor vence pronto",
+          "rationale": "Renovalo antes de que los clientes empiecen a rechazar la conexión.",
+          "reference": "RFC 5280 §4.1.2.5"
+        },
+        "weak-key": {
+          "title": "Clave de certificado débil",
+          "rationale": "Las claves RSA y DSA de menos de 2048 bits, y las EC de menos de 256, están por debajo de los mínimos actuales.",
+          "reference": "NIST SP 800-57 Part 1"
+        }
+      },
+      "headers": {
+        "hsts-missing": {
+          "title": "Falta Strict-Transport-Security",
+          "rationale": "Los navegadores pueden volver a HTTP sin cifrar en una visita posterior.",
+          "reference": "RFC 6797"
+        },
+        "hsts-short-max-age": {
+          "title": "El max-age de Strict-Transport-Security es corto",
+          "rationale": "Un max-age de menos de 180 días deja una ventana en la que los navegadores olvidan la política.",
+          "reference": "RFC 6797 §6.1.1; OWASP HTTP Headers Cheat Sheet"
+        },
+        "nosniff-missing": {
+          "title": "Falta X-Content-Type-Options: nosniff",
+          "rationale": "Los navegadores pueden adivinar un tipo de contenido distinto del declarado.",
+          "reference": "WHATWG Fetch Standard (X-Content-Type-Options)"
+        },
+        "csp-missing": {
+          "title": "Falta Content-Security-Policy",
+          "rationale": "Sin una política, un script inyectado corre con todos los privilegios de la página.",
+          "reference": "W3C Content Security Policy Level 3"
+        },
+        "frame-protection-missing": {
+          "title": "Sin protección contra framing",
+          "rationale": "Otro sitio puede embeber la página, lo que habilita el clickjacking.",
+          "reference": "RFC 7034; CSP frame-ancestors"
+        },
+        "cors-wildcard-credentials": {
+          "title": "CORS comodín con credenciales",
+          "rationale": "Allow-Origin * junto con Allow-Credentials true es una contradicción que los navegadores rechazan; indica una política demasiado amplia.",
+          "reference": "WHATWG Fetch Standard (protocolo CORS)"
+        },
+        "cors-reflected-origin": {
+          "title": "CORS refleja el Origin del request con credenciales",
+          "rationale": "Devolver cualquier Origin con credenciales permite a cualquier sitio leer respuestas autenticadas.",
+          "reference": "OWASP Web Security Testing Guide: Cross-Origin Resource Sharing"
+        },
+        "cors-null-origin": {
+          "title": "CORS permite el origen null",
+          "rationale": "Los documentos con sandbox y algunas redirecciones llevan el origen null, así que permitirlo permite a cualquier sitio que pueda producirlo.",
+          "reference": "WHATWG Fetch Standard (protocolo CORS); OWASP Web Security Testing Guide: Cross-Origin Resource Sharing"
+        },
+        "version-disclosure": {
+          "title": "Se expone la versión del software del servidor",
+          "rationale": "Los banners de versión ayudan a cruzar el servidor con vulnerabilidades conocidas.",
+          "reference": "OWASP Web Security Testing Guide: Fingerprint Web Server"
+        }
+      },
+      "cookies": {
+        "missing-secure": {
+          "title": "Cookie seteada sin Secure",
+          "rationale": "Sin el atributo Secure, el navegador también la envía por HTTP sin cifrar.",
+          "reference": "RFC 6265 §4.1.2.5"
+        },
+        "missing-httponly": {
+          "title": "Cookie seteada sin HttpOnly",
+          "rationale": "Los scripts de la página pueden leerla, así que un script inyectado podría robarla.",
+          "reference": "RFC 6265 §4.1.2.6"
+        }
+      },
+      "auth": {
+        "credentials-in-query": {
+          "title": "Credencial en la query string",
+          "rationale": "Las URLs terminan en logs, en el historial del navegador y en headers Referer.",
+          "reference": "OWASP REST Security Cheat Sheet"
+        }
+      },
+      "cache": {
+        "sensitive-cacheable": {
+          "title": "La respuesta autenticada puede quedar en caché",
+          "rationale": "Sin no-store ni private, una caché compartida puede guardarla y servirla a otros.",
+          "reference": "RFC 9111 §5.2.2"
+        },
+        "set-cookie-cacheable": {
+          "title": "Respuesta que setea una cookie y es cacheable por cachés compartidas",
+          "rationale": "Una caché compartida puede guardar la respuesta, Set-Cookie incluido, y entregarle la cookie de un usuario a otros.",
+          "reference": "RFC 9111 §5.2.2; RFC 6265"
+        }
+      }
+    }
   },
   "commandPalette": {
     "placeholder": "Escribí un comando o buscá archivos...",

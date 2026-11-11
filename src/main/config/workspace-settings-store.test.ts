@@ -107,6 +107,40 @@ describe('workspace-settings-store — binaryFileLimits validation', () => {
   })
 })
 
+describe('workspace-settings-store — findings patch validation', () => {
+  beforeEach(() => {
+    updateMock.mockResolvedValue(RESULT)
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('persists a valid findings patch, unknown rule ids included (they may be a newer version’s)', async () => {
+    const findings = {
+      enabled: false,
+      disabledRules: ['headers.csp-missing', 'future.rule'],
+      certExpiryWarnDays: 0
+    }
+    await expect(updateHttpSettings('/ws', { findings })).resolves.toBeDefined()
+    expect(updateMock).toHaveBeenCalledWith({ findings })
+  })
+
+  it.each([
+    [{ enabled: 'no' }, /enabled/],
+    [{ disabledRules: 'headers.csp-missing' }, /disabledRules/],
+    [{ disabledRules: [1] }, /disabledRules/],
+    [{ certExpiryWarnDays: -1 }, /certExpiryWarnDays/],
+    [{ certExpiryWarnDays: 1.5 }, /certExpiryWarnDays/],
+    [null, /findings/]
+  ])('rejects %o', async (findings, message) => {
+    await expect(updateHttpSettings('/ws', { findings: findings as never })).rejects.toThrow(
+      message
+    )
+    expect(updateMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('workspace-settings-store — cross-window broadcast', () => {
   beforeEach(() => {
     updateMock.mockResolvedValue(RESULT)

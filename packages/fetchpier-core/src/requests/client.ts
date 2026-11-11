@@ -1,5 +1,14 @@
-import { Agent, ProxyAgent, Dispatcher, interceptors, errors as undiciErrors } from 'undici'
+import {
+  Agent,
+  ProxyAgent,
+  Pool,
+  Dispatcher,
+  buildConnector,
+  interceptors,
+  errors as undiciErrors
+} from 'undici'
 import { Readable } from 'node:stream'
+import { connectionFactsOf, type ConnectionFacts } from './connection-facts'
 import type {
   ExecutionWarning,
   HttpRequest,
@@ -177,12 +186,47 @@ export interface SendOptions {
    * this or set the header, never both.
    */
   cookies?: CookieHopHooks
+  /**
+   * Passive security findings — also report what the send observed about itself
+   * (`SendResult.exchange`): every hop as it went out, and the connection that
+   * delivered the final response. Observation only: no connection, handshake or
+   * request is added, and no option or header is changed.
+   */
+  observeExchange?: boolean
+}
+
+/** One hop of a send, as it went out. */
+export interface HopRecord {
+  /** The hop's URL, from the origin the connection really went to. */
+  url: string
+  /**
+   * Request headers as sent on this hop, in order — after the cookie jar's
+   * attach, the follow-Authorization setting and the transport's cross-origin
+   * strip. Values are present for the evaluation's internal checks only; they
+   * are never reported.
+   */
+  requestHeaders: Array<[string, string]>
+  /** Raw `Set-Cookie` values of this hop's response (empty when none). */
+  setCookie: string[]
+}
+
+/** What a send observed about itself (only with `SendOptions.observeExchange`). */
+export interface ExchangeFacts {
+  /** In order; the last one delivered the final response. */
+  hops: HopRecord[]
+  finalUrl: string
+  /** The last connection to the final origin, when it could be observed. */
+  finalConnection?: ConnectionFacts
+  /** Whether the final origin was reached through a proxy. */
+  finalVia: 'direct' | 'proxy'
 }
 
 export interface SendResult {
   response: HttpResponse
   /** Raw `Set-Cookie` header values (one entry per header), preserving commas. */
   rawSetCookie: string[]
+  /** Present only with `SendOptions.observeExchange`. */
+  exchange?: ExchangeFacts
 }
 
 type Interceptor = (dispatch: Dispatcher['dispatch']) => Dispatcher['dispatch']
@@ -379,6 +423,102 @@ function cookieInterceptor(
   }
 }
 
+/** A dispatch's headers (positional array or record) as ordered name/value pairs. */
+function headerEntries(headers: Dispatcher.DispatchOptions['headers']): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  const push = (name: unknown, value: unknown): void => {
+    if (value === undefined || value === null) return
+    if (Array.isArray(value)) for (const v of value) out.push([String(name), String(v)])
+    else out.push([String(name), String(value)])
+  }
+  if (Array.isArray(headers)) {
+    for (let i = 0; i < headers.length; i += 2) push(headers[i], headers[i + 1])
+  } else if (headers && typeof headers === 'object') {
+    for (const [k, v] of Object.entries(headers as Record<string, unknown>)) push(k, v)
+  }
+  return out
+}
+
+/**
+ * Passive security findings — records every hop as it goes out and what its
+ * response set. Composed just outside the per-hop router, so it sees each hop's
+ * options after every interceptor that shapes them (cookies, Authorization
+ * follow-up) and after the transport's cross-origin clean, and before a hop is
+ * routed to another origin's dispatcher. It only observes: options, headers and
+ * the handler's events pass through untouched.
+ */
+function hopObserver(hops: Array<HopRecord & { responded: boolean }>): Interceptor {
+  return (dispatch) => (opts, handler) => {
+    const url = hopUrl(opts)
+    if (!url) return dispatch(opts, handler)
+    const record = {
+      url,
+      requestHeaders: headerEntries(opts.headers),
+      setCookie: [] as string[],
+      responded: false
+    }
+    hops.push(record)
+    return dispatch(opts, {
+      onRequestStart: (c, ctx) => handler.onRequestStart?.(c, ctx),
+      onRequestUpgrade: (c, status, headers, socket) =>
+        handler.onRequestUpgrade?.(c, status, headers, socket),
+      onResponseStart: (c, status, headers, statusMessage) => {
+        record.responded = true
+        record.setCookie = rawSetCookieFrom(headers)
+        return handler.onResponseStart?.(c, status, headers, statusMessage)
+      },
+      onResponseData: (c, chunk) => handler.onResponseData?.(c, chunk),
+      onResponseEnd: (c, trailers) => handler.onResponseEnd?.(c, trailers),
+      onResponseError: (c, err) => handler.onResponseError?.(c, err)
+    })
+  }
+}
+
+type Connector = buildConnector.connector
+
+/**
+ * Passive security findings — a pool factory whose connector reports every
+ * socket it hands the pool. The connector is the one the pool would have built
+ * itself (same options), or the one it was given (the proxy agent's tunnel), so
+ * the handshake is exactly the same; the socket is only read after it is
+ * established. Never a second connection.
+ */
+function observedPoolFactory(
+  observe: (socket: unknown) => void
+): (origin: string | URL, opts: object) => Dispatcher {
+  return (origin, opts) => {
+    const o = opts as Record<string, unknown> & { connect?: unknown }
+    const base: Connector =
+      typeof o.connect === 'function'
+        ? (o.connect as Connector)
+        : buildConnector({
+            ...(o.tls as object | undefined),
+            maxCachedSessions: o.maxCachedSessions as number | undefined,
+            allowH2: o.allowH2 as boolean | undefined,
+            socketPath: o.socketPath as string | undefined,
+            timeout: o.connectTimeout as number | undefined,
+            ...(o.connect as object | undefined)
+          } as buildConnector.BuildOptions)
+    const connect: Connector = (connectOpts, callback) =>
+      base(connectOpts, (...args) => {
+        if (args[0] === null) {
+          try {
+            observe(args[1])
+          } catch {
+            // Observation must never affect the connection.
+          }
+        }
+        callback(...args)
+      })
+    return new Pool(origin, { ...(opts as Pool.Options), connect })
+  }
+}
+
+/** Whether this proxy configuration actually routes through a proxy. */
+function usesProxy(proxy: ProxyConfig | undefined): proxy is ProxyConfig {
+  return !!proxy && proxy.enabled && !!proxy.url.trim()
+}
+
 /** The statuses the transport follows (`redirect-handler.js#redirectableStatusCodes`). */
 const FOLLOWED_REDIRECT_STATUSES = new Set([300, 301, 302, 303, 307, 308])
 
@@ -442,7 +582,9 @@ function buildBaseDispatcher(
   isHttps: boolean,
   proxy?: ProxyConfig,
   tlsMaterial?: ResolvedTlsMaterial,
-  onWarning?: (warning: ExecutionWarning) => void
+  onWarning?: (warning: ExecutionWarning) => void,
+  /** Passive security findings: reports each socket this dispatcher opens. */
+  observe?: (socket: unknown) => void
 ): Dispatcher {
   // HTTP/2 is only meaningful over HTTPS. Advise and fall back to HTTP/1.1 for plain HTTP.
   let allowH2: boolean
@@ -470,7 +612,10 @@ function buildBaseDispatcher(
   if (tlsMaterial?.pfx) tlsOptions.pfx = tlsMaterial.pfx
   if (tlsMaterial?.passphrase) tlsOptions.passphrase = tlsMaterial.passphrase
 
-  return proxy && proxy.enabled && proxy.url.trim()
+  // With a proxy, the factory is handed the tunnel connector, whose sockets are
+  // the TLS connections to the target — not the connection to the proxy.
+  const factory = observe ? { factory: observedPoolFactory(observe) } : {}
+  return usesProxy(proxy)
     ? new ProxyAgent({
         uri: proxy.url.trim(),
         token:
@@ -480,9 +625,10 @@ function buildBaseDispatcher(
         requestTls: tlsOptions,
         // The proxy gets the trust material only: the client certificate
         // identifies the client to the target server, and the proxy is not it.
-        proxyTls: trust
+        proxyTls: trust,
+        ...factory
       })
-    : new Agent({ allowH2, connect: tlsOptions })
+    : new Agent({ allowH2, connect: tlsOptions, ...factory })
 }
 
 interface ChainParts {
@@ -492,19 +638,24 @@ interface ChainParts {
   router?: Interceptor
   /** The request's `Authorization` values, restored per hop when the setting asks. */
   authorization: string[]
+  /** Passive security findings: records each hop (see {@link hopObserver}). */
+  observer?: Interceptor
 }
 
 function composeChain(base: Dispatcher, parts: ChainParts): Dispatcher {
-  const { settings, cookies, router, authorization } = parts
+  const { settings, cookies, router, authorization, observer } = parts
   const maxRedirections = settings.followRedirects ? settings.maxRedirects : 0
 
   // Order matters. `compose` applies left to right, and each interceptor wraps the
   // previous one — so the LAST entry is the outermost and runs first. The redirect
   // interceptor must be outermost (it drives the loop and strips by origin); the
   // per-hop ones must be inside it, where they are re-entered once per hop. The
-  // router is innermost because it replaces the base dispatch for other origins.
+  // router is innermost because it replaces the base dispatch for other origins;
+  // the hop observer sits just outside it, so it also sees the hops the router
+  // sends to another origin's dispatcher.
   const chain: Interceptor[] = []
   if (maxRedirections > 0 && router) chain.push(router)
+  if (observer) chain.push(observer)
   if (maxRedirections > 0 && settings.followAuthorizationOnRedirect) {
     chain.push(followAuthorizationInterceptor(authorization))
   }
@@ -568,7 +719,27 @@ export async function sendRequestWithRaw(
   const isHttps = target.protocol === 'https:'
   const proxy = typeof options.proxy === 'function' ? options.proxy(httpRequest.url) : options.proxy
   const tls = typeof options.tls === 'function' ? await options.tls(httpRequest.url) : options.tls
-  const base = buildBaseDispatcher(settings, isHttps, proxy, tls, onWarning)
+
+  // Passive security findings: what each origin's dispatcher observed (its last
+  // connection) and whether it went through a proxy, plus every hop as sent.
+  // Each origin of a send has its own dispatcher, so a connection is attributed
+  // to the origin whose dispatcher opened it.
+  const observing = options.observeExchange === true
+  const connections = new Map<string, ConnectionFacts>()
+  const viaByOrigin = new Map<string, 'direct' | 'proxy'>()
+  const hops: Array<HopRecord & { responded: boolean }> = []
+  const observeFor = (origin: string): ((socket: unknown) => void) | undefined =>
+    observing ? (socket) => connections.set(origin, connectionFactsOf(socket)) : undefined
+  viaByOrigin.set(target.origin, usesProxy(proxy) ? 'proxy' : 'direct')
+
+  const base = buildBaseDispatcher(
+    settings,
+    isHttps,
+    proxy,
+    tls,
+    onWarning,
+    observeFor(target.origin)
+  )
 
   // Every other origin a redirect reaches gets its own dispatcher, decided from
   // that hop's URL: its proxy and its TLS material, never the first origin's.
@@ -578,13 +749,21 @@ export async function sendRequestWithRaw(
     if (!pending) {
       pending = (async () => {
         const hopProxy = typeof options.proxy === 'function' ? options.proxy(url) : options.proxy
+        viaByOrigin.set(origin, usesProxy(hopProxy) ? 'proxy' : 'direct')
         const hopTls =
           typeof options.tls === 'function'
             ? await options.tls(url)
             : options.tls?.ca
               ? { ca: options.tls.ca }
               : undefined
-        return buildBaseDispatcher(settings, new URL(url).protocol === 'https:', hopProxy, hopTls)
+        return buildBaseDispatcher(
+          settings,
+          new URL(url).protocol === 'https:',
+          hopProxy,
+          hopTls,
+          undefined,
+          observeFor(origin)
+        )
       })()
       others.set(origin, pending)
     }
@@ -639,7 +818,8 @@ export async function sendRequestWithRaw(
     settings,
     cookies: options.cookies,
     router: hopRouter(target.origin, dispatcherFor),
-    authorization: authorizationValues(headers)
+    authorization: authorizationValues(headers),
+    ...(observing ? { observer: hopObserver(hops) } : {})
   })
 
   try {
@@ -696,7 +876,17 @@ export async function sendRequestWithRaw(
         decompressedBytes: decoded.decompressedBytes,
         decodingStatus: decoded.status
       },
-      rawSetCookie
+      rawSetCookie,
+      ...(observing
+        ? {
+            exchange: buildExchange(
+              hops,
+              { url: `${target.origin}${target.path}`, headers },
+              connections,
+              viaByOrigin
+            )
+          }
+        : {})
     }
   } catch (err) {
     // The adapter's request timer aborts with a recognizable reason: report the
@@ -725,5 +915,42 @@ export async function sendRequestWithRaw(
     for (const pending of others.values()) {
       pending.then((d) => d.destroy()).catch(() => {})
     }
+  }
+}
+
+/**
+ * Assemble what a send observed. The final hop is the last one that started a
+ * response: the transport follows a redirect by dispatching the next hop, so
+ * whatever answered last is what the caller received. Hops dispatched after it
+ * (none in practice) are dropped.
+ */
+function buildExchange(
+  recorded: ReadonlyArray<HopRecord & { responded: boolean }>,
+  request: { url: string; headers: Record<string, string> | string[] },
+  connections: ReadonlyMap<string, ConnectionFacts>,
+  viaByOrigin: ReadonlyMap<string, 'direct' | 'proxy'>
+): ExchangeFacts {
+  let finalIndex = recorded.length - 1
+  for (let i = recorded.length - 1; i >= 0; i--) {
+    if (recorded[i].responded) {
+      finalIndex = i
+      break
+    }
+  }
+  const hops: HopRecord[] =
+    recorded.length > 0
+      ? recorded
+          .slice(0, finalIndex + 1)
+          .map(({ url, requestHeaders, setCookie }) => ({ url, requestHeaders, setCookie }))
+      : // Only when the hop URL could not be rebuilt: the request is the single hop.
+        [{ url: request.url, requestHeaders: headerEntries(request.headers), setCookie: [] }]
+  const finalUrl = hops[hops.length - 1].url
+  const finalOrigin = new URL(finalUrl).origin
+  const finalConnection = connections.get(finalOrigin)
+  return {
+    hops,
+    finalUrl,
+    ...(finalConnection ? { finalConnection } : {}),
+    finalVia: viaByOrigin.get(finalOrigin) ?? 'direct'
   }
 }
