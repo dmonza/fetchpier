@@ -73,6 +73,35 @@ describe('buildHttpRequestPayload (REQ-0081)', () => {
     ])
   })
 
+  // Per-request overrides travel as the editor holds them: the engine resolves
+  // them against the workspace and reports what it applied. Dropping them made
+  // every Settings-tab override a no-op on desktop sends.
+  describe('per-request settings', () => {
+    it('forwards overrides and inherits unchanged', () => {
+      const settings = {
+        followRedirects: { inherit: false as const, value: false },
+        verifySsl: { inherit: true as const },
+        maxRedirects: { inherit: false as const, value: 0 },
+        disableCookieJar: { inherit: false as const, value: false }
+      }
+      const payload = buildHttpRequestPayload(baseState({ settings }), {})
+      expect(payload.settings).toEqual(settings)
+    })
+
+    it('forwards an empty settings object as is', () => {
+      expect(buildHttpRequestPayload(baseState({ settings: {} }), {}).settings).toEqual({})
+    })
+
+    it('carries the cookie-jar override inside settings, never as the top-level flag', () => {
+      const payload = buildHttpRequestPayload(
+        baseState({ settings: { disableCookieJar: { inherit: false, value: true } } }),
+        {}
+      )
+      expect(payload.settings?.disableCookieJar).toEqual({ inherit: false, value: true })
+      expect(payload).not.toHaveProperty('disableCookieJar')
+    })
+  })
+
   it('derives the raw Content-Type from the subtype unless set explicitly', () => {
     const payload = buildHttpRequestPayload(
       baseState({ bodyType: 'raw', rawSubtype: 'json', body: '{"a":1}' }),

@@ -222,6 +222,10 @@ function serializeMultipartSection(parts: MultipartPart[]): string[] {
  * Serializes only the overridden (inherit:false) fields of a RequestSettings
  * into the `# @settings ... # @end-settings` comment block. Returns an empty
  * array if there are no overrides (so the caller omits the block entirely).
+ *
+ * The cookie-jar override has two spellings: `true` is written as the
+ * `# @disable-cookie-jar` marker (by the caller, so existing files keep their
+ * bytes), `false` — "use the jar" in a workspace that disables it — only here.
  */
 function serializeSettingsBlock(settings: RequestSettings | undefined): string[] {
   if (!settings) return []
@@ -233,14 +237,14 @@ function serializeSettingsBlock(settings: RequestSettings | undefined): string[]
     'followRedirects',
     'maxRedirects',
     'followAuthorizationOnRedirect',
-    'encodeUrl'
-    // disableCookieJar is serialized via `# @disable-cookie-jar` shortcut marker.
+    'encodeUrl',
+    'disableCookieJar'
   ]
   for (const field of fields) {
     const v = settings[field]
-    if (v && v.inherit === false) {
-      entries.push([field, v.value as string | number | boolean])
-    }
+    if (!v || v.inherit !== false) continue
+    if (field === 'disableCookieJar' && v.value === true) continue
+    entries.push([field, v.value as string | number | boolean])
   }
   if (entries.length === 0) return []
 
@@ -321,7 +325,8 @@ export function serializeRequest(state: RequestEditorState, requestId?: string):
   // ── Metadata region — all `# @…` directives, before the request line ──────
   if (requestId) lines.push(`# @id ${requestId}`)
 
-  // Disable cookie jar shortcut marker (when overridden to true)
+  // Disable cookie jar shortcut marker (when overridden to true; a `false`
+  // override is a line of the settings block below)
   const djcOverride = state.settings?.disableCookieJar
   if (djcOverride && djcOverride.inherit === false && djcOverride.value === true) {
     lines.push('# @disable-cookie-jar')

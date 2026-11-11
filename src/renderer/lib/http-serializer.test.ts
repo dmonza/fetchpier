@@ -234,4 +234,51 @@ describe('serializeRequest — @settings block', () => {
     expect(out).not.toContain('# followRedirects')
     expect(out).toContain('# @end-settings')
   })
+
+  // The cookie-jar override has two spellings: `true` keeps the historical
+  // `# @disable-cookie-jar` marker, `false` ("use the jar" in a workspace that
+  // disables it) can only live in the block. Dropping `false` lost the choice
+  // on reopen.
+  describe('cookie-jar override', () => {
+    const get = (settings: RequestEditorState['settings']): string =>
+      serializeRequest(makeState({ method: 'GET', url: 'https://api.com/x', settings }))
+
+    it('writes a "use the jar" override as a block line, without the marker', () => {
+      expect(get({ disableCookieJar: { inherit: false, value: false } })).toBe(
+        '# @settings\n# disableCookieJar: false\n# @end-settings\nGET https://api.com/x\n'
+      )
+    })
+
+    it('keeps the marker for a "disable" override, byte-identical, with no block line', () => {
+      expect(get({ disableCookieJar: { inherit: false, value: true } })).toBe(
+        '# @disable-cookie-jar\nGET https://api.com/x\n'
+      )
+    })
+
+    it('writes neither when the request inherits', () => {
+      expect(get({ disableCookieJar: { inherit: true } })).toBe('GET https://api.com/x\n')
+    })
+
+    it('puts the line last in a block shared with other overrides', () => {
+      expect(
+        get({
+          disableCookieJar: { inherit: false, value: false },
+          followRedirects: { inherit: false, value: false }
+        })
+      ).toBe(
+        '# @settings\n# followRedirects: false\n# disableCookieJar: false\n# @end-settings\nGET https://api.com/x\n'
+      )
+    })
+
+    it('keeps the marker and the other overrides when the jar is disabled', () => {
+      expect(
+        get({
+          disableCookieJar: { inherit: false, value: true },
+          followRedirects: { inherit: false, value: false }
+        })
+      ).toBe(
+        '# @disable-cookie-jar\n# @settings\n# followRedirects: false\n# @end-settings\nGET https://api.com/x\n'
+      )
+    })
+  })
 })

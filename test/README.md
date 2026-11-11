@@ -43,8 +43,8 @@ Read-only means no spec mutates it in place — `copyWorkspaceFixture` copies it
 on every launch, so "shared" never implies shared mutable state. Specs that need to mutate workspace
 state copy a template into their own tmpdir and never rely on `default` being pristine.
 
-Consumed by the smoke test, the request-pipeline / cold-path / sandbox / network-egress / ui-state
-specs, and schema-import. (The smoke test budget: end-to-end run under 30 s.)
+Consumed by the smoke test, the request-pipeline / request-settings / cold-path / sandbox /
+network-egress / ui-state / security-findings specs, and schema-import. (The smoke test budget: end-to-end run under 30 s.)
 
 ```
 default/
@@ -58,7 +58,7 @@ default/
     ├── status/                # /status/{200,301,404,500}
     ├── redirects/             # /redirect/3
     ├── auth/                  # basic-auth + bearer
-    ├── cookies/               # /cookies/set + /cookies
+    ├── cookies/               # /cookies/set + /cookies (+ /cookies with the jar disabled)
     ├── content-types/         # /json, /xml
     ├── misc/                  # /delay/2, /headers, /gzip
     └── scripts/               # pre-request + post-response script samples

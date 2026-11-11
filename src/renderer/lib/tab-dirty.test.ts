@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { serializeRequest } from '@shared/lib/http-serializer'
 import { hashString } from '@shared/lib/hash'
 import { DEFAULT_REQUEST_STATE } from '../../shared/types'
-import type { Tab, RequestEditorState } from '../../shared/types'
+import type { Tab, RequestEditorState, SettingValue } from '../../shared/types'
 import { computeTabDirty, cleanHashOf } from './tab-dirty'
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
@@ -83,6 +83,23 @@ describe('computeTabDirty', () => {
     }
     const tab = makeTab({ request, cleanHash: hashString(serializeRequest(request, 'req-1')) })
     expect(computeTabDirty(tab)).toBe(true)
+  })
+
+  // Choosing "use the jar" for one request changes what a save writes, so it is
+  // an edit — before the override was serialized, the tab stayed clean and the
+  // choice was lost on reopen.
+  const jar = (v: SettingValue<boolean>): RequestEditorState => ({
+    ...DEFAULT_REQUEST_STATE,
+    url: 'https://x',
+    settings: { disableCookieJar: v }
+  })
+  it.each<[string, SettingValue<boolean>, SettingValue<boolean>]>([
+    ['inherit → use the jar', { inherit: true }, { inherit: false, value: false }],
+    ['use the jar → inherit', { inherit: false, value: false }, { inherit: true }],
+    ['disable → use the jar', { inherit: false, value: true }, { inherit: false, value: false }]
+  ])('is true when the cookie-jar override changes (%s)', (_label, from, to) => {
+    const cleanHash = cleanHashOf(makeTab({ request: jar(from) }))
+    expect(computeTabDirty(makeTab({ request: jar(to), cleanHash }))).toBe(true)
   })
 
   it('is false for read-only / history tabs', () => {

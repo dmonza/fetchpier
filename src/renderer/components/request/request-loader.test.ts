@@ -312,6 +312,13 @@ describe('mapHttpRequestToEditorState', () => {
     expect(result.settings.disableCookieJar).toEqual({ inherit: false, value: true })
   })
 
+  it('keeps a "use the jar" override from the settings block', () => {
+    const result = mapHttpRequestToEditorState(
+      makeRequest({ settings: { disableCookieJar: { inherit: false, value: false } } })
+    )
+    expect(result.settings.disableCookieJar).toEqual({ inherit: false, value: false })
+  })
+
   it('does not crash when bodyType is multipart-form but multipartParts is missing (defensive fallback)', () => {
     const result = mapHttpRequestToEditorState(makeRequest({ bodyType: 'multipart-form' }))
     // Falls through to default 'none' branch — empty/malformed multipart is treated as no body.

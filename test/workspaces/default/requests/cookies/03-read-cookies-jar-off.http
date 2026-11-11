@@ -1,0 +1,4 @@
+# @id 3e7c1a71-a8a6-4fb4-aba0-5c6800be9d45
+# @disable-cookie-jar
+GET {{baseUrl}}/cookies
+Accept: application/json

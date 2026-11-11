@@ -329,6 +329,45 @@ describe('round-trip fidelity — query, malformed part, capstone (Phase C)', ()
   })
 })
 
+describe('round-trip fidelity — cookie-jar override', () => {
+  it('a "use the jar" override comes back from the settings block', () => {
+    const text = serializeRequest(
+      editorState({ settings: { disableCookieJar: { inherit: false, value: false } } })
+    )
+    const r = parseHttpFile(text).requests[0]
+    expect(r.settings?.disableCookieJar).toEqual({ inherit: false, value: false })
+    expect(r.disableCookieJar).toBeUndefined()
+    expect(parseHttpFile(text).warnings ?? []).toEqual([])
+  })
+
+  it('a "disable" override still round-trips through the marker', () => {
+    const r = parseHttpFile(
+      serializeRequest(
+        editorState({ settings: { disableCookieJar: { inherit: false, value: true } } })
+      )
+    ).requests[0]
+    expect(r.disableCookieJar).toBe(true)
+    expect(r.settings).toBeUndefined()
+  })
+
+  it('a "use the jar" override survives next to other overrides', () => {
+    const r = parseHttpFile(
+      serializeRequest(
+        editorState({
+          settings: {
+            followRedirects: { inherit: false, value: false },
+            disableCookieJar: { inherit: false, value: false }
+          }
+        })
+      )
+    ).requests[0]
+    expect(r.settings).toEqual({
+      followRedirects: { inherit: false, value: false },
+      disableCookieJar: { inherit: false, value: false }
+    })
+  })
+})
+
 /** Map a parsed request back to a minimal editor state for re-serialization. */
 function parseFirstAsState(req: {
   method: string

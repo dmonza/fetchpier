@@ -13,6 +13,13 @@ import { authEcho } from '@shared/lib/auth-echo'
  * resolved values (gated by `encodeUrl`). `url` carries the base only; the core
  * assembles the final URL. Form fields likewise cross as structured data and are
  * encoded core-side after resolution.
+ *
+ * Per-request settings overrides cross as the editor holds them — the engine
+ * resolves them against the workspace defaults and reports what it applied
+ * (`resolvedSettings`). The cookie-jar override travels inside `settings` like
+ * every other one; the top-level `disableCookieJar` flag is the parser's
+ * channel for the `# @disable-cookie-jar` marker, which the loader has already
+ * folded into `settings`.
  */
 export function buildHttpRequestPayload(
   state: RequestEditorState,
@@ -78,6 +85,7 @@ export function buildHttpRequestPayload(
     auth,
     preRequestScript: state.preRequestScript || undefined,
     postResponseScript: state.postResponseScript || undefined,
+    settings: state.settings,
     bodyType,
     binaryFile: bodyType === 'binary' ? state.binaryFile : undefined,
     multipartParts: bodyType === 'multipart-form' ? state.multipartParts : undefined
