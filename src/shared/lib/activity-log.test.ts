@@ -117,6 +117,41 @@ describe('shared/lib/activity-log', () => {
     expect(fromConvenience).toEqual(fromTwoSteps)
   })
 
+  // HIS-18: the rebuilt size is a byte count — the placeholder's recorded
+  // count for a binary body, else the body's UTF-8 length.
+  describe('rebuilt response sizeBytes', () => {
+    const withResponseBody = (body: string) =>
+      historyEntryFromRaw(
+        '# @timestamp: t\n\nGET / HTTP/1.1\n\n### Response\n\nHTTP/1.1 200 OK\n\n' + body + '\n'
+      )
+
+    it('takes the count from a binary placeholder', () => {
+      const entry = withResponseBody('[binary body, 2097152 bytes, content-type: image/png]')
+      expect(entry.response.sizeBytes).toBe(2097152)
+    })
+
+    it('takes the count from a placeholder that names a content-encoding', () => {
+      const entry = withResponseBody(
+        '[binary body, 512 bytes, content-type: application/json, content-encoding: br]'
+      )
+      expect(entry.response.sizeBytes).toBe(512)
+    })
+
+    it('measures a non-ASCII text body in UTF-8 bytes', () => {
+      const body = '{"name":"José Ñandú 日本"}'
+      expect(withResponseBody(body).response.sizeBytes).toBe(31)
+    })
+
+    it('measures a text body that only quotes the placeholder as text', () => {
+      const body = 'see [binary body, 10 bytes, content-type: image/png]'
+      expect(withResponseBody(body).response.sizeBytes).toBe(body.length)
+    })
+
+    it('is zero for an empty body', () => {
+      expect(withResponseBody('').response.sizeBytes).toBe(0)
+    })
+  })
+
   it('rebuilds top-level script error message + filtered stack from the block', () => {
     const withError =
       '# @timestamp: t\n' +

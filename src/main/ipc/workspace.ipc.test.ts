@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Hoisted so the vi.mock factories (also hoisted) can reference them.
 const h = vi.hoisted(() => ({
   DEFAULTS: { verifySsl: true, followRedirects: true } as Record<string, unknown>,
-  active: '/ws' as string | null
+  active: '/ws' as string | null,
+  windows: [] as { isDestroyed: () => boolean; webContents: { send: (...a: unknown[]) => void } }[]
 }))
 
 // ── Capture ipcMain.handle registrations ────────────────────────────────────
@@ -20,7 +21,7 @@ vi.mock('electron', () => ({
       name === 'documents' ? '/home/me/Documents' : '/tmp/userData'
   },
   dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn() },
-  BrowserWindow: { getAllWindows: (): unknown[] => [] }
+  BrowserWindow: { getAllWindows: (): unknown[] => h.windows }
 }))
 
 // ── Filesystem ───────────────────────────────────────────────────────────────
@@ -102,6 +103,8 @@ import { dialog } from 'electron'
 import { registerWorkspaceHandlers } from './workspace.ipc'
 import { workspace as coreWorkspace } from '@fetchpier/core'
 import * as treeStateStore from '../state/tree-state-store'
+import * as activeWorkspace from '../state/active-workspace'
+import * as watcher from '../watcher'
 import { broadcastAppearance } from './appearance.ipc'
 import { clearStartupWorkspaceHint } from '../window/window-appearance'
 import type { OpenPathResult, RestoreResult, WorkspaceOpenStrings } from '../../shared/types'
@@ -119,6 +122,7 @@ beforeEach(() => {
   handlers.clear()
   registerWorkspaceHandlers()
   h.active = '/ws'
+  h.windows = []
   recentStore = { path: '/ws', recent: ['/ws', '/old'] }
   accessMock.mockReset()
   accessMock.mockResolvedValue(undefined)
@@ -499,5 +503,83 @@ describe('workspace.ipc — appearance follows the open workspace', () => {
     expect(res).toEqual({ ok: false, reason: 'none' })
     expect(clearStartupWorkspaceHint).toHaveBeenCalledTimes(1)
     expect(broadcastAppearance).toHaveBeenCalledTimes(1)
+  })
+})
+
+/*
+ * HIS-05 — the detached Activity window binds to the workspace the main window
+ * has open. It reads it through `getActive`, which must be a pure read: the
+ * former `getLast` re-activated the last-opened workspace even after it was
+ * closed. Every workspace change is announced so the popout follows it.
+ */
+describe('workspace.ipc — the popout follows the active workspace', () => {
+  const sent: unknown[][] = []
+  const openStrings = {} as WorkspaceOpenStrings
+
+  beforeEach(() => {
+    sent.length = 0
+    h.windows = [
+      { isDestroyed: () => false, webContents: { send: (...a: unknown[]) => sent.push(a) } },
+      { isDestroyed: () => true, webContents: { send: () => sent.push(['destroyed']) } }
+    ]
+    vi.mocked(watcher.startWatcher).mockClear()
+    vi.mocked(activeWorkspace.setActiveWorkspace).mockClear()
+    vi.mocked(treeStateStore.loadFromWorkspace).mockClear()
+    vi.mocked(coreWorkspace.createWorkspace).mockClear()
+  })
+
+  const activeChanges = (): unknown[] =>
+    sent.filter((a) => a[0] === 'workspace:activeChanged').map((a) => a[1])
+
+  it('getActive returns the open workspace path', async () => {
+    expect(await invoke('workspace:getActive', null)).toBe('/ws')
+  })
+
+  it('getActive returns null after the workspace was closed, and activates nothing', async () => {
+    // The last-opened pointer survives a close: reading it must not revive it.
+    recentStore = { path: '/ws', recent: ['/ws'] }
+    await invoke('workspace:close', null)
+    vi.mocked(activeWorkspace.setActiveWorkspace).mockClear()
+
+    expect(await invoke('workspace:getActive', null)).toBeNull()
+    expect(h.active).toBeNull()
+    expect(activeWorkspace.setActiveWorkspace).not.toHaveBeenCalled()
+    expect(watcher.startWatcher).not.toHaveBeenCalled()
+    expect(treeStateStore.loadFromWorkspace).not.toHaveBeenCalled()
+    expect(coreWorkspace.createWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('announces the new path when a recent workspace opens', async () => {
+    await invoke('workspace:openPath', null, '/ws-b')
+    expect(activeChanges()).toEqual([{ workspacePath: '/ws-b' }])
+  })
+
+  it('announces the new path when a workspace is picked', async () => {
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: false,
+      filePaths: ['/ws-c']
+    } as unknown as Awaited<ReturnType<typeof dialog.showOpenDialog>>)
+    await invoke('workspace:open', null, openStrings)
+    expect(activeChanges()).toEqual([{ workspacePath: '/ws-c' }])
+  })
+
+  it('announces no workspace when it closes', async () => {
+    await invoke('workspace:close', null)
+    expect(activeChanges()).toEqual([{ workspacePath: null }])
+  })
+
+  it('announces nothing when opening a recent fails', async () => {
+    accessMock.mockRejectedValueOnce(new Error('ENOENT'))
+    await invoke('workspace:openPath', null, '/gone')
+    expect(activeChanges()).toEqual([])
+  })
+
+  it('announces nothing when the picker is cancelled', async () => {
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: true,
+      filePaths: []
+    } as unknown as Awaited<ReturnType<typeof dialog.showOpenDialog>>)
+    await invoke('workspace:open', null, openStrings)
+    expect(activeChanges()).toEqual([])
   })
 })

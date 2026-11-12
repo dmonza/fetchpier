@@ -170,6 +170,31 @@ describe('keystore (os-keychain backend)', () => {
     expect(Buffer.from((await getWorkspaceKey(id1))!).equals(Buffer.from(k1))).toBe(true)
     expect(Buffer.from((await getWorkspaceKey(id2))!).equals(Buffer.from(k2))).toBe(true)
   })
+
+  // SEC-06: two stores at once on a machine's first use. Unserialized, both
+  // generated a master key and each rewrote keystore.json from a stale read, so
+  // one entry was lost or wrapped by a master key no longer on disk.
+  it('keeps both entries when two keys are stored concurrently on first use', async () => {
+    // A fresh module: no master key cached from an earlier test.
+    vi.resetModules()
+    const fresh = await import('./keystore')
+    const k1 = await generateWorkspaceKey()
+    const k2 = await generateWorkspaceKey()
+    await Promise.all([
+      fresh.storeWorkspaceKey(deriveKeyId(k1), k1, 'one'),
+      fresh.storeWorkspaceKey(deriveKeyId(k2), k2, 'two')
+    ])
+    expect(Object.keys((await readKeystore()).keys).sort()).toEqual(
+      [deriveKeyId(k1), deriveKeyId(k2)].sort()
+    )
+    // A restart (new module, nothing live) unwraps both with the master key on disk.
+    vi.resetModules()
+    const restarted = await import('./keystore')
+    const r1 = await restarted.getWorkspaceKey(deriveKeyId(k1))
+    const r2 = await restarted.getWorkspaceKey(deriveKeyId(k2))
+    expect(r1 && Buffer.from(r1).equals(Buffer.from(k1))).toBe(true)
+    expect(r2 && Buffer.from(r2).equals(Buffer.from(k2))).toBe(true)
+  })
 })
 
 describe('keystore (session-only / basic_text)', () => {

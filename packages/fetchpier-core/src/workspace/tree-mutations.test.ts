@@ -74,6 +74,56 @@ describe('createCollection / createRequest', () => {
   })
 })
 
+// WSP-03: a name that is not valid on every OS (and in git) is refused before
+// anything touches the disk — no hidden temp leftover, no entry git cannot add.
+describe('portable names on create / rename / check (INVALID_ENTRY_NAME)', () => {
+  const INVALID = ['Step 1: login', 'what?', 'a*b', 'v2.', 'v3 ', 'CON', 'nul.backup', 'a/b']
+
+  async function requestsListing(): Promise<string[]> {
+    return (await fs.readdir(join(ws, 'requests'))).sort()
+  }
+
+  it.each(INVALID)('createRequest refuses %j and leaves nothing on disk', async (name) => {
+    await fs.mkdir(join(ws, 'requests'), { recursive: true })
+    await expect(createRequest(ws, 'requests', name)).rejects.toThrow(/^INVALID_ENTRY_NAME:/)
+    expect(await requestsListing()).toEqual([])
+  })
+
+  it.each(INVALID)('createCollection refuses %j and leaves nothing on disk', async (name) => {
+    await fs.mkdir(join(ws, 'requests'), { recursive: true })
+    await expect(createCollection(ws, 'requests', name)).rejects.toThrow(/^INVALID_ENTRY_NAME:/)
+    expect(await requestsListing()).toEqual([])
+  })
+
+  it('renameEntry refuses an invalid request name and keeps the file', async () => {
+    await seed('requests/login.http')
+    await expect(renameEntry(ws, 'requests/login.http', 'Step 1: login.http')).rejects.toThrow(
+      /^INVALID_ENTRY_NAME:/
+    )
+    expect(await requestsListing()).toEqual(['login.http'])
+  })
+
+  it('renameEntry refuses an invalid collection name and keeps the folder', async () => {
+    await fs.mkdir(join(ws, 'requests', 'auth'), { recursive: true })
+    await expect(renameEntry(ws, 'requests/auth', 'AUX')).rejects.toThrow(/^INVALID_ENTRY_NAME:/)
+    expect(await requestsListing()).toEqual(['auth'])
+  })
+
+  it('checkNameAvailable refuses an invalid name', async () => {
+    await fs.mkdir(join(ws, 'requests'), { recursive: true })
+    await expect(
+      checkNameAvailable(ws, { kind: 'entry', parentPath: 'requests', name: 'Step 1: login' })
+    ).rejects.toThrow(/^INVALID_ENTRY_NAME:/)
+  })
+
+  it('still accepts names that only look unusual', async () => {
+    await fs.mkdir(join(ws, 'requests'), { recursive: true })
+    await createRequest(ws, 'requests', 'users.v2')
+    await createCollection(ws, 'requests', 'CONSOLE')
+    expect(await requestsListing()).toEqual(['CONSOLE', 'users.v2.http'])
+  })
+})
+
 describe('createInstance', () => {
   it('clones the parent with a fresh @id', async () => {
     await seed('requests/login.http', '# @id parent-uuid\nGET https://example.com\n')

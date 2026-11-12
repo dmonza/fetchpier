@@ -102,9 +102,12 @@ async function readFromDisk(workspacePath: string): Promise<RequestUiStateMap> {
  * `.http` files. If anything is dropped, schedules a write so the file reflects
  * the GC. Calling this with a different `workspacePath` than the currently
  * active one will first `flushSync` and clear the previous workspace's state.
+ * Calling it with the already-active path is a no-op: the in-memory map is the
+ * newest copy, and a reload would drop a change still waiting for its write.
  */
 export async function loadFromWorkspace(workspacePath: string): Promise<void> {
-  if (active && active.workspacePath !== workspacePath) {
+  if (active?.workspacePath === workspacePath) return
+  if (active) {
     flushSync()
     active = null
   }

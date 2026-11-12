@@ -1,4 +1,4 @@
-import { tls as coreTls } from '@fetchpier/core'
+import { tls as coreTls, requests, workspace } from '@fetchpier/core'
 import type {
   AppSettings,
   ClientCertPreview,
@@ -6,12 +6,9 @@ import type {
   WorkspaceHttpSettings
 } from '../../shared/types'
 import { getActiveWorkspaceHandle } from '../state/active-workspace'
+import { getSendEnvironmentId } from '../state/send-environment'
 import { readAppSettings, writeAppSettings } from '../ipc/appsettings.ipc'
-import {
-  getCachedHttpSettings,
-  loadHttpSettings,
-  updateHttpSettings
-} from '../config/workspace-settings-store'
+import { updateHttpSettings } from '../config/workspace-settings-store'
 import { appCertsDir } from './paths'
 
 // The certificate *store* (CRUD) lives in `@fetchpier/core/tls`. This adapter
@@ -24,12 +21,9 @@ const store = coreTls.createTlsStore({
   getWorkspacePath: () => getActiveWorkspaceHandle()?.path ?? null,
   readAppTls: () => readAppSettings().tls,
   writeAppTls: (next) => writeAppSettings({ tls: next } as Partial<AppSettings>).tls,
-  readWorkspaceTls: async (ws) => {
-    const cached = getCachedHttpSettings(ws)
-    if (cached && cached.tls) return cached.tls
-    const settings = await loadHttpSettings(ws)
-    return settings.tls
-  },
+  // Feeds a read-modify-write of the block, so it always comes from disk: a
+  // cached copy would overwrite an entry a teammate added (git pull).
+  readWorkspaceTls: async (ws) => (await workspace.openWorkspace(ws).settings.load()).tls,
   writeWorkspaceTls: async (ws, next) => {
     const updated = await updateHttpSettings(ws, {
       tls: next
@@ -71,9 +65,53 @@ export function resolveTlsForUrl(
   })
 }
 
-/** Renderer-facing per-request preview (metadata only; works with the workspace locked). */
-export function previewClientCertForUrl(url: string): Promise<ClientCertPreview> {
-  return coreTls.previewRequestCert(url, {
+/**
+ * The plain variables a send from the active environment resolves against:
+ * shared plain values (with `{{$env.NAME}}`) under the per-machine local layer,
+ * layered by the same variable session the send uses. Secrets are left out —
+ * the preview never decrypts — so a reference to one stays unresolved.
+ */
+async function activePlainVariables(): Promise<Record<string, string>> {
+  const handle = getActiveWorkspaceHandle()
+  if (!handle) return {}
+  try {
+    const varSession = await requests.createVariableSession({
+      workspace: handle,
+      // The send's environment, not workspace-state's persisted selection: the
+      // two differ when the renderer falls back to an environment it never saved.
+      environmentId: getSendEnvironmentId(),
+      processEnv: process.env,
+      getKey: async () => null,
+      persistence: 'memory'
+    })
+    // A request that references nothing: no secret is resolved, and the
+    // prepared variables are exactly the layered plain values.
+    const prepared = await varSession.prepare({ method: 'GET', url: '', headers: {} })
+    return prepared.request.variables ?? {}
+  } catch (err) {
+    console.warn('[tls.store] preview could not read the environment:', err)
+    return {}
+  }
+}
+
+/** Scheme + authority of an absolute URL: what certificate matching depends on. */
+const URL_HEAD = /^[^:/?#]*:\/\/[^/?#]*/
+
+/**
+ * Renderer-facing per-request preview (metadata only; works with the workspace
+ * locked). `url` is the request URL as the editor holds it: it is resolved here
+ * against the active environment's plain values and given the scheme the client
+ * adds, as the send does. When a variable is left in the scheme or the host, no
+ * certificate can be named and the preview says so (`undetermined`).
+ */
+export async function previewClientCertForUrl(url: string): Promise<ClientCertPreview> {
+  if (url.trim() === '') return { selected: null, scope: null }
+  const resolved = requests.normalizeProtocol(
+    requests.resolveString(url, await activePlainVariables()).value
+  )
+  const head = URL_HEAD.exec(resolved)?.[0] ?? resolved
+  if (head.includes('{{')) return { selected: null, scope: null, undetermined: true }
+  return coreTls.previewRequestCert(resolved, {
     workspacePath: getActiveWorkspaceHandle()?.path ?? null,
     appGlobal: buildAppGlobalTls()
   })

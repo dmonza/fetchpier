@@ -907,7 +907,8 @@ export async function sendRequestWithRaw(
     )
     if (decoded.warning) onWarning?.(decoded.warning)
     const responseBody = decoded.body.toString('utf-8')
-    const sizeBytes = Buffer.byteLength(responseBody, 'utf-8')
+    // The byte count of the body as read, not of its lossy UTF-8 text.
+    const sizeBytes = decoded.body.length
 
     // Normalise headers: undici returns them as string | string[] per field.
     // Capture raw Set-Cookie as a separate array before joining, since comma

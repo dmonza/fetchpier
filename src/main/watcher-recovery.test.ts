@@ -149,6 +149,58 @@ describe('watcher recovery ladder (REQ-0113 §6.3/§6.4)', () => {
     // Budget refilled, so the ladder ran again and reached the advisory again.
     expect(countOf('filesystem:watchDegraded')).toBe(1)
   })
+
+  it('after the advisory, the focus re-scan and resume still work once the drive is back', async () => {
+    await mod.startWatcher('/ws')
+    h.mkdir.mockRejectedValue(new Error('ENOENT: drive gone'))
+    live().emit('error', new Error('EPERM'))
+    await vi.advanceTimersByTimeAsync(7_000)
+    expect(countOf('filesystem:watchDegraded')).toBe(1)
+
+    // The share comes back. The advisory promised the tree refreshes on focus.
+    h.mkdir.mockResolvedValue(undefined)
+    h.treeRead.mockClear()
+    const before = h.created.length
+
+    mod.requestRescan()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(h.treeRead).toHaveBeenCalledTimes(1)
+
+    await mod.handleSystemResume()
+    expect(h.created.length).toBe(before + 1)
+  })
+
+  it('closing the workspace while a retry is pending ends the ladder', async () => {
+    await mod.startWatcher('/ws')
+    h.mkdir.mockRejectedValue(new Error('ENOENT'))
+    live().emit('error', new Error('EPERM'))
+    // Attempt 1 failed; attempt 2 waits 1 s.
+    await vi.advanceTimersByTimeAsync(50)
+    const before = h.created.length
+    h.mkdir.mockResolvedValue(undefined)
+
+    await mod.stopWatcher()
+    await vi.advanceTimersByTimeAsync(7_000)
+
+    // No watcher for the closed workspace, no advisory, no tree broadcast.
+    expect(h.created.length).toBe(before)
+    expect(countOf('filesystem:watchDegraded')).toBe(0)
+    expect(countOf('filesystem:changed')).toBe(0)
+  })
+
+  it('after the workspace is closed, the focus re-scan and resume are no-ops', async () => {
+    await mod.startWatcher('/ws')
+    await mod.stopWatcher()
+    const before = h.created.length
+    h.treeRead.mockClear()
+
+    mod.requestRescan()
+    await vi.advanceTimersByTimeAsync(500)
+    await mod.handleSystemResume()
+
+    expect(h.treeRead).not.toHaveBeenCalled()
+    expect(h.created.length).toBe(before)
+  })
 })
 
 describe('focus re-scan (REQ-0113 §6.2)', () => {
@@ -169,6 +221,20 @@ describe('focus re-scan (REQ-0113 §6.2)', () => {
     mod.requestRescan()
     await vi.advanceTimersByTimeAsync(500)
     expect(h.treeRead).not.toHaveBeenCalled()
+  })
+
+  it('a failed tree read broadcasts nothing, so the previous tree stays on screen', async () => {
+    await mod.startWatcher('/ws')
+    h.send.mockClear()
+    h.treeRead.mockRejectedValue(Object.assign(new Error('EIO'), { code: 'EIO' }))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    mod.requestRescan()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(h.treeRead).toHaveBeenCalled()
+    expect(countOf('filesystem:changed')).toBe(0)
+    spy.mockRestore()
   })
 
   it('re-scans even while watching is healthy — the lever is detection-free', async () => {

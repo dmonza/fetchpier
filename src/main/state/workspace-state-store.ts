@@ -185,9 +185,15 @@ async function readFromDisk(workspacePath: string): Promise<{
  * against the current workspace. Switching to a different workspace first
  * flushes and detaches the previous one. If reconciliation dropped anything, a
  * cleanup write is scheduled so the file reflects the restorable set.
+ *
+ * Loading the workspace that is already active is a no-op: the in-memory model
+ * is the newest copy, and replacing it with the disk one would drop a change
+ * still waiting for its debounced write (and let the old timer write the stale
+ * copy back).
  */
 export async function loadFromWorkspace(workspacePath: string): Promise<void> {
-  if (active && active.workspacePath !== workspacePath) {
+  if (active?.workspacePath === workspacePath) return
+  if (active) {
     flushSync()
     active = null
   }

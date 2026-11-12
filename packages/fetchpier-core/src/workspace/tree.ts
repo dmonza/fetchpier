@@ -11,6 +11,22 @@ export function requestsRootPath(workspacePath: string): string {
   return join(workspacePath, REQUESTS_DIR)
 }
 
+/** True for the errors that mean "the path is not there" rather than "it could not be read". */
+function isMissingPathError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+/**
+ * True for a lasting condition on one entry (no permission, a symlink loop, a
+ * name too long): it will fail the same way on every read, so a sub-entry with
+ * it is skipped instead of failing the whole tree forever.
+ */
+function isLastingEntryError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code
+  return code === 'EACCES' || code === 'EPERM' || code === 'ELOOP' || code === 'ENAMETOOLONG'
+}
+
 /**
  * Recursively reads the user-tree (`<workspace>/requests/`) and returns a
  * sorted tree of folders and .http files, ignoring hidden entries — including
@@ -20,13 +36,23 @@ export function requestsRootPath(workspacePath: string): string {
  * `children` of their parent request (`<stem>.http`) when one exists in the
  * same directory; an instance with no sibling parent is rendered as a
  * top-level orphan node of kind `'instance'`.
+ *
+ * A folder that does not exist (ENOENT / ENOTDIR) reads as empty, and an entry
+ * deleted between the listing and its `stat` is skipped. Any other error reading
+ * the root rejects, and so does a transient one (EIO, EBUSY, EMFILE…) on a
+ * sub-entry: an empty or partial tree would be broadcast as the truth and flag
+ * every open tab as removed, while a rejection lets the caller keep the previous
+ * tree on screen. A sub-entry with a lasting condition (EACCES, EPERM, ELOOP,
+ * ENAMETOOLONG) is skipped: it would fail every read, and the rest of the tree
+ * must still load.
  */
 export async function readTree(dirPath: string): Promise<WorkspaceTree[]> {
   let names: string[]
   try {
     names = await fs.readdir(dirPath)
-  } catch {
-    return []
+  } catch (err) {
+    if (isMissingPathError(err)) return []
+    throw err
   }
 
   const folders: WorkspaceTree[] = []
@@ -42,12 +68,19 @@ export async function readTree(dirPath: string): Promise<WorkspaceTree[]> {
     let stat: Awaited<ReturnType<typeof fs.stat>>
     try {
       stat = await fs.stat(fullPath)
-    } catch {
-      continue
+    } catch (err) {
+      if (isMissingPathError(err) || isLastingEntryError(err)) continue
+      throw err
     }
 
     if (stat.isDirectory()) {
-      const children = await readTree(fullPath)
+      let children: WorkspaceTree[]
+      try {
+        children = await readTree(fullPath)
+      } catch (err) {
+        if (isLastingEntryError(err)) continue
+        throw err
+      }
       folders.push({
         name,
         path: fullPath,

@@ -13,19 +13,17 @@ import { useWorkspaceStore } from '../../stores/workspace'
  */
 export function ActivityPanelPopoutApp(): React.JSX.Element {
   const { t } = useTranslation()
-  const loadLastWorkspace = useWorkspaceStore((s) => s.loadLastWorkspace)
+  const followActiveWorkspace = useWorkspaceStore((s) => s.followActiveWorkspace)
 
   useEffect(() => {
     document.title = t('activityPanel.popoutWindow.title')
   }, [t])
 
-  // Ensure the popout knows which workspace is active (so HistoryList can talk
-  // to history.ipc with a workspacePath). The workspace.ipc handlers are
-  // singletons keyed by the main process, so simply asking for "last opened"
-  // returns the same path the main window holds.
-  useEffect(() => {
-    void loadLastWorkspace()
-  }, [loadLastWorkspace])
+  // Bind to the workspace the main window has open and follow it: a pure read
+  // of main's active workspace plus its open/switch/close announcements. Never
+  // `loadLastWorkspace` — that restores (re-activates) the last-opened one,
+  // even after the user closed it.
+  useEffect(() => followActiveWorkspace(), [followActiveWorkspace])
 
   return (
     <ThemeProvider>

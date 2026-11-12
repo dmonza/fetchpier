@@ -143,3 +143,221 @@ describe('workspace settings backward compatibility for tls field', () => {
     expect(fresh.tls).toEqual(SAMPLE_TLS)
   })
 })
+
+// The adapter (`./store`) reads the active workspace and the active environment
+// from these two main-process singletons; the tests below point them at a temp
+// workspace. Both modules are imported dynamically, after `userDataDir` is set,
+// and from the same module graph as the settings store they observe.
+const session = vi.hoisted(() => ({
+  workspacePath: null as string | null,
+  environmentId: null as string | null
+}))
+
+vi.mock('../state/active-workspace', async () => {
+  const { workspace } = await import('@fetchpier/core')
+  const handle = (): ReturnType<typeof workspace.openWorkspace> | null =>
+    session.workspacePath ? workspace.openWorkspace(session.workspacePath) : null
+  return {
+    getActiveWorkspaceHandle: handle,
+    requireActiveWorkspaceHandle: () => {
+      const h = handle()
+      if (!h) throw new Error('No active workspace')
+      return h
+    }
+  }
+})
+
+// The persisted selection is left empty on purpose: a fresh workspace (or clone)
+// shows and sends from an environment it never persisted, so the preview must
+// read the environment the send uses, not workspace-state's (TLS-03 review).
+vi.mock('../state/workspace-state-store', () => ({
+  getView: () => ({
+    activeEnvironmentId: null,
+    session: { tabs: [], activeTabIndex: -1 }
+  })
+}))
+
+vi.mock('../state/send-environment', () => ({
+  getSendEnvironmentId: () => session.environmentId,
+  setSendEnvironmentId: (id: string | null) => {
+    session.environmentId = id
+  }
+}))
+
+async function writeWorkspaceSettings(ws: string, http: Record<string, unknown>): Promise<void> {
+  await fs.writeFile(
+    join(ws, '.fetchpier/settings.json'),
+    JSON.stringify({ version: 1, http }, null, 2)
+  )
+}
+
+async function loadAdapter(): Promise<{
+  tls: typeof import('./store')
+  settings: typeof import('../config/workspace-settings-store')
+}> {
+  return {
+    tls: await import('./store'),
+    settings: await import('../config/workspace-settings-store')
+  }
+}
+
+// TLS-01 — `.fetchpier/settings.json` travels with the team through Git, so the
+// file can change under a running desktop. The session cache must not hide that
+// change, and a TLS mutation must never rebuild the block from a stale copy.
+describe('workspace HTTP settings follow external edits', () => {
+  let ws: string
+
+  beforeEach(async () => {
+    ws = await fs.mkdtemp(join(tmpdir(), 'fp-tls-ext-'))
+    userDataDir = ws
+    await fs.mkdir(join(ws, '.fetchpier/certs'), { recursive: true })
+    await writeWorkspaceSettings(ws, {
+      verifySsl: false,
+      tls: { caCertificates: [], clientCertificates: [] }
+    })
+    session.workspacePath = ws
+    session.environmentId = null
+    clearHttpSettingsCache()
+  })
+  afterEach(async () => {
+    const { settings } = await loadAdapter()
+    settings.clearHttpSettingsCache()
+    clearHttpSettingsCache()
+    session.workspacePath = null
+    await fs.rm(ws, { recursive: true, force: true })
+  })
+
+  const teammateEdit = async (): Promise<void> => {
+    await writeWorkspaceSettings(ws, {
+      verifySsl: true,
+      tls: { caCertificates: [{ id: 'ca-team', file: 'ca-team.pem' }], clientCertificates: [] }
+    })
+    await fs.writeFile(join(ws, '.fetchpier/certs/ca-team.pem'), 'team')
+  }
+
+  it('reads the file as it is now after it changed on disk', async () => {
+    const { settings } = await loadAdapter()
+    expect((await settings.loadHttpSettings(ws)).verifySsl).toBe(false)
+    await teammateEdit()
+
+    expect((await settings.loadHttpSettings(ws)).verifySsl).toBe(true)
+    expect(settings.getCachedHttpSettings(ws)?.verifySsl).toBe(true)
+  })
+
+  it('keeps serving the cached object while the file is unchanged', async () => {
+    const { settings } = await loadAdapter()
+    const first = await settings.loadHttpSettings(ws)
+    expect(await settings.loadHttpSettings(ws)).toBe(first)
+    expect(settings.getCachedHttpSettings(ws)).toBe(first)
+  })
+
+  it('reports a cache miss as null so callers load from disk', async () => {
+    const { settings } = await loadAdapter()
+    settings.clearHttpSettingsCache()
+    expect(settings.getCachedHttpSettings(ws)).toBeNull()
+    expect(settings.getCachedHttpSettings(null)).toBeNull()
+    await settings.loadHttpSettings(ws)
+    expect(settings.getCachedHttpSettings(join(ws, 'other'))).toBeNull()
+  })
+
+  it('a certificate edit keeps the entry a teammate added on disk', async () => {
+    const { tls, settings } = await loadAdapter()
+    await settings.loadHttpSettings(ws) // primes the cache with the empty block
+    await teammateEdit()
+
+    await tls.updateCA({ scope: 'workspace', id: 'ca-team', patch: { label: 'Team root' } })
+
+    const onDisk = JSON.parse(await fs.readFile(join(ws, '.fetchpier/settings.json'), 'utf-8'))
+    expect(onDisk.http.tls.caCertificates).toEqual([
+      { id: 'ca-team', file: 'ca-team.pem', label: 'Team root' }
+    ])
+    expect(onDisk.http.verifySsl).toBe(true)
+  })
+})
+
+// TLS-03 — the preview gets the URL as the editor holds it and resolves it in
+// main against the active environment's plain values, as the send does.
+describe('previewClientCertForUrl — variable-based URLs', () => {
+  let ws: string
+
+  beforeEach(async () => {
+    ws = await fs.mkdtemp(join(tmpdir(), 'fp-tls-preview-'))
+    userDataDir = ws
+    await fs.mkdir(join(ws, '.fetchpier/certs'), { recursive: true })
+    await writeWorkspaceSettings(ws, {
+      tls: {
+        caCertificates: [],
+        clientCertificates: [
+          {
+            id: 'cc-api',
+            host: 'api.example.com',
+            port: null,
+            type: 'pfx',
+            pfxFile: 'client-api.pfx',
+            passphrase: null,
+            disabled: false
+          }
+        ]
+      }
+    })
+    await fs.writeFile(join(ws, '.fetchpier/certs/client-api.pfx'), 'PFX')
+    await fs.mkdir(join(ws, 'environments/dev'), { recursive: true })
+    await fs.writeFile(
+      join(ws, 'environments/dev/config.json'),
+      JSON.stringify({
+        id: 'env-dev',
+        name: 'dev',
+        variables: {
+          baseUrl: 'https://api.example.com',
+          apiHost: 'api.example.com',
+          secretHost: null
+        }
+      })
+    )
+    session.workspacePath = ws
+    session.environmentId = 'env-dev'
+    clearHttpSettingsCache()
+  })
+  afterEach(async () => {
+    session.workspacePath = null
+    session.environmentId = null
+    await fs.rm(ws, { recursive: true, force: true })
+  })
+
+  it.each([
+    ['a base URL variable', '{{baseUrl}}/users'],
+    ['a host variable with no scheme (sent over https)', '{{apiHost}}/users'],
+    ['a literal URL whose path holds an unknown variable', 'https://api.example.com/{{nope}}']
+  ])('previews the certificate the send presents for %s', async (_label, url) => {
+    const { tls } = await loadAdapter()
+    const preview = await tls.previewClientCertForUrl(url)
+    expect(preview.selected?.id).toBe('cc-api')
+    expect(preview.scope).toBe('workspace')
+    expect(preview.undetermined).toBeUndefined()
+  })
+
+  it.each([
+    ['an unknown base URL variable', '{{nope}}/users'],
+    ['an unknown host variable after the scheme', 'https://{{nope}}/users'],
+    ['an unknown scheme variable', '{{scheme}}://api.example.com/users'],
+    ['a host held in a secret', 'https://{{secretHost}}/users']
+  ])('cannot determine the certificate for %s', async (_label, url) => {
+    const { tls } = await loadAdapter()
+    const preview = await tls.previewClientCertForUrl(url)
+    expect(preview).toEqual({ selected: null, scope: null, undetermined: true })
+  })
+
+  it('cannot determine a variable-based host when no environment is active', async () => {
+    session.environmentId = null
+    const { tls } = await loadAdapter()
+    expect((await tls.previewClientCertForUrl('{{baseUrl}}/users')).undetermined).toBe(true)
+  })
+
+  it('reports no certificate for a host no entry matches', async () => {
+    const { tls } = await loadAdapter()
+    expect(await tls.previewClientCertForUrl('https://other.example.com/x')).toEqual({
+      selected: null,
+      scope: null
+    })
+  })
+})

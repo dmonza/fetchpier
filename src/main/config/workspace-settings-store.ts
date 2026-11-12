@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
 import { workspace } from '@fetchpier/core'
 import type { WorkspaceHttpSettings } from '../../shared/types'
@@ -7,12 +9,35 @@ import type { WorkspaceHttpSettings } from '../../shared/types'
 // are contextual to the desktop session: a per-process cache (so `http:send` can
 // read settings synchronously) and the renderer broadcast.
 
-let cached: { workspacePath: string; settings: WorkspaceHttpSettings } | null = null
+//
+// `.fetchpier/settings.json` travels with the team (git pull) and the watcher
+// ignores dot-folders, so the cache carries the file's stamp (mtime + size) and
+// a read whose stamp no longer matches is a miss: the next load reads the disk.
+
+let cached: {
+  workspacePath: string
+  stamp: string | null
+  settings: WorkspaceHttpSettings
+} | null = null
+
+/** The settings file's mtime + size, or null when it does not exist. */
+function settingsFileStamp(workspacePath: string): string | null {
+  try {
+    const st = statSync(join(workspacePath, '.fetchpier', 'settings.json'))
+    return `${st.mtimeMs}:${st.size}`
+  } catch {
+    return null
+  }
+}
 
 export async function loadHttpSettings(workspacePath: string): Promise<WorkspaceHttpSettings> {
-  if (cached && cached.workspacePath === workspacePath) return cached.settings
+  const hit = getCachedHttpSettings(workspacePath)
+  if (hit) return hit
+  // Stamp before reading: a write that lands during the read makes the next
+  // check miss instead of pinning stale content under the new stamp.
+  const stamp = settingsFileStamp(workspacePath)
   const settings = await workspace.openWorkspace(workspacePath).settings.load()
-  cached = { workspacePath, settings }
+  cached = { workspacePath, stamp, settings }
   return settings
 }
 
@@ -74,16 +99,19 @@ export async function updateHttpSettings(
 ): Promise<WorkspaceHttpSettings> {
   validatePartial(partial)
   const next = await workspace.openWorkspace(workspacePath).settings.update(partial)
-  cached = { workspacePath, settings: next }
+  cached = { workspacePath, stamp: settingsFileStamp(workspacePath), settings: next }
   broadcast(next)
   return next
 }
 
-export function getCachedHttpSettings(workspacePath: string | null): WorkspaceHttpSettings {
-  if (workspacePath && cached && cached.workspacePath === workspacePath) {
-    return cached.settings
-  }
-  return workspace.DEFAULT_WORKSPACE_HTTP_SETTINGS
+/**
+ * The cached settings of `workspacePath`, or null on a miss — nothing cached for
+ * that path, or the file changed on disk since it was read — so the caller loads.
+ */
+export function getCachedHttpSettings(workspacePath: string | null): WorkspaceHttpSettings | null {
+  if (!workspacePath || !cached || cached.workspacePath !== workspacePath) return null
+  if (cached.stamp !== settingsFileStamp(workspacePath)) return null
+  return cached.settings
 }
 
 export function clearHttpSettingsCache(): void {

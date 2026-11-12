@@ -2,9 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ShieldCheck } from 'lucide-react'
 import type { ClientCertPreview } from '../../../shared/types'
+import { useEnvironmentStore } from '../../stores/environment'
 
 interface Props {
-  /** Resolved URL string (post-variable-interpolation if available). May be empty. */
+  /**
+   * The request URL as the editor holds it (`{{variables}}` unresolved). Main
+   * resolves it against the active environment, as the send does. May be empty.
+   */
   url: string
 }
 
@@ -22,11 +26,17 @@ export function ClientCertificatePreview({ url }: Props): React.JSX.Element | nu
   const [loading, setLoading] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refresh = useRef<() => void>(() => {})
+  // The URL resolves against the active environment: switching it or editing
+  // its variables can change the answer.
+  const activeEnvironmentId = useEnvironmentStore((s) => s.activeEnvironmentId)
+  const activeVariables = useEnvironmentStore(
+    (s) => s.environments.find((e) => e.id === s.activeEnvironmentId)?.variables
+  )
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current)
     refresh.current = async (): Promise<void> => {
-      if (!url || !/^https?:\/\//i.test(url)) {
+      if (!url.trim()) {
         setPreview({ selected: null, scope: null })
         return
       }
@@ -46,7 +56,7 @@ export function ClientCertificatePreview({ url }: Props): React.JSX.Element | nu
     return () => {
       if (timer.current) clearTimeout(timer.current)
     }
-  }, [url])
+  }, [url, activeEnvironmentId, activeVariables])
 
   useEffect(() => {
     const unsubscribe = window.api.certificates.onChanged(() => {
@@ -79,6 +89,8 @@ export function ClientCertificatePreview({ url }: Props): React.JSX.Element | nu
               : t('certificates.preview.scopeApp')}
           </span>
         </span>
+      ) : preview?.undetermined ? (
+        <span className="text-muted-foreground">{t('certificates.preview.undetermined')}</span>
       ) : (
         <span className="text-muted-foreground">{t('certificates.preview.none')}</span>
       )}

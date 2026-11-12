@@ -80,6 +80,7 @@ export async function writeSchemaToDisk(
   await fs.mkdir(collectionPath, { recursive: true })
 
   const foldersCreated = new Set<string>()
+  const run: RunState = { written: new Set(), existing: new Map() }
   let operationsCreated = 0
 
   const total = schema.operations.length
@@ -93,7 +94,8 @@ export async function writeSchemaToDisk(
         collectionPath,
         opts.workspacePath,
         warnings,
-        foldersCreated
+        foldersCreated,
+        run
       )
       if (written) operationsCreated++
     } catch (err) {
@@ -177,7 +179,8 @@ async function writeOperation(
   collectionPath: string,
   workspacePath: string,
   warnings: SchemaImportWarning[],
-  foldersCreated: Set<string>
+  foldersCreated: Set<string>,
+  run: RunState
 ): Promise<boolean> {
   const dirSegments = op.folderPath.map((s) => sanitizeName(s, 'folder'))
   // Belt-and-braces: even with sanitizeName rejecting dots, confirm the
@@ -189,10 +192,26 @@ async function writeOperation(
     if (!dirDidExist) foldersCreated.add(dir)
   }
 
-  const fileName = `${sanitizeName(op.name, 'op')}.http`
+  // Names compare case-insensitively on every platform (the tree rule), and two
+  // operations of this import can reach the same on-disk name: names that differ
+  // only by case, or raw names that sanitize alike. A collision with a file this
+  // run wrote takes a `-N` suffix; only a file that was there before the import
+  // is skipped.
+  const stem = sanitizeName(op.name, 'op')
+  const existing = await namesBeforeImport(dir, run)
+  const runKey = (name: string): string =>
+    resolveInsideWorkspace(workspacePath, dir, name).toLowerCase()
+  let fileName = `${stem}.http`
+  if (run.written.has(runKey(fileName))) {
+    let n = 2
+    const taken = (name: string): boolean =>
+      run.written.has(runKey(name)) || existing.has(name.toLowerCase())
+    while (taken(`${stem}-${n}.http`)) n++
+    fileName = `${stem}-${n}.http`
+  }
   const filePath = resolveInsideWorkspace(workspacePath, dir, fileName)
 
-  if (await exists(filePath)) {
+  if (existing.has(fileName.toLowerCase()) || (await exists(filePath))) {
     // No strategy overwrites an existing request (REQ write-safety): 'merge'
     // skips the collision; 'abort' already threw if the collection pre-existed.
     warnings.push({
@@ -212,5 +231,29 @@ async function writeOperation(
     content = `${commentLines}\n${content}`
   }
   await atomicWriteFile(filePath, content)
+  run.written.add(filePath.toLowerCase())
   return true
+}
+
+/** What one import run has written so far, and what each folder held before it. */
+interface RunState {
+  /** Lowercased full paths of the files this run wrote. */
+  written: Set<string>
+  /** Per folder, the lowercased names it held when this run first reached it. */
+  existing: Map<string, Set<string>>
+}
+
+async function namesBeforeImport(dir: string, run: RunState): Promise<Set<string>> {
+  let names = run.existing.get(dir)
+  if (!names) {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(dir)
+    } catch {
+      entries = []
+    }
+    names = new Set(entries.map((name) => name.toLowerCase()))
+    run.existing.set(dir, names)
+  }
+  return names
 }

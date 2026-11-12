@@ -139,6 +139,18 @@ function broadcastGitignoreGenerated(workspacePath: string): void {
   }
 }
 
+/**
+ * Announce the workspace now active in main (`null` once closed). The detached
+ * Activity window has no workspace flow of its own: it follows this event.
+ */
+function broadcastActiveWorkspace(workspacePath: string | null): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('workspace:activeChanged', { workspacePath })
+    }
+  }
+}
+
 async function saveLastWorkspace(workspacePath: string): Promise<void> {
   const store = await readWorkspaceStore()
   const recent = [workspacePath, ...store.recent.filter((p) => p !== workspacePath)].slice(
@@ -201,6 +213,7 @@ export function registerWorkspaceHandlers(): void {
     await loadWorkspaceStateForWorkspace(workspacePath)
     // The workspace may carry its own palette (REQ workspace color palettes).
     broadcastAppearance()
+    broadcastActiveWorkspace(workspacePath)
     if (gitignoreCreated) broadcastGitignoreGenerated(workspacePath)
     return workspacePath
   }
@@ -256,6 +269,7 @@ export function registerWorkspaceHandlers(): void {
       await loadUiStateForWorkspace(workspacePath)
       await loadTreeStateForWorkspace(workspacePath)
       await loadWorkspaceStateForWorkspace(workspacePath)
+      broadcastActiveWorkspace(workspacePath)
       if (gitignoreCreated) broadcastGitignoreGenerated(workspacePath)
       return { ok: true, path: workspacePath }
     } catch {
@@ -308,10 +322,20 @@ export function registerWorkspaceHandlers(): void {
       await loadTreeStateForWorkspace(workspacePath)
       await loadWorkspaceStateForWorkspace(workspacePath)
       broadcastAppearance()
+      broadcastActiveWorkspace(workspacePath)
       if (gitignoreCreated) broadcastGitignoreGenerated(workspacePath)
       return { ok: true, path: workspacePath }
     }
   )
+
+  /**
+   * The workspace main has open right now, or `null`. A pure read — unlike
+   * `getLast`, which restores (and so re-activates) the last-opened workspace.
+   * The detached Activity window binds through this.
+   */
+  ipcMain.handle('workspace:getActive', async (): Promise<string | null> => {
+    return getActiveWorkspaceHandle()?.path ?? null
+  })
 
   ipcMain.handle('workspace:getHttpSettings', async (): Promise<WorkspaceHttpSettings> => {
     // No active workspace yet (app boot before open): return defaults instead
@@ -337,6 +361,7 @@ export function registerWorkspaceHandlers(): void {
     clearWorkspaceStateWorkspace()
     // Back to the user's palettes.
     broadcastAppearance()
+    broadcastActiveWorkspace(null)
     await stopWatcher()
   })
 

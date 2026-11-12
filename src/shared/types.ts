@@ -923,6 +923,11 @@ export interface TlsScopeSettings {
 export interface ClientCertPreview {
   selected: ClientCertEntry | null
   scope: TlsScope | null
+  /**
+   * Set when the request URL keeps an unresolved variable in its scheme or
+   * host, so no certificate can be named (as opposed to "none matches").
+   */
+  undetermined?: true
 }
 
 /** Payload for sending an HTTP request */
@@ -1272,7 +1277,11 @@ export type NameCheckInput =
   | { kind: 'entry'; parentPath: string; name: string; selfPath?: string }
   | { kind: 'instance'; parentPath: string; instanceName: string }
 
-/** Verdict of the name-availability check. Never thrown — always answered. */
+/**
+ * Verdict of the name-availability check. A collision is never thrown — always
+ * answered. A name that is not portable across operating systems is the one
+ * refusal: the check throws `INVALID_ENTRY_NAME`, as create and rename do.
+ */
 export interface NameCheckResult {
   available: boolean
   /** What occupies the name when `available` is false. */

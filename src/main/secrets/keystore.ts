@@ -8,7 +8,8 @@
  * Indexing by keyId means two checkouts of the same repository share one entry
  * (enter once, unlocked everywhere) and a rotation's old+new keys coexist.
  *
- * Both files are written atomically (temp + rename). An undecryptable master
+ * Both files are written atomically (temp + rename), and every rewrite of
+ * `keystore.json` is serialized (`withKeystoreLock`). An undecryptable master
  * key (keychain reset, new machine) is recoverable: the keystore is treated as
  * empty and rebuilt as workspace keys are re-entered (§7.2).
  */
@@ -63,23 +64,35 @@ function keystorePath(): string {
   return join(secretsDir(), 'keystore.json')
 }
 
-let cachedMaster: Uint8Array | null = null
+/**
+ * The master key, cached as a promise so concurrent first uses share one load —
+ * caching the value let two callers both miss and generate two master keys, the
+ * second one stranding every entry wrapped by the first. A failed load is not
+ * cached, so the next call retries.
+ */
+let masterPromise: Promise<Uint8Array> | null = null
 
 /**
  * Load (or lazily generate) the machine-local master key. Generating a fresh
  * one resets the keystore — the previous entries are no longer decryptable.
  */
-async function loadMasterKey(): Promise<Uint8Array> {
-  if (cachedMaster) return cachedMaster
+function loadMasterKey(): Promise<Uint8Array> {
+  if (!masterPromise) {
+    masterPromise = readOrCreateMasterKey().catch((err: unknown) => {
+      masterPromise = null
+      throw err
+    })
+  }
+  return masterPromise
+}
+
+async function readOrCreateMasterKey(): Promise<Uint8Array> {
   await fs.mkdir(secretsDir(), { recursive: true })
   try {
     const enc = await fs.readFile(masterKeyPath())
     const b64 = safeStorage.decryptString(enc)
     const raw = Buffer.from(b64, 'base64')
-    if (raw.length === secrets.KEY_BYTES) {
-      cachedMaster = new Uint8Array(raw)
-      return cachedMaster
-    }
+    if (raw.length === secrets.KEY_BYTES) return new Uint8Array(raw)
   } catch {
     // Missing or undecryptable — generate a new master and reset the keystore.
   }
@@ -87,8 +100,20 @@ async function loadMasterKey(): Promise<Uint8Array> {
   const enc = safeStorage.encryptString(Buffer.from(raw).toString('base64'))
   await workspace.atomicWriteFile(masterKeyPath(), enc)
   await workspace.atomicWriteFile(keystorePath(), JSON.stringify({ version: 1, keys: {} }, null, 2))
-  cachedMaster = raw
-  return cachedMaster
+  return raw
+}
+
+/**
+ * Serializes every read-modify-write of `keystore.json`. Each writer re-reads
+ * the file inside the lock, so two concurrent stores (a double click on the
+ * first secret) both land instead of the later write dropping the other entry.
+ */
+let keystoreQueue: Promise<unknown> = Promise.resolve()
+
+function withKeystoreLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = keystoreQueue.then(fn, fn)
+  keystoreQueue = run.catch(() => undefined)
+  return run
 }
 
 async function readKeystoreFile(): Promise<KeystoreFile> {
@@ -113,7 +138,7 @@ async function getStoredKey(keyId: string): Promise<Uint8Array | null> {
     const b64 = await secrets.decryptValue(master, keyId, entry.key)
     const raw = Buffer.from(b64, 'base64')
     if (raw.length !== secrets.KEY_BYTES) return null
-    await touchLastUsed(file, keyId)
+    await touchLastUsed(entry, keyId)
     return new Uint8Array(raw)
   } catch {
     return null
@@ -126,15 +151,19 @@ async function getStoredKey(keyId: string): Promise<Uint8Array | null> {
  * {@link LAST_USED_DEBOUNCE_MS}. Any failure is swallowed — this must never
  * block or fail the unlock path.
  */
-async function touchLastUsed(file: KeystoreFile, keyId: string): Promise<void> {
+async function touchLastUsed(read: KeystoreEntry, keyId: string): Promise<void> {
   try {
-    const entry = file.keys[keyId]
-    if (!entry) return
-    const previous = entry.lastUsedAt ? Date.parse(entry.lastUsedAt) : NaN
+    const previous = read.lastUsedAt ? Date.parse(read.lastUsedAt) : NaN
     const now = Date.now()
     if (Number.isFinite(previous) && now - previous < LAST_USED_DEBOUNCE_MS) return
-    entry.lastUsedAt = new Date(now).toISOString()
-    await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
+    await withKeystoreLock(async () => {
+      // Re-read inside the lock: the rewrite must not drop an entry stored since.
+      const file = await readKeystoreFile()
+      const entry = file.keys[keyId]
+      if (!entry) return
+      entry.lastUsedAt = new Date(now).toISOString()
+      await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
+    })
   } catch {
     // Best-effort metadata; never affects the returned key.
   }
@@ -146,19 +175,21 @@ async function putStoredKey(
   workspaceHint?: string
 ): Promise<void> {
   const master = await loadMasterKey()
-  const file = await readKeystoreFile()
   const keyB64 = Buffer.from(rawKey).toString('base64')
   const wrapped = await secrets.encryptValue(master, keyId, keyB64)
-  const createdAt = file.keys[keyId]?.createdAt ?? new Date().toISOString()
-  file.keys[keyId] = {
-    key: wrapped,
-    createdAt,
-    // On creation `lastUsedAt` mirrors `createdAt` — storing a key is itself a
-    // real use (REQ-0072 §5.2). Preserve a later value across re-stores.
-    lastUsedAt: file.keys[keyId]?.lastUsedAt ?? createdAt,
-    ...(workspaceHint ? { workspaceHint } : {})
-  }
-  await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
+  await withKeystoreLock(async () => {
+    const file = await readKeystoreFile()
+    const createdAt = file.keys[keyId]?.createdAt ?? new Date().toISOString()
+    file.keys[keyId] = {
+      key: wrapped,
+      createdAt,
+      // On creation `lastUsedAt` mirrors `createdAt` — storing a key is itself a
+      // real use (REQ-0072 §5.2). Preserve a later value across re-stores.
+      lastUsedAt: file.keys[keyId]?.lastUsedAt ?? createdAt,
+      ...(workspaceHint ? { workspaceHint } : {})
+    }
+    await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
+  })
 }
 
 /**
@@ -281,12 +312,14 @@ export async function peekKeyMaterial(keyId: string): Promise<Uint8Array | null>
 
 /** Update just the display hint of an existing entry (persisted and/or session). */
 export async function setKeyHint(keyId: string, workspaceHint: string): Promise<void> {
-  const file = await readKeystoreFile()
-  const entry = file.keys[keyId]
-  if (entry) {
-    entry.workspaceHint = workspaceHint
-    await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
-  }
+  await withKeystoreLock(async () => {
+    const file = await readKeystoreFile()
+    const entry = file.keys[keyId]
+    if (entry) {
+      entry.workspaceHint = workspaceHint
+      await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
+    }
+  })
   const meta = sessionMeta.get(keyId)
   if (meta) meta.workspaceHint = workspaceHint
 }
@@ -296,11 +329,13 @@ export async function setKeyHint(keyId: string, workspaceHint: string): Promise<
  * metadata, and the live cache. Never touches any workspace file (REQ-0073 §6.2).
  */
 export async function removeKey(keyId: string): Promise<void> {
-  const file = await readKeystoreFile()
-  if (file.keys[keyId]) {
-    delete file.keys[keyId]
-    await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
-  }
+  await withKeystoreLock(async () => {
+    const file = await readKeystoreFile()
+    if (file.keys[keyId]) {
+      delete file.keys[keyId]
+      await workspace.atomicWriteFile(keystorePath(), JSON.stringify(file, null, 2))
+    }
+  })
   sessionMeta.delete(keyId)
   forgetKey(keyId)
 }

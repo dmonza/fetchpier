@@ -67,6 +67,12 @@ interface WorkspaceState {
   loadLastWorkspace: () => Promise<void>
   /** Open a specific workspace path directly (from recent list). */
   openRecentWorkspace: (workspacePath: string) => Promise<void>
+  /**
+   * Detached Activity window only: bind to the workspace main has open (a
+   * read, never a restore) and follow every later open / switch / close.
+   * Returns the unsubscribe.
+   */
+  followActiveWorkspace: () => () => void
 }
 
 async function applyWorkspace(path: string | null): Promise<{
@@ -105,6 +111,9 @@ const flushAppearance = (): Promise<void> =>
     .getState()
     .flush()
     .catch(() => undefined)
+
+/** Latest follow-binding request; an older one that settles later is dropped. */
+let followSeq = 0
 
 export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   workspacePath: null,
@@ -211,5 +220,23 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
     } finally {
       set({ isLoading: false })
     }
+  },
+
+  followActiveWorkspace: () => {
+    const bind = async (seq: number, path: string | null): Promise<void> => {
+      const resolved = await applyWorkspace(path)
+      if (seq === followSeq) set(resolved)
+    }
+    const off = window.api.workspace.onActiveChanged(({ workspacePath }) => {
+      void bind(++followSeq, workspacePath)
+    })
+    const seq = ++followSeq
+    void window.api.workspace
+      .getActive()
+      .then((path) => (seq === followSeq ? bind(seq, path) : undefined))
+      .catch((err) => {
+        console.error('[workspace] failed to read the active workspace:', err)
+      })
+    return off
   }
 }))

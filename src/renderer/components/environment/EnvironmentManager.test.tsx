@@ -50,6 +50,7 @@ import { EnvironmentEditorModal, EnvironmentManager } from './EnvironmentManager
 import { useEnvironmentStore } from '../../stores/environment'
 import { useSecretsStore } from '../../stores/secrets'
 import { useToastStore } from '../../stores/toast'
+import { useCookieStore } from '../../stores/cookies'
 
 const ENV: Environment = {
   id: 'dev',
@@ -561,6 +562,14 @@ describe('the panel never changes the active environment', () => {
     ;(window as any).api.workspaceState = { setActiveEnvironment }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(window as any).api.environment.delete = vi.fn().mockResolvedValue(undefined)
+    // UI-01: main keeps its own send environment, re-pointed only through the
+    // cookie channel. Deleting the active environment must move it too.
+    const cookiesSetActive = vi.fn().mockResolvedValue(undefined)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).api.cookies = {
+      setActiveEnvironment: cookiesSetActive,
+      list: vi.fn().mockResolvedValue([])
+    }
     useEnvironmentStore.setState({ workspacePath: '/ws' })
 
     await act(async () => {
@@ -568,5 +577,236 @@ describe('the panel never changes the active environment', () => {
     })
 
     expect(useEnvironmentStore.getState().activeEnvironmentId).toBe('prod')
+    expect(setActiveEnvironment).toHaveBeenCalledWith('prod')
+    expect(cookiesSetActive).toHaveBeenCalledWith('prod')
+    expect(useCookieStore.getState().environmentId).toBe('prod')
+  })
+
+  it('deleting the last environment re-points main to no environment', async () => {
+    useEnvironmentStore.setState({ environments: [ENV] })
+    const cookiesSetActive = vi.fn().mockResolvedValue(undefined)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = (window as any).api
+    api.workspaceState = { setActiveEnvironment: vi.fn().mockResolvedValue(undefined) }
+    api.environment.delete = vi.fn().mockResolvedValue(undefined)
+    api.cookies = { setActiveEnvironment: cookiesSetActive, list: vi.fn() }
+    useEnvironmentStore.setState({ workspacePath: '/ws' })
+
+    await act(async () => {
+      await useEnvironmentStore.getState().deleteEnvironment('dev')
+    })
+
+    expect(useEnvironmentStore.getState().activeEnvironmentId).toBeNull()
+    expect(cookiesSetActive).toHaveBeenCalledWith(null)
+  })
+
+  it('deleting an environment that is not active leaves main where it is', async () => {
+    const cookiesSetActive = vi.fn().mockResolvedValue(undefined)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = (window as any).api
+    api.workspaceState = { setActiveEnvironment: vi.fn().mockResolvedValue(undefined) }
+    api.environment.delete = vi.fn().mockResolvedValue(undefined)
+    api.cookies = { setActiveEnvironment: cookiesSetActive, list: vi.fn() }
+    useEnvironmentStore.setState({ workspacePath: '/ws' })
+
+    await act(async () => {
+      await useEnvironmentStore.getState().deleteEnvironment('prod')
+    })
+
+    expect(useEnvironmentStore.getState().activeEnvironmentId).toBe('dev')
+    expect(cookiesSetActive).not.toHaveBeenCalled()
+  })
+})
+
+// ── Make secret (SEC-06, SEC-09) ────────────────────────────────────────────
+
+/** The make-secret button of the plain row whose name input holds `name`. */
+function lockOf(name: string): HTMLButtonElement {
+  const nameInput = inputs(document.body).find((i) => i.value === name)
+  if (!nameInput) throw new Error(`no plain row for ${name}`)
+  const btn = [...(nameInput.closest('.group') as HTMLElement).querySelectorAll('button')].find(
+    (b) => b.getAttribute('aria-label') === 'secrets.makeSecret'
+  )
+  return btn as HTMLButtonElement
+}
+
+describe('make secret', () => {
+  it('SEC-09: the lock is disabled for a reserved `$` name', async () => {
+    useEnvironmentStore.setState({
+      environments: [{ ...ENV, variables: { apiKey: 'shared-key', $apiKey: 'v' } }],
+      baselines: { dev: { apiKey: 'shared-key', $apiKey: 'v' } }
+    })
+    const { root } = await mount()
+
+    expect(lockOf('$apiKey').disabled).toBe(true)
+    expect(lockOf('apiKey').disabled).toBe(false)
+
+    await act(async () => root.unmount())
+  })
+
+  it('SEC-06: a double click on the lock runs first-time setup once', async () => {
+    let finishSetup: (v: { key: string; keyId: string }) => void = () => undefined
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const secretsApi = (window as any).api.secrets
+    secretsApi.setup = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishSetup = resolve
+        })
+    )
+    const { root } = await mount()
+    const lock = lockOf('apiKey')
+
+    await act(async () => {
+      lock.click()
+      lock.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The second click is ignored, and the lock is disabled while setup runs.
+    expect(secretsApi.setup).toHaveBeenCalledOnce()
+    expect(lockOf('apiKey').disabled).toBe(true)
+
+    await act(async () => {
+      finishSetup({ key: 'FPK1-TEST', keyId: '0123456789abcdef' })
+      await Promise.resolve()
+    })
+    expect(secretsApi.setup).toHaveBeenCalledOnce()
+
+    await act(async () => root.unmount())
+  })
+})
+
+// ── Reveal errors (UI-08) ───────────────────────────────────────────────────
+//
+// Only a corrupt value offers "Clear and re-enter", which overwrites the stored
+// ciphertext. A missing key must never get there: the ciphertext is valid.
+
+describe('reveal errors', () => {
+  const SECRET_ENV: Environment = {
+    id: 'dev',
+    folder: 'dev',
+    name: 'dev',
+    variables: { apiToken: 'enc:v1:abc' }
+  }
+  const UNLOCKED = {
+    hasManifest: true,
+    unlocked: true,
+    backend: 'os-keychain',
+    keyId: '0123456789abcdef'
+  }
+
+  beforeEach(() => {
+    useEnvironmentStore.setState({
+      environments: [SECRET_ENV],
+      activeEnvironmentId: 'dev',
+      baselines: { dev: { ...SECRET_ENV.variables } }
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = (window as any).api
+    api.secrets.status = vi.fn().mockResolvedValue(UNLOCKED)
+    api.localValues.getView = vi.fn().mockResolvedValue({ environmentId: 'dev', rows: [] })
+  })
+
+  async function clickReveal(): Promise<void> {
+    const eye = [...document.body.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === 'secrets.reveal'
+    )!
+    await act(async () => {
+      eye.click()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('a missing key refreshes the status and opens Enter key, never Corrupt', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = (window as any).api
+    api.secrets.reveal = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Error invoking remote method 'secrets:reveal': Error: SECRETS_KEY_MISSING: " +
+            'No workspace key available to decrypt secret variables. ' +
+            'Enter the key in the app or set FETCHPIER_WORKSPACE_KEY.'
+        )
+      )
+    const { root } = await mount()
+    api.secrets.status.mockResolvedValue({ ...UNLOCKED, unlocked: false })
+    const callsBefore = api.secrets.status.mock.calls.length
+
+    await clickReveal()
+
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('secrets.corrupt')
+    expect(body).not.toContain('secrets.clearReenter')
+    expect(api.secrets.status.mock.calls.length).toBeGreaterThan(callsBefore)
+    expect(body).toContain('secrets.enterKey.title')
+
+    await act(async () => root.unmount())
+  })
+
+  it('a corrupt value marks the row Corrupt', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).api.secrets.reveal = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Error invoking remote method 'secrets:reveal': Error: SECRETS_VALUE_CORRUPT: " +
+            'Secret "apiToken" in environment "dev" could not be decrypted ' +
+            '(authentication failed) — possible tampering or wrong key for this value.'
+        )
+      )
+    const { root } = await mount()
+
+    await clickReveal()
+
+    const body = document.body.textContent ?? ''
+    expect(body).toContain('secrets.corrupt')
+    expect(body).toContain('secrets.clearReenter')
+
+    await act(async () => root.unmount())
+  })
+
+  it('any other failure is a toast, not Corrupt', async () => {
+    const pushed: string[] = []
+    useToastStore.setState({
+      push: (message: string) => {
+        pushed.push(message)
+        return 'toast-id'
+      }
+    } as Partial<ReturnType<typeof useToastStore.getState>> as never)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).api.secrets.reveal = vi
+      .fn()
+      .mockRejectedValue(new Error('REQUEST_CANCELLED: Reveal was not authorized.'))
+    const { root } = await mount()
+
+    await clickReveal()
+
+    expect(document.body.textContent).not.toContain('secrets.corrupt')
+    expect(pushed).toEqual(['REQUEST_CANCELLED: Reveal was not authorized.'])
+
+    await act(async () => root.unmount())
+  })
+
+  it('the status is refreshed when the workspace changes while the editor is open', async () => {
+    useEnvironmentStore.setState({ workspacePath: 'C:/ws-a' })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const status = (window as any).api.secrets.status
+    const { root } = await mount()
+    const callsBefore = status.mock.calls.length
+
+    status.mockResolvedValue({ ...UNLOCKED, unlocked: false, keyId: 'fedcba9876543210' })
+    await act(async () => {
+      useEnvironmentStore.setState({ workspacePath: 'C:/ws-b' })
+      await Promise.resolve()
+    })
+
+    expect(status.mock.calls.length).toBe(callsBefore + 1)
+    expect(useSecretsStore.getState().status).toMatchObject({ unlocked: false })
+
+    await act(async () => root.unmount())
   })
 })

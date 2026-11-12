@@ -143,6 +143,8 @@ function buildBodySection(args: {
   body: string | undefined
   /** The body was decoded from its `Content-Encoding` (CLI hardening). */
   decoded?: boolean
+  /** True byte count of the body; measured from `body` when absent. */
+  byteLength?: number
 }): string {
   const ctHeader = lookupHeader(args.headers, 'content-type')
   const ceHeader = lookupHeader(args.headers, 'content-encoding')
@@ -156,7 +158,7 @@ function buildBodySection(args: {
   })
   if (!decision.isBinary) return body
   return binaryPlaceholder({
-    byteLength: bodyByteLength(body),
+    byteLength: args.byteLength ?? bodyByteLength(body),
     contentType: ctHeader,
     contentEncoding: ceHeader
   })
@@ -341,10 +343,15 @@ function buildResponseRaw(resp: HttpResponse): string {
   const lines: string[] = [buildStatusLine(resp), ...buildHeaders(resp.headers ?? {})]
   // A compressed response the engine decoded is recorded as the text it is; the
   // kept `Content-Encoding` header must not turn it into a binary placeholder.
+  // `body` is the lossy UTF-8 text of the bytes, so a placeholder takes its
+  // count from the bytes read: decompressed when decoded, else as received; a
+  // response rebuilt from history carries neither and is measured as text.
+  const decoded = resp.decodingStatus === 'decoded'
   const bodyText = buildBodySection({
     headers: resp.headers ?? {},
     body: resp.body,
-    decoded: resp.decodingStatus === 'decoded'
+    decoded,
+    byteLength: decoded ? resp.decompressedBytes : (resp.compressedBytes ?? resp.decompressedBytes)
   })
   const out: string[] = lines.slice()
   out.push('')

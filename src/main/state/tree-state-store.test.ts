@@ -106,6 +106,16 @@ describe('tree-state-store', () => {
     }
   })
 
+  it('reloading the open workspace keeps a change still waiting for its debounced write (HIS-05)', async () => {
+    await loadFromWorkspace(ws)
+    setExpanded(['kept'])
+
+    await loadFromWorkspace(ws)
+    expect(getAll()).toEqual(['kept'])
+    flushSync()
+    expect(JSON.parse(readFileSync(join(ws, FILE_REL), 'utf-8'))).toEqual(['kept'])
+  })
+
   it('clearWorkspace flushes pending writes then detaches', async () => {
     await loadFromWorkspace(ws)
     setExpanded(['k'])

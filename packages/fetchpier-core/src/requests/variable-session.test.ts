@@ -198,6 +198,28 @@ describe('createVariableSession — secrets', () => {
     })
   })
 
+  // SEC-01: the desktop payload carries disabled rows (enabled:false); they are
+  // never sent, so their secrets must not refuse the send.
+  it('a secret referenced only by disabled rows does not block the send', async () => {
+    await withManifest()
+    await writeEnv({ legacy: null, apiKey: await encryptValue(key, 'apiKey', 'stored') })
+    const desktop: HttpRequest = {
+      method: 'POST',
+      url: 'https://x/',
+      headers: {},
+      params: [{ id: 'p0', key: 'api_key', value: '{{legacy}}', enabled: false }],
+      formFields: [{ id: 'f0', key: 'token', value: '{{apiKey}}', enabled: false }]
+    }
+    // Needs-value secret on a disabled param, and a locked workspace for a disabled field.
+    const prepared = await (await session({ getKey: async () => null })).prepare(desktop)
+    expect(prepared.masker).toBeUndefined()
+    // The same secret on an enabled row still refuses the send.
+    const enabled = { ...desktop, params: [{ ...desktop.params![0], enabled: true }] }
+    await expect(
+      (await session({ getKey: async () => null })).prepare(enabled)
+    ).rejects.toMatchObject({ code: 'SECRETS_VALUE_UNSET' })
+  })
+
   it('exposes orphans from a local layer under an older key', async () => {
     await withManifest()
     await writeEnv({ token: await encryptValue(key, 'token', 'stored') })

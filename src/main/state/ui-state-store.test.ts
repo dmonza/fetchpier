@@ -188,6 +188,19 @@ describe('ui-state-store', () => {
     }
   })
 
+  it('reloading the open workspace keeps a change still waiting for its debounced write (HIS-05)', async () => {
+    const id = '44444444-4444-4444-4444-444444444444'
+    writeRequestFile(ws, 'r.http', id)
+    await loadFromWorkspace(ws)
+    setForRequest(id, { activeReqTab: 'body' })
+
+    await loadFromWorkspace(ws)
+    expect(getForRequest(id)).toEqual({ activeReqTab: 'body' })
+    flushSync()
+    const onDisk = JSON.parse(readFileSync(join(ws, FILE_REL), 'utf-8'))
+    expect(onDisk[id]).toEqual({ activeReqTab: 'body' })
+  })
+
   it('clearWorkspace flushes pending writes then detaches', async () => {
     const id = '33333333-3333-3333-3333-333333333333'
     writeRequestFile(ws, 'k.http', id)

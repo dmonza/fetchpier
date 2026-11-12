@@ -14,6 +14,7 @@ import { resolveFindingsSettings } from '../../shared/lib/findings'
 import { getCachedHttpSettings, loadHttpSettings } from '../config/workspace-settings-store'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../config/defaults'
 import { requireActiveWorkspaceHandle } from '../state/active-workspace'
+import { getSendEnvironmentId, setSendEnvironmentId } from '../state/send-environment'
 import { resolveTlsForUrl } from '../tls/store'
 import { lockAllSecrets } from '../secrets/service'
 import { getWorkspaceKey } from '../secrets/keystore'
@@ -64,10 +65,8 @@ function maskSecretEnvironmentChanges(
   }
 }
 
-let activeEnvironmentId: string | null = null
-
 export function setActiveEnvironmentForCookies(envId: string | null): void {
-  activeEnvironmentId = envId
+  setSendEnvironmentId(envId)
 }
 
 function broadcastCookiesChanged(envId: string): void {
@@ -129,7 +128,7 @@ export function registerRequestHandlers(): void {
       // The environment the send started with owns it end to end: the renderer
       // may switch environments while the request is in flight, and the
       // script's writes, the apply gate and the broadcasts must not follow.
-      const envId = activeEnvironmentId
+      const envId = getSendEnvironmentId()
       const workspaceSettings = await getResolvedWorkspaceSettings()
       const { requestTimeoutSeconds, proxy, hideSecretsInResponses } = readAppSettings()
 

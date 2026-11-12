@@ -121,6 +121,69 @@ describe('secrets service', () => {
     expect(updated.variables.apiToken).toBe('PLAINTOKEN')
   })
 
+  // SEC-06: a double click on the lock runs setup twice. The second call must see
+  // the first one's manifest instead of minting a second key.
+  it('two concurrent setups produce one key, and the manifest names the stored key', async () => {
+    const results = await Promise.allSettled([service.setupKey(ws), service.setupKey(ws)])
+    const ok = results.filter(
+      (r): r is PromiseFulfilledResult<{ key: string; keyId: string }> => r.status === 'fulfilled'
+    )
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    expect(ok).toHaveLength(1)
+    expect(failed).toHaveLength(1)
+    expect(failed[0].reason).toMatchObject({ code: 'WORKSPACE_INVALID' })
+
+    const manifest = await workspace.openWorkspace(ws).secrets.readManifest()
+    expect(manifest?.encryption.keyId).toBe(ok[0].value.keyId)
+    // A restart still unlocks from the keystore, and the shown key opens the workspace.
+    lockAll()
+    expect(await service.getStatus(ws)).toMatchObject({ unlocked: true })
+    lockAll()
+    await fs.rm(join(userDataDir, 'secrets', 'keystore.json'), { force: true })
+    expect(await service.enterKey(ws, ok[0].value.key)).toMatchObject({ ok: true })
+  })
+
+  it('two concurrent rotations run one after the other, the manifest on the last key', async () => {
+    await service.setupKey(ws)
+    const results = await Promise.allSettled([service.rotateKey(ws), service.rotateKey(ws)])
+    const ok = results.filter(
+      (r): r is PromiseFulfilledResult<{ key: string; keyId: string }> => r.status === 'fulfilled'
+    )
+    expect(ok).toHaveLength(2)
+    const manifest = await workspace.openWorkspace(ws).secrets.readManifest()
+    // Serialized: the second rotation runs on the first one's result, so the
+    // manifest names the key the last dialog showed.
+    expect(manifest?.encryption.keyId).toBe(ok[1].value.keyId)
+    lockAll()
+    expect(await service.getStatus(ws)).toMatchObject({ unlocked: true })
+  })
+
+  // SEC-09: a `$` name is the reserved dynamic-variable namespace. Writing one into
+  // config.json made every later save of the environment fail.
+  it('setSecret and clearSecret reject a reserved `$` name, writing nothing', async () => {
+    await service.setupKey(ws)
+    const before = await readEnv()
+    await expect(service.setSecret(ws, 'dev', '$apiKey', 'hunter2')).rejects.toMatchObject({
+      code: 'RESERVED_VARIABLE_NAME'
+    })
+    await expect(service.clearSecret(ws, 'dev', '$other')).rejects.toMatchObject({
+      code: 'RESERVED_VARIABLE_NAME'
+    })
+    expect(await readEnv()).toEqual(before)
+    // A name with `$` elsewhere is an ordinary name.
+    const updated = await service.setSecret(ws, 'dev', 'api$Key', 'v')
+    expect(updated.variables['api$Key']).toMatch(/^enc:v1:/)
+  })
+
+  it('deleteSecret still removes an existing reserved entry (the way out)', async () => {
+    const envPath = join(ws, 'environments', 'dev', 'config.json')
+    const raw = JSON.parse(await fs.readFile(envPath, 'utf-8'))
+    raw.variables.$apiKey = null
+    await fs.writeFile(envPath, JSON.stringify(raw))
+    const updated = await service.deleteSecret(ws, 'dev', '$apiKey')
+    expect('$apiKey' in updated.variables).toBe(false)
+  })
+
   // needs-value: clearSecret authors a null entry.
   it('clearSecret sets a needs-value (null) entry', async () => {
     await service.setupKey(ws)

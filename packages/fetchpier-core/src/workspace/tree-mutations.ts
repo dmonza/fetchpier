@@ -23,7 +23,7 @@ import {
   isValidInstanceName,
   splitInstanceName
 } from '@shared/lib/request-instances'
-import { assertSafeIdentifier, resolveInsideWorkspace } from './safe-path'
+import { assertPortableName, assertSafeIdentifier, resolveInsideWorkspace } from './safe-path'
 import { atomicWriteFile } from './atomic-write'
 import { requestsRootPath } from './tree'
 
@@ -161,7 +161,9 @@ function withFreshRequestId(content: string): string {
  * adapter boundary. Applies exactly the rules the mutations enforce
  * (`findNameCollision` / `fileNameTaken`), but answers instead of throwing: a
  * collision is a verdict here, never an error. A missing parent folder answers
- * "available" — this is a name verdict, not a path check.
+ * "available" — this is a name verdict, not a path check. An entry name that is
+ * not portable (`assertPortableName`) is refused with `INVALID_ENTRY_NAME`, the
+ * same token create and rename throw.
  */
 export async function checkNameAvailable(
   workspacePath: string,
@@ -169,7 +171,7 @@ export async function checkNameAvailable(
 ): Promise<NameCheckResult> {
   if (input.kind === 'entry') {
     const dir = resolveInsideWorkspace(workspacePath, input.parentPath)
-    const base = input.name.replace(/\.http$/, '')
+    const base = assertPortableName(input.name.replace(/\.http$/, ''))
     const selfPath = input.selfPath
       ? resolveInsideWorkspace(workspacePath, input.selfPath)
       : undefined
@@ -205,6 +207,7 @@ export async function createCollection(
   parentPath: string,
   name: string
 ): Promise<void> {
+  assertPortableName(name)
   assertSafeIdentifier(name, 'collection name')
   const parentDir = resolveInsideWorkspace(workspacePath, parentPath)
   await assertNameAvailable(parentDir, name, 'collection')
@@ -219,6 +222,7 @@ export async function createRequest(
   name: string
 ): Promise<string> {
   const base = name.replace(/\.http$/, '')
+  assertPortableName(base)
   assertSafeIdentifier(base, 'request name')
   const parentDir = resolveInsideWorkspace(workspacePath, parentPath)
   await assertNameAvailable(parentDir, base, 'request')
@@ -261,6 +265,7 @@ export async function renameEntry(
   newName: string
 ): Promise<FsCascadeResult> {
   const resolvedOld = resolveInsideWorkspace(workspacePath, oldPath)
+  assertPortableName(newName.replace(/\.http$/, ''))
   assertSafeIdentifier(newName.replace(/\.http$/, ''), 'new name')
   const dir = dirname(resolvedOld)
   const newPath = resolveInsideWorkspace(workspacePath, dir, newName)

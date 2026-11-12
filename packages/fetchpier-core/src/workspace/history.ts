@@ -12,7 +12,6 @@ import path from 'node:path'
 import {
   buildActivityLogFilename,
   hash4,
-  parseActivityLog,
   readMetadataPreview,
   serializeActivityLog,
   type ActivityLogFile
@@ -205,10 +204,53 @@ export async function get(workspacePath: string, entryId: string): Promise<strin
   throw new Error(`history:get — entry not found: ${entryId}`)
 }
 
+const HEADER_DIRECTIVE_RE = /^# @([A-Za-z][A-Za-z0-9_-]*)(.*)$/
+
+/**
+ * Locate the `# @source-file` directive among the header lines, scanning as
+ * the activity-log parser does: the header ends at the first line that is
+ * neither blank nor `#`-prefixed, and a `# @<name>` … `# @end-<name>` block is
+ * skipped whole. `start`/`end` index the original text, line ending excluded.
+ */
+function findSourceFileLine(text: string): { start: number; end: number; value: string } | null {
+  const lines: Array<{ start: number; end: number; text: string }> = []
+  const eol = /\r\n|\r|\n/g
+  let start = 0
+  for (;;) {
+    const m = eol.exec(text)
+    const end = m ? m.index : text.length
+    const line = text.slice(start, end)
+    if (line !== '' && !line.startsWith('#')) break
+    lines.push({ start, end, text: line })
+    if (!m) break
+    start = end + m[0].length
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i]!.text.match(HEADER_DIRECTIVE_RE)
+    if (!m) continue
+    const head = m[1]!
+    const rest = m[2]!
+    if (!head.startsWith('end-')) {
+      const endIdx = lines.findIndex((l, j) => j > i && l.text === `# @end-${head}`)
+      if (endIdx > 0) {
+        i = endIdx
+        continue
+      }
+    }
+    if (head !== 'source-file') continue
+    const colonIdx = rest.indexOf(':')
+    let value = colonIdx === -1 ? '' : rest.slice(colonIdx + 1)
+    if (value.startsWith(' ')) value = value.slice(1)
+    return { start: lines[i]!.start, end: lines[i]!.end, value }
+  }
+  return null
+}
+
 /**
  * Rewrite the `# @source-file` directive when the originating `.http` is
- * renamed or moved. Round-trip lossless — the rest of the file (including
- * unknown directives + free-form comments + body bytes) is untouched.
+ * renamed or moved. Only that line changes, as text — the rest of the file
+ * (unknown directives, free-form comments, line endings, body bytes) is
+ * written back exactly as read.
  */
 export async function updateSourceFile(
   workspacePath: string,
@@ -226,17 +268,9 @@ export async function updateSourceFile(
     const filepath = path.join(dir, file)
     const text = await readEntryText(filepath)
     if (text === null) continue
-    let parsed: ActivityLogFile
-    try {
-      parsed = parseActivityLog(text)
-    } catch {
-      continue
-    }
-    const idx = parsed.header.findIndex((it) => it.kind === 'directive' && it.key === 'source-file')
-    if (idx < 0) continue
-    const dir_ = parsed.header[idx]
-    if (dir_.kind !== 'directive') continue
-    const src = normalizePathSeparators(dir_.value)
+    const line = findSourceFileLine(text)
+    if (line === null) continue
+    const src = normalizePathSeparators(line.value)
     let updated: string | null = null
     if (isFolder && prefix && src.startsWith(prefix)) {
       updated = newNorm.endsWith('/')
@@ -246,8 +280,10 @@ export async function updateSourceFile(
       updated = newNorm
     }
     if (updated === null) continue
-    parsed.header[idx] = { kind: 'directive', key: 'source-file', value: updated }
-    await atomicWriteFile(filepath, serializeActivityLog(parsed))
+    await atomicWriteFile(
+      filepath,
+      `${text.slice(0, line.start)}# @source-file: ${updated}${text.slice(line.end)}`
+    )
   }
 }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { writeSchemaToDisk } from './writer'
+import { writeSchemaToDisk, type WriteResult } from './writer'
 import type { IntermediateSchema } from '@shared/types'
 import { DEFAULT_REQUEST_STATE } from '@shared/types'
 
@@ -116,6 +116,115 @@ describe('writeSchemaToDisk', () => {
     expect(result.warnings.some((w) => w.kind === 'name-collision')).toBe(true)
     const kept = await fs.readFile(join(workspace, 'Pets', 'pets', 'listPets.http'), 'utf8')
     expect(kept).toBe('existing')
+  })
+
+  // IMP-10: the importers dedupe names case-sensitively and on the raw folder
+  // path, so two operations of the same import can land on one on-disk path
+  // (case-insensitive file systems, or names that sanitize alike).
+  describe('collisions within one import (IMP-10)', () => {
+    function op(
+      id: string,
+      name: string,
+      folderPath: string[]
+    ): IntermediateSchema['operations'][0] {
+      const url = `https://petstore.example.com/${id}`
+      return {
+        id,
+        name,
+        displayName: name,
+        folderPath,
+        request: { method: 'GET', url, headers: {} },
+        editorState: { ...DEFAULT_REQUEST_STATE, method: 'GET', url }
+      }
+    }
+    function schemaOf(...ops: IntermediateSchema['operations']): IntermediateSchema {
+      return { title: 'Pets', format: 'openapi', operations: ops }
+    }
+    async function writeMerge(schema: IntermediateSchema): Promise<WriteResult> {
+      return writeSchemaToDisk(schema, {
+        targetFolder: workspace,
+        collectionName: 'Pets',
+        conflictStrategy: 'merge',
+        workspacePath: workspace
+      })
+    }
+    async function urlIn(file: string): Promise<string> {
+      return (await fs.readFile(file, 'utf8')).split('\n').find((l) => l.startsWith('GET '))!
+    }
+
+    it('writes both operations when their names differ only by case', async () => {
+      const result = await writeMerge(
+        schemaOf(op('a', 'getUser', ['default']), op('b', 'GetUser', ['default']))
+      )
+      expect(result.warnings).toEqual([])
+      expect(result.operationsCreated).toBe(2)
+      const dir = join(result.collectionPath, 'default')
+      expect((await fs.readdir(dir)).sort()).toEqual(['GetUser-2.http', 'getUser.http'])
+      expect(await urlIn(join(dir, 'getUser.http'))).toContain('/a')
+      expect(await urlIn(join(dir, 'GetUser-2.http'))).toContain('/b')
+    })
+
+    it('writes both operations when raw folder or op names sanitize to the same path', async () => {
+      const result = await writeMerge(
+        schemaOf(
+          op('a', 'List', ['Users/Admin']),
+          op('b', 'List', ['Users-Admin']),
+          op('c', 'a/b', []),
+          op('d', 'a-b', [])
+        )
+      )
+      expect(result.warnings).toEqual([])
+      expect(result.operationsCreated).toBe(4)
+      expect((await fs.readdir(join(result.collectionPath, 'Users-Admin'))).sort()).toEqual([
+        'List-2.http',
+        'List.http'
+      ])
+      const root = (await fs.readdir(result.collectionPath)).filter((n) => n.endsWith('.http'))
+      expect(root.sort()).toEqual(['a-b-2.http', 'a-b.http'])
+    })
+
+    it('numbers a third colliding operation -3', async () => {
+      const result = await writeMerge(
+        schemaOf(op('a', 'x', ['f']), op('b', 'X', ['f']), op('c', 'x', ['f']))
+      )
+      expect(result.operationsCreated).toBe(3)
+      expect((await fs.readdir(join(result.collectionPath, 'f'))).sort()).toEqual([
+        'X-2.http',
+        'x-3.http',
+        'x.http'
+      ])
+    })
+
+    it('still skips a file that existed before the import, compared case-insensitively', async () => {
+      await fs.mkdir(join(workspace, 'Pets', 'f'), { recursive: true })
+      await fs.writeFile(join(workspace, 'Pets', 'f', 'getuser.http'), 'existing', 'utf8')
+      const result = await writeMerge(schemaOf(op('a', 'getUser', ['f'])))
+      expect(result.operationsCreated).toBe(0)
+      expect(result.warnings).toEqual([
+        expect.objectContaining({
+          kind: 'name-collision',
+          message: 'File already exists, skipped: getUser.http'
+        })
+      ])
+      expect(await fs.readdir(join(workspace, 'Pets', 'f'))).toEqual(['getuser.http'])
+      expect(await fs.readFile(join(workspace, 'Pets', 'f', 'getuser.http'), 'utf8')).toBe(
+        'existing'
+      )
+    })
+
+    it('a suffix never lands on a file that existed before the import', async () => {
+      await fs.mkdir(join(workspace, 'Pets', 'f'), { recursive: true })
+      await fs.writeFile(join(workspace, 'Pets', 'f', 'X-2.http'), 'existing', 'utf8')
+      const result = await writeMerge(schemaOf(op('a', 'x', ['f']), op('b', 'X', ['f'])))
+      expect(result.warnings).toEqual([])
+      expect(result.operationsCreated).toBe(2)
+      expect((await fs.readdir(join(workspace, 'Pets', 'f'))).sort()).toEqual([
+        'X-2.http',
+        'X-3.http',
+        'x.http'
+      ])
+      expect(await fs.readFile(join(workspace, 'Pets', 'f', 'X-2.http'), 'utf8')).toBe('existing')
+    })
   })
 
   // Atomic writes — closing the write-safety coverage gap: this writer used

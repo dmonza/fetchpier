@@ -7,9 +7,13 @@ import { workspace } from '@fetchpier/core'
 let watcher: FSWatcher | null = null
 
 /**
- * The workspace the live watcher belongs to. Recovery and re-scan both target
- * it, and both bail when it changes mid-flight — a workspace switch always wins
- * the race against an in-flight recovery.
+ * The workspace of this session — set by the external `startWatcher`, cleared
+ * only by the public `stopWatcher` (workspace close/switch). Deliberately
+ * independent of whether a watcher is live: a recovery attempt that fails before
+ * a watcher exists must not forget the workspace, or the focus re-scan and the
+ * resume hook would stop working for the rest of the session. Recovery and
+ * re-scan both target it, and both bail when it changes mid-flight — a workspace
+ * switch or close always wins the race against an in-flight recovery.
  */
 let currentWorkspace: string | null = null
 
@@ -81,8 +85,8 @@ async function establishWatcher(workspacePath: string): Promise<boolean> {
   // REQ-0104: await the previous watcher's actual shutdown before creating
   // the replacement — otherwise the two chokidar instances briefly coexist
   // and the outgoing one can still deliver events from a workspace that is
-  // no longer active.
-  await stopWatcher()
+  // no longer active. Only the watcher is closed: the session workspace stays.
+  await closeWatcher()
 
   // Reads route through the workspace handle (REQ Core-owned workspace handle).
   const ws = workspace.openWorkspace(workspacePath)
@@ -168,7 +172,6 @@ async function establishWatcher(workspacePath: string): Promise<boolean> {
     // the workspace is edited with other tools (REQ-0113 §6.1).
     .on('error', handleWatcherError)
 
-  currentWorkspace = workspacePath
   return true
 }
 
@@ -203,9 +206,10 @@ async function recoverWatching(): Promise<void> {
       const delay = RECOVERY_DELAYS_MS[recoveryAttempt]
       recoveryAttempt += 1
       if (delay > 0) await sleep(delay)
-      // A workspace switch that landed while we waited wins: the watcher it
-      // established is the one that should survive.
-      if (currentWorkspace !== null && currentWorkspace !== target) return
+      // A workspace switch or close that landed while we waited wins: the
+      // watcher a switch established is the one that should survive, and a
+      // closed workspace is not watched again.
+      if (currentWorkspace !== target) return
 
       if (await establishWatcher(target)) {
         await readAndBroadcastTree(target)
@@ -232,6 +236,7 @@ async function recoverWatching(): Promise<void> {
 export async function startWatcher(workspacePath: string): Promise<void> {
   recoveryAttempt = 0
   degraded = false
+  currentWorkspace = workspacePath
   await establishWatcher(workspacePath)
 }
 
@@ -264,13 +269,21 @@ export async function handleSystemResume(): Promise<void> {
   await readAndBroadcastTree(target)
 }
 
-/** Stops the current watcher, if any, and waits for its shutdown to settle. */
+/**
+ * Ends the workspace session: forgets the session workspace, cancels a pending
+ * re-scan, and stops the current watcher, waiting for its shutdown to settle.
+ */
 export async function stopWatcher(): Promise<void> {
   if (rescanTimer) {
     clearTimeout(rescanTimer)
     rescanTimer = null
   }
   currentWorkspace = null
+  await closeWatcher()
+}
+
+/** Closes the live watcher, if any, and waits for its shutdown to settle. */
+async function closeWatcher(): Promise<void> {
   if (watcher) {
     const closing = watcher
     watcher = null

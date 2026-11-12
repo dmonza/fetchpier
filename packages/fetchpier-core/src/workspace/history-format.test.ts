@@ -339,3 +339,60 @@ describe('historyEntryToActivityLog — decoded compressed responses (CLI harden
     expect(historyEntryToActivityLog(compressed()).responseRaw).toContain('[binary body')
   })
 })
+
+// HIS-09: the placeholder records the body's true byte count. The body string
+// is the lossy UTF-8 text of the bytes (U+FFFD per invalid byte), so measuring
+// it would overcount.
+describe('historyEntryToActivityLog — binary response placeholder byte count', () => {
+  const lossy = '�PNG\r\n\u001A\n���'
+  const binaryResponse = (extra: Partial<HistoryEntry['response']>) =>
+    baseEntry({
+      response: {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'Content-Type': 'image/png' },
+        body: lossy,
+        timingMs: 1,
+        sizeBytes: 11,
+        ...extra
+      }
+    })
+
+  it('uses the received byte count for an uncompressed body', () => {
+    const file = historyEntryToActivityLog(
+      binaryResponse({ compressedBytes: 11, decompressedBytes: 11, decodingStatus: 'not-required' })
+    )
+    expect(file.responseRaw).toContain('[binary body, 11 bytes, content-type: image/png]')
+  })
+
+  it('uses the decompressed byte count for a decoded body', () => {
+    const file = historyEntryToActivityLog(
+      binaryResponse({
+        headers: { 'Content-Type': 'image/png', 'Content-Encoding': 'gzip' },
+        compressedBytes: 7,
+        decompressedBytes: 11,
+        decodingStatus: 'decoded'
+      })
+    )
+    expect(file.responseRaw).toContain('[binary body, 11 bytes, content-type: image/png')
+  })
+
+  it('uses the wire byte count for a body that could not be decoded', () => {
+    const file = historyEntryToActivityLog(
+      binaryResponse({
+        headers: { 'Content-Type': 'image/png', 'Content-Encoding': 'br' },
+        compressedBytes: 9,
+        decompressedBytes: 9,
+        decodingStatus: 'unsupported'
+      })
+    )
+    expect(file.responseRaw).toContain('[binary body, 9 bytes, content-type: image/png')
+  })
+
+  it('measures the body itself for a response rebuilt from history (no byte counts)', () => {
+    const file = historyEntryToActivityLog(binaryResponse({}))
+    expect(file.responseRaw).toContain(
+      `[binary body, ${new TextEncoder().encode(lossy).length} bytes, content-type: image/png]`
+    )
+  })
+})

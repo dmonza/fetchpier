@@ -3,7 +3,7 @@
  * writer → files on disk. Higher-level cases are catalogued in docs/TESTS.md §15;
  * each `describe` names its case ID, and the Given/When/Then lives in the catalog.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import fsSync, { promises as fs } from 'fs'
 import http from 'http'
 import net from 'net'
@@ -11,7 +11,8 @@ import os from 'os'
 import path from 'path'
 import tls from 'tls'
 import { pathToFileURL } from 'url'
-import { importSchema } from './index'
+import { generateCACertificate, getLocal, type Mockttp } from 'mockttp'
+import { detectFormat, importSchema, type ImportSchemaOptions } from './index'
 import type { SchemaImportResult } from '@shared/types'
 
 const FIXTURES = path.join(__dirname, '__fixtures__', 'openapi-parity')
@@ -342,5 +343,146 @@ describe('SCHEMA-005 — end-to-end import writes markers and reports warnings',
         location: 'POST /owner'
       }
     ])
+  })
+})
+
+// IMP-08: a URL import went out on undici's default dispatcher — no redirects,
+// no app proxy, no imported CA.
+describe('SCHEMA-006 — URL import takes the same network path as a send', () => {
+  const DOC = JSON.stringify({
+    openapi: '3.0.3',
+    info: { title: 'Remote', version: '1' },
+    paths: {
+      '/ping': { get: { operationId: 'ping', responses: { '200': { description: 'ok' } } } }
+    }
+  })
+
+  function importUrl(url: string, options?: ImportSchemaOptions): Promise<SchemaImportResult> {
+    return importSchema(
+      {
+        source: { kind: 'url', value: url },
+        format: 'auto',
+        targetFolder: path.join(workspace, 'requests'),
+        collectionName: 'remote',
+        conflictStrategy: 'abort'
+      },
+      workspace,
+      undefined,
+      options
+    )
+  }
+
+  describe('against a local server', () => {
+    let server: http.Server
+    let origin: string
+    let hops: number
+
+    beforeEach(async () => {
+      hops = 0
+      server = http.createServer((req, res) => {
+        if (req.url === '/v1/openapi.json') {
+          res.setHeader('content-type', 'application/json')
+          res.end(DOC)
+        } else if (req.url === '/latest/openapi.json') {
+          res.writeHead(302, { location: '/v1/openapi.json' }).end()
+        } else if (req.url?.startsWith('/hop/')) {
+          // An endless chain of distinct URLs: only the redirect bound stops it.
+          hops++
+          res.writeHead(302, { location: `/hop/${Number(req.url.slice(5)) + 1}` }).end()
+        } else {
+          res.writeHead(404).end()
+        }
+      })
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      origin = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`
+    })
+
+    afterEach(async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+
+    it('follows a redirect with a relative Location', async () => {
+      const result = await importUrl(`${origin}/latest/openapi.json`)
+      expect(result.operationsCreated).toBe(1)
+      expect(result.schemaTitle).toBe('Remote')
+    })
+
+    it('stops an endless redirect chain at the bound and fails naming the status', async () => {
+      await expect(importUrl(`${origin}/hop/0`)).rejects.toThrow(
+        /^Failed to fetch schema: HTTP 302$/
+      )
+      expect(hops).toBe(11)
+    })
+
+    it('fails naming a non-2xx status', async () => {
+      await expect(importUrl(`${origin}/missing`)).rejects.toThrow(
+        /^Failed to fetch schema: HTTP 404$/
+      )
+    })
+  })
+
+  it.each(['file:///etc/hosts', 'ftp://example.com/openapi.json', 'not a url'])(
+    'rejects %s without reaching the network or the filesystem',
+    async (url) => {
+      const connect = vi.spyOn(net, 'connect')
+      const readFile = vi.spyOn(fs, 'readFile')
+      try {
+        await expect(importUrl(url)).rejects.toThrow(/Schema URL must be an http or https URL/)
+        expect(connect).not.toHaveBeenCalled()
+        expect(readFile).not.toHaveBeenCalled()
+      } finally {
+        vi.restoreAllMocks()
+      }
+    }
+  )
+
+  describe('with the app transport', () => {
+    let ca: { key: string; cert: string }
+    let target: Mockttp
+    let proxy: Mockttp
+
+    beforeAll(async () => {
+      ca = await generateCACertificate()
+      target = getLocal({ https: ca })
+      await target.start()
+      await target.forGet('/openapi.json').thenReply(200, DOC)
+      proxy = getLocal()
+      await proxy.start()
+      await proxy.forGet('http://schemas.invalid/openapi.json').thenReply(200, DOC)
+    }, 60_000)
+
+    afterAll(async () => {
+      await target.stop()
+      await proxy.stop()
+    })
+
+    it('goes through the configured proxy', async () => {
+      const result = await importUrl('http://schemas.invalid/openapi.json', {
+        transport: {
+          proxy: { enabled: true, url: proxy.url, username: '', password: '' }
+        }
+      })
+      expect(result.operationsCreated).toBe(1)
+    })
+
+    it('trusts the CA bundle it is given, and only then', async () => {
+      const url = `https://localhost:${target.port}/openapi.json`
+      await expect(importUrl(url)).rejects.toThrow()
+      const tlsFor = vi.fn(async () => ({ ca: [Buffer.from(ca.cert)] }))
+      const result = await importUrl(url, { transport: { tls: tlsFor } })
+      expect(result.operationsCreated).toBe(1)
+      expect(tlsFor).toHaveBeenCalledWith(url)
+    })
+  })
+})
+
+// IMP-26: a JSON document whose version is a number is detected as OpenAPI.
+describe('detectFormat — numeric OpenAPI version', () => {
+  it.each([
+    ['{"openapi": 3.0, "paths": {}}', 'openapi'],
+    ['{"openapi": 3.1, "paths": {}}', 'openapi'],
+    ['{"openapi": 2.5, "paths": {}}', null]
+  ])('%s → %s', (text, expected) => {
+    expect(detectFormat(text)).toBe(expected)
   })
 })

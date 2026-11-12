@@ -61,10 +61,13 @@ async function readFromDisk(workspacePath: string): Promise<string[] | null> {
 /**
  * Load the persisted expansion state for a workspace. Calling this with a
  * different `workspacePath` than the currently active one first `flushSync`es
- * and detaches the previous workspace's state.
+ * and detaches the previous workspace's state. Calling it with the
+ * already-active path is a no-op: the in-memory set is the newest copy, and a
+ * reload would drop a change still waiting for its write.
  */
 export async function loadFromWorkspace(workspacePath: string): Promise<void> {
-  if (active && active.workspacePath !== workspacePath) {
+  if (active?.workspacePath === workspacePath) return
+  if (active) {
     flushSync()
     active = null
   }

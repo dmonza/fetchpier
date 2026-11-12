@@ -94,6 +94,8 @@ declare global {
         open: (strings: WorkspaceOpenStrings) => Promise<string | null>
         create: (strings: WorkspaceOpenStrings) => Promise<string | null>
         getLast: () => Promise<RestoreResult>
+        /** Read-only: the workspace main has open now (null if none). Never restores. */
+        getActive: () => Promise<string | null>
         getRecent: () => Promise<string[]>
         openPath: (workspacePath: string) => Promise<OpenPathResult>
         close: () => Promise<void>
@@ -104,6 +106,10 @@ declare global {
         getRequestsRoot: () => Promise<string>
         onHttpSettingsChanged: (callback: (settings: WorkspaceHttpSettings) => void) => () => void
         onGitignoreGenerated: (callback: (payload: { workspacePath: string }) => void) => () => void
+        /** Main opened, switched or closed (`null`) its workspace. */
+        onActiveChanged: (
+          callback: (payload: { workspacePath: string | null }) => void
+        ) => () => void
       }
       filesystem: {
         readTree: () => Promise<WorkspaceTree[]>

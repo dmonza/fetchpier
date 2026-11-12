@@ -139,13 +139,19 @@ export const useEnvironmentStore = create<EnvironmentState>()((set, get) => ({
 
   deleteEnvironment: async (envId) => {
     await window.api.environment.delete(envId)
+    const wasActive = get().activeEnvironmentId === envId
     set((state) => {
       const remaining = state.environments.filter((e) => e.id !== envId)
-      const newActive =
-        state.activeEnvironmentId === envId ? (remaining[0]?.id ?? null) : state.activeEnvironmentId
       const { [envId]: _removed, ...baselines } = state.baselines
-      return { environments: remaining, activeEnvironmentId: newActive, baselines }
+      return { environments: remaining, baselines }
     })
+    if (wasActive) {
+      // Through `setActive`: besides the persisted selection it re-points the
+      // cookie store and main's send environment, which would otherwise keep
+      // resolving secrets, local values and cookies against the deleted id.
+      get().setActive(get().environments[0]?.id ?? null)
+      return
+    }
     const { workspacePath: wp } = get()
     if (wp) {
       const { activeEnvironmentId } = get()

@@ -997,3 +997,121 @@ describe('importOpenApi — recursion end to end', () => {
     expect(unresolved(r)).toEqual([])
   })
 })
+
+// IMP-05: YAML's timestamp type turned unquoted dates into Date objects, which
+// reached the request as localized, time-zone-shifted text.
+describe('importOpenApi — YAML scalars stay as authored (IMP-05, IMP-26)', () => {
+  const DATED = `
+openapi: 3.0.3
+info: { title: Dates, version: '1' }
+servers: [{ url: 'https://api.example.com' }]
+x-common: &common
+  name: X-Day
+  in: header
+  example: 2024-01-15
+paths:
+  /reports/{day}:
+    post:
+      operationId: report
+      parameters:
+        - { name: day, in: path, required: true, example: 2024-01-15, schema: { type: string, format: date } }
+        - { name: from, in: query, example: 2024-01-15, schema: { type: string, format: date } }
+        - { name: at, in: query, example: 2024-01-15T10:20:30Z, schema: { type: string, format: date-time } }
+        - <<: *common
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                day: { type: string, format: date, example: 2024-01-15 }
+                at: { type: string, format: date-time, example: 2024-01-15T10:20:30.5+02:00 }
+      responses: { '200': { description: ok } }
+`
+
+  it('keeps unquoted dates and datetimes as written in path, query, header and body', async () => {
+    const r = await importOpenApi(DATED)
+    const state = op(r, 'report').editorState
+    expect(state.url).toBe('https://api.example.com/reports/2024-01-15')
+    expect(state.params.map((p) => [p.key, p.value])).toEqual([
+      ['from', '2024-01-15'],
+      ['at', '2024-01-15T10:20:30Z']
+    ])
+    // The header comes through a YAML merge key, which still loads.
+    expect(state.headers.find((h) => h.key === 'X-Day')?.value).toBe('2024-01-15')
+    expect(bodyOf(r, 'report')).toEqual({ day: '2024-01-15', at: '2024-01-15T10:20:30.5+02:00' })
+  })
+
+  // IMP-26: an unquoted two-part version loads as a number.
+  it.each([
+    ['3.0', 'yaml'],
+    ['3.1', 'yaml'],
+    ['3', 'yaml'],
+    ['3.0', 'json']
+  ])('imports a document whose version is written as the number %s (%s)', async (version, kind) => {
+    const body = { '/p': { get: { operationId: 'getP', responses: ok } } }
+    const raw =
+      kind === 'json'
+        ? `{"openapi": ${version}, "info": {"title": "N", "version": "1"}, "paths": ${JSON.stringify(body)}}`
+        : `openapi: ${version}\ninfo: { title: N, version: '1' }\npaths:\n  /p:\n    get: { operationId: getP, responses: { '200': { description: ok } } }\n`
+    const r = await importOpenApi(raw)
+    expect(r.schema.format).toBe('openapi')
+    expect(r.schema.operations.map((o) => o.name)).toEqual(['getP'])
+  })
+
+  it('still rejects a numeric version that is not 3.x', async () => {
+    await expect(
+      importOpenApi('openapi: 2.5\ninfo: { title: N, version: "1" }\npaths: {}\n')
+    ).rejects.toThrow(/Not a recognizable OpenAPI/)
+  })
+})
+
+// IMP-07: a declared security scheme the importer cannot map was dropped silently.
+describe('importOpenApi — security schemes (IMP-07)', () => {
+  function swagger2(definitions: Doc): string {
+    return JSON.stringify({
+      swagger: '2.0',
+      info: { title: 'S', version: '1' },
+      host: 'api.example.com',
+      securityDefinitions: definitions,
+      security: [{ s: [] }],
+      paths: { '/s': { get: { operationId: 'getS', responses: ok } } }
+    })
+  }
+  const withScheme = (scheme: Doc): string =>
+    v3(
+      { '/s': { get: { operationId: 'getS', responses: ok } } },
+      { securitySchemes: { s: scheme } },
+      { security: [{ s: [] }] }
+    )
+  const authWarnings = (r: Imported): Array<{ message: string; location?: string }> =>
+    r.warnings
+      .filter((w) => w.kind === 'unsupported-auth')
+      .map(({ message, location }) => ({ message, location }))
+
+  it('maps Swagger 2.0 `type: basic` to Basic auth, with no warning', async () => {
+    const r = await importOpenApi(swagger2({ s: { type: 'basic' } }))
+    expect(op(r, 'getS').editorState.auth).toEqual({ type: 'basic', username: '', password: '' })
+    expect(r.warnings).toEqual([])
+  })
+
+  it.each([
+    ['openIdConnect', { type: 'openIdConnect', openIdConnectUrl: 'https://id.example.com' }],
+    ['apiKey in a cookie', { type: 'apiKey', in: 'cookie', name: 'session' }],
+    ['apiKey with no name', { type: 'apiKey', in: 'header' }],
+    ['http digest', { type: 'http', scheme: 'digest' }],
+    ['an unknown type', { type: 'mutualTLS' }]
+  ])('warns unsupported-auth for %s and imports with no auth', async (_label, scheme) => {
+    const r = await importOpenApi(withScheme(scheme))
+    expect(op(r, 'getS').editorState.auth).toEqual({ type: 'none' })
+    expect(authWarnings(r)).toEqual([
+      { message: expect.stringContaining('"s"'), location: 'GET /s' }
+    ])
+  })
+
+  it('warns for an unmapped Swagger 2.0 scheme too', async () => {
+    const r = await importOpenApi(swagger2({ s: { type: 'apiKey', in: 'cookie', name: 'k' } }))
+    expect(op(r, 'getS').editorState.auth).toEqual({ type: 'none' })
+    expect(authWarnings(r)).toHaveLength(1)
+  })
+})

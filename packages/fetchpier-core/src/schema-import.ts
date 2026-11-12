@@ -24,4 +24,8 @@ export {
   prettyJson
 } from './schema-import/index'
 
-export type { SchemaImportProgressCallback } from './schema-import/index'
+export type {
+  SchemaImportProgressCallback,
+  ImportSchemaOptions,
+  SchemaFetchTransport
+} from './schema-import/index'

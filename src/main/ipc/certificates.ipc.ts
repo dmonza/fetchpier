@@ -32,6 +32,12 @@ function assertScope(scope: unknown): TlsScope {
   throw new Error(`Invalid TLS scope: ${String(scope)}`)
 }
 
+/** Update and remove name one entry: a missing or empty id names none. */
+function assertEntryId(id: unknown): string {
+  if (typeof id === 'string' && id !== '') return id
+  throw new Error('A certificate id is required')
+}
+
 const PICK_FILTERS: Record<
   'ca' | 'pemCert' | 'pemKey' | 'pfx',
   { name: string; extensions: string[] }[]
@@ -78,7 +84,7 @@ export function registerCertificateHandlers(): void {
 
   ipcMain.handle('certificates:updateCA', async (_e, args: UpdateCAArgs): Promise<CACertEntry> => {
     const scope = assertScope(args.scope)
-    const entry = await updateCA({ ...args, scope })
+    const entry = await updateCA({ ...args, scope, id: assertEntryId(args.id) })
     broadcast(scope)
     return entry
   })
@@ -87,7 +93,7 @@ export function registerCertificateHandlers(): void {
     'certificates:updateClient',
     async (_e, args: UpdateClientArgs): Promise<ClientCertEntry> => {
       const scope = assertScope(args.scope)
-      const entry = await updateClient({ ...args, scope })
+      const entry = await updateClient({ ...args, scope, id: assertEntryId(args.id) })
       broadcast(scope)
       return entry
     }
@@ -100,7 +106,7 @@ export function registerCertificateHandlers(): void {
       if (args.kind !== 'ca' && args.kind !== 'client') {
         throw new Error(`Invalid certificate kind: ${String(args.kind)}`)
       }
-      const result = await remove({ ...args, scope })
+      const result = await remove({ ...args, scope, id: assertEntryId(args.id) })
       broadcast(scope)
       return result
     }

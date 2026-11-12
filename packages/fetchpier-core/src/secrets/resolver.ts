@@ -34,7 +34,12 @@ export function collectReferencedVariableNames(request: HttpRequest): Set<string
   // REQ-0081: the query crosses the boundary as a structured list (not baked
   // into `url`), so a secret referenced only in a query param lives here — it
   // must be scanned or the marker is never seeded and the token travels literal.
+  //
+  // Disabled rows (params / fields `enabled: false`, parts `disabled: true`) are
+  // never sent, so they do not scope decryption: the desktop payload carries them,
+  // and a disabled row's needs-value or locked secret must not refuse the send.
   for (const p of request.params ?? []) {
+    if (p.enabled === false) continue
     addRefs(p.key, names)
     addRefs(p.value, names)
   }
@@ -44,10 +49,12 @@ export function collectReferencedVariableNames(request: HttpRequest): Set<string
   }
   addRefs(request.body, names)
   for (const f of request.formFields ?? []) {
+    if (f.enabled === false) continue
     addRefs(f.key, names)
     addRefs(f.value, names)
   }
   for (const p of request.multipartParts ?? []) {
+    if (p.disabled === true) continue
     addRefs(p.name, names)
     addRefs(p.contentType, names)
     if (p.kind === 'text') addRefs(p.value, names)

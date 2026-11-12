@@ -18,6 +18,17 @@ interface Props {
 // eslint-disable-next-line no-control-regex
 const INVALID_NAME = /[=;\s\u0000-\u001f]/
 
+/**
+ * A stored UTC instant as the `YYYY-MM-DDTHH:mm` local wall-clock value a
+ * `datetime-local` input shows. Empty for no (or an unparseable) expiry.
+ */
+function toLocalInputValue(iso: string): string {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return ''
+  const offsetMs = new Date(ms).getTimezoneOffset() * 60_000
+  return new Date(ms - offsetMs).toISOString().slice(0, 16)
+}
+
 export function CookieForm({ cookie, onClose }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const create = useCookieStore((s) => s.create)
@@ -27,6 +38,8 @@ export function CookieForm({ cookie, onClose }: Props): React.JSX.Element {
   const [value, setValue] = useState(cookie?.value ?? '')
   const [domain, setDomain] = useState(cookie?.domain ?? '')
   const [path, setPath] = useState(cookie?.path ?? '/')
+  // The stored UTC instant (ISO). The input shows it in local time and an edit
+  // converts back, so an untouched expiry is saved exactly as it was.
   const [expires, setExpires] = useState(cookie?.expires ?? '')
   const [maxAge, setMaxAge] = useState<string>(
     cookie?.maxAge !== null && cookie?.maxAge !== undefined ? String(cookie.maxAge) : ''
@@ -123,8 +136,13 @@ export function CookieForm({ cookie, onClose }: Props): React.JSX.Element {
           <Field label={t('cookies.expiresDate')}>
             <Input
               type="datetime-local"
-              value={expires ? expires.slice(0, 16) : ''}
-              onChange={(e) => setExpires(e.target.value)}
+              value={expires ? toLocalInputValue(expires) : ''}
+              onChange={(e) => {
+                // The input's value is local wall-clock time; `new Date` reads it as such.
+                const local = e.target.value
+                const ms = local ? Date.parse(local) : NaN
+                setExpires(Number.isFinite(ms) ? new Date(ms).toISOString() : '')
+              }}
             />
           </Field>
           <Field label={t('cookies.maxAge')}>

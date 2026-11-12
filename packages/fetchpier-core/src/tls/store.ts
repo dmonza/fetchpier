@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { CACertEntry, ClientCertEntry, TlsScope, TlsScopeSettings } from '@shared/types'
 import { CoreError } from '../shared/context'
 import { assertSafeIdentifier } from '../workspace/safe-path'
@@ -107,11 +107,33 @@ function assertPassphraseAllowed(scope: TlsScope, passphrase: string | null | un
   }
 }
 
+/**
+ * An entry written by hand (or moved from a CLI run file) may have no id. It
+ * gets one derived from its position and content, so every load of the same
+ * file yields the same id (the panel's row and the next mutation agree on it);
+ * the next write persists it.
+ */
+function withStableId<T extends { id: string }>(entry: T, prefix: string, index: number): T {
+  if (typeof entry.id === 'string' && entry.id !== '') return entry
+  const digest = createHash('sha256')
+    .update(`${prefix}:${index}:${JSON.stringify(entry)}`)
+    .digest('hex')
+    .slice(0, 32)
+  return { ...entry, id: `${prefix}-${digest}` }
+}
+
 function normaliseTls(value: TlsScopeSettings | undefined): TlsScopeSettings {
   if (!value) return { caCertificates: [], clientCertificates: [] }
   return {
-    caCertificates: value.caCertificates ?? [],
-    clientCertificates: value.clientCertificates ?? []
+    caCertificates: (value.caCertificates ?? []).map((e, i) => withStableId(e, 'ca', i)),
+    clientCertificates: (value.clientCertificates ?? []).map((e, i) => withStableId(e, 'cc', i))
+  }
+}
+
+/** A missing or empty id would match an id-less entry instead of naming one. */
+function assertEntryId(id: unknown): void {
+  if (typeof id !== 'string' || id === '') {
+    throw new Error('A certificate id is required')
   }
 }
 
@@ -292,6 +314,7 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
   // ── Update ─────────────────────────────────────────────────────────────────
 
   async function updateCA(args: UpdateCAArgs): Promise<CACertEntry> {
+    assertEntryId(args.id)
     const current = await loadScopeSettings(args.scope)
     const idx = current.caCertificates.findIndex((c) => c.id === args.id)
     if (idx < 0) throw new Error(`CA certificate not found: ${args.id}`)
@@ -313,6 +336,7 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
   }
 
   async function updateClient(args: UpdateClientArgs): Promise<ClientCertEntry> {
+    assertEntryId(args.id)
     // Reject an invalid app-global passphrase before any persistence.
     if (args.patch.passphrase !== undefined) {
       assertPassphraseAllowed(args.scope, args.patch.passphrase)
@@ -355,33 +379,50 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
     }
   }
 
+  /** Every file an entry of the scope points at. */
+  function referencedFiles(settings: TlsScopeSettings): Set<string> {
+    const files = new Set<string>()
+    for (const ca of settings.caCertificates) if (ca.file) files.add(ca.file)
+    for (const cc of settings.clientCertificates) {
+      for (const f of [cc.certFile, cc.keyFile, cc.pfxFile]) if (f) files.add(f)
+    }
+    return files
+  }
+
   async function remove(args: RemoveArgs): Promise<{ removed: true }> {
+    assertEntryId(args.id)
     const current = await loadScopeSettings(args.scope)
     const dir = scopeCertsDir(args.scope)
 
+    let targetFiles: (string | undefined)[]
+    let next: TlsScopeSettings
     if (args.kind === 'ca') {
       const target = current.caCertificates.find((c) => c.id === args.id)
       if (!target) return { removed: true }
-      if (dir) await safeUnlink(dir, target.file)
-      const next: TlsScopeSettings = {
+      targetFiles = [target.file]
+      next = {
         caCertificates: current.caCertificates.filter((c) => c.id !== args.id),
         clientCertificates: current.clientCertificates
       }
-      await writeScopeSettings(args.scope, next)
     } else {
       const target = current.clientCertificates.find((c) => c.id === args.id)
       if (!target) return { removed: true }
-      if (dir) {
-        if (target.certFile) await safeUnlink(dir, target.certFile)
-        if (target.keyFile) await safeUnlink(dir, target.keyFile)
-        if (target.pfxFile) await safeUnlink(dir, target.pfxFile)
-      }
-      const next: TlsScopeSettings = {
+      targetFiles = [target.certFile, target.keyFile, target.pfxFile]
+      next = {
         caCertificates: current.caCertificates,
         clientCertificates: current.clientCertificates.filter((c) => c.id !== args.id)
       }
-      await writeScopeSettings(args.scope, next)
     }
+
+    // Identical imports share one file (writeCertFileNoOverwrite): a file another
+    // remaining entry of the scope still uses stays on disk.
+    if (dir) {
+      const stillUsed = referencedFiles(next)
+      for (const file of targetFiles) {
+        if (file && !stillUsed.has(file)) await safeUnlink(dir, file)
+      }
+    }
+    await writeScopeSettings(args.scope, next)
 
     return { removed: true }
   }

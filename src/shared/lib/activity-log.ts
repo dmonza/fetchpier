@@ -219,6 +219,19 @@ function parseScriptResultLines(lines: string[]): ScriptExecutionResult {
   }
 }
 
+/** The binary-body placeholder line the serializer writes (`binaryPlaceholder`). */
+const BINARY_PLACEHOLDER_RE = /^\[binary body, (\d+) bytes, content-type: [^\]\n]*\]$/
+
+/**
+ * Byte size of a rebuilt response body: the count a binary placeholder
+ * recorded, else the body's UTF-8 byte length.
+ */
+function responseSizeBytes(body: string): number {
+  const placeholder = BINARY_PLACEHOLDER_RE.exec(body)
+  if (placeholder) return Number(placeholder[1])
+  return new TextEncoder().encode(body).length
+}
+
 /**
  * Reconstruct a `HistoryEntry` from a parsed `ActivityLogFile`. Lossy —
  * script log timestamps and complex log args are normalised to plain text,
@@ -276,7 +289,7 @@ export function activityLogToHistoryEntry(file: ActivityLogFile): HistoryEntry {
     headers: resp.headers,
     body: resp.body,
     timingMs: durationMs,
-    sizeBytes: resp.body.length
+    sizeBytes: responseSizeBytes(resp.body)
   }
 
   const entry: HistoryEntry = {

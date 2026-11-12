@@ -203,6 +203,8 @@ const api = {
     create: (strings: WorkspaceOpenStrings): Promise<string | null> =>
       invoke('workspace:create', strings),
     getLast: (): Promise<RestoreResult> => invoke('workspace:getLast'),
+    // Read-only: the workspace main has open now (null if none). Never restores.
+    getActive: (): Promise<string | null> => invoke('workspace:getActive'),
     getRecent: (): Promise<string[]> => invoke('workspace:getRecent'),
     openPath: (workspacePath: string): Promise<OpenPathResult> =>
       invoke('workspace:openPath', workspacePath),
@@ -228,6 +230,17 @@ const api = {
         callback(payload)
       ipcRenderer.on('workspace:gitignoreGenerated', handler)
       return () => ipcRenderer.removeListener('workspace:gitignoreGenerated', handler)
+    },
+    /** Main opened, switched or closed (`null`) its workspace. */
+    onActiveChanged: (
+      callback: (payload: { workspacePath: string | null }) => void
+    ): (() => void) => {
+      const handler = (
+        _: Electron.IpcRendererEvent,
+        payload: { workspacePath: string | null }
+      ): void => callback(payload)
+      ipcRenderer.on('workspace:activeChanged', handler)
+      return () => ipcRenderer.removeListener('workspace:activeChanged', handler)
     }
   },
 

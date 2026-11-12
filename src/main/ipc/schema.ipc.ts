@@ -13,9 +13,14 @@
 // import — the ESLint `no-restricted-imports` rule will fail, and the cold
 // path optimization vanishes silently.
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { app, ipcMain, BrowserWindow } from 'electron'
+import type { SchemaFetchTransport } from '@fetchpier/core/schema-import'
 import type { SchemaFormat, SchemaImportRequest, SchemaImportResult } from '../../shared/types'
+import { desktopUserAgent } from '../../shared/types'
 import { requireActiveWorkspaceHandle } from '../state/active-workspace'
+import { readAppSettings } from './appsettings.ipc'
+import { loadHttpSettings } from '../config/workspace-settings-store'
+import { resolveTlsForUrl } from '../tls/store'
 
 let schemaImportPromise: Promise<typeof import('@fetchpier/core/schema-import')> | null = null
 
@@ -41,16 +46,35 @@ export function registerSchemaHandlers(): void {
       const { importSchema } = await loadSchemaImport()
       const senderWindow = BrowserWindow.fromWebContents(event.sender) ?? null
       const workspacePath = requireActiveWorkspaceHandle().path
-      return importSchema(request, workspacePath, (phase, current, total, message) => {
-        if (senderWindow && !senderWindow.isDestroyed()) {
-          senderWindow.webContents.send('schema:import:progress', {
-            phase,
-            current,
-            total,
-            message
-          })
+      // A URL source takes a send's network path: the app proxy, the composed
+      // CA bundle (resolved per origin the redirects reach) and the workspace's
+      // HTTP settings. No client certificate: the import has no environment, so
+      // a `{{…}}` passphrase would reach TLS literally and fail an import that
+      // needs no mTLS (before this path existed, none was presented either).
+      const transport: SchemaFetchTransport = {
+        proxy: readAppSettings().proxy,
+        settings: await loadHttpSettings(workspacePath),
+        userAgent: desktopUserAgent(app.getVersion()),
+        tls: async (url) => {
+          const { ca } = await resolveTlsForUrl(url, {}, { workspacePath })
+          return ca ? { ca } : {}
         }
-      })
+      }
+      return importSchema(
+        request,
+        workspacePath,
+        (phase, current, total, message) => {
+          if (senderWindow && !senderWindow.isDestroyed()) {
+            senderWindow.webContents.send('schema:import:progress', {
+              phase,
+              current,
+              total,
+              message
+            })
+          }
+        },
+        { transport }
+      )
     }
   )
 }

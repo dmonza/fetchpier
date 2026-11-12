@@ -119,6 +119,7 @@
       "moveConflict": "\"{{name}}\" already exists in the destination folder",
       "moveIntoItself": "A folder cannot be moved into itself",
       "nameConflict": "\"{{name}}\" already exists in this folder",
+      "invalidEntryName": "\"{{name}}\" is not a valid name on every operating system: it cannot contain < > : \" / \\ | ? *, end with a dot or a space, or be a reserved name such as CON or NUL",
       "duplicate": "Failed to duplicate",
       "invalidInstanceName": "An instance name may only contain letters, digits, hyphens, and underscores",
       "instanceConflict": "An instance named \"{{name}}\" already exists",
@@ -849,6 +850,7 @@
     "preview": {
       "label": "Client certificate for this request",
       "none": "(none — no matching certificate)",
+      "undetermined": "(cannot determine — the URL's scheme or host uses an unresolved variable)",
       "scopeWorkspace": "workspace scope",
       "scopeApp": "app-global scope"
     }

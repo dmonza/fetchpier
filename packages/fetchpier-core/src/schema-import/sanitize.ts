@@ -1,8 +1,17 @@
+/**
+ * Characters no portable file or folder name may contain: path separators, the
+ * punctuation Windows reserves, and control characters. Shared with the
+ * workspace's name check for names the user types (`assertPortableName`).
+ */
 // eslint-disable-next-line no-control-regex
-const INVALID_CHARS = /[/\\?%*:|"<>\x00-\x1f]/g
+export const PORTABLE_NAME_INVALID_CHAR = /[/\\?*:|"<>\x00-\x1f]/
+
+// Imported names also drop `%` (schema names often carry percent-encoding).
+const INVALID_CHARS = new RegExp(`[%${PORTABLE_NAME_INVALID_CHAR.source.slice(1)}`, 'g')
 const MAX_NAME_LENGTH = 120
 
-const WINDOWS_RESERVED = new Set([
+/** Windows device names, reserved with or without an extension (`CON`, `nul.txt`). */
+export const WINDOWS_RESERVED = new Set([
   'CON',
   'PRN',
   'AUX',

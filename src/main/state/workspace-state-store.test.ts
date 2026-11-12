@@ -270,6 +270,21 @@ describe('workspace-state-store', () => {
     }
   })
 
+  it('reloading the open workspace keeps a change still waiting for its debounced write (HIS-05)', async () => {
+    seedState(ws, {
+      schemaVersion: 1,
+      activeEnvironmentId: 'old',
+      session: { tabs: [], activeTabIndex: -1 }
+    })
+    await loadFromWorkspace(ws)
+    setActiveEnvironment('new-env')
+
+    await loadFromWorkspace(ws)
+    expect(getView().activeEnvironmentId).toBe('new-env')
+    flushSync()
+    expect(readState(ws).activeEnvironmentId).toBe('new-env')
+  })
+
   // ── Tab mode marker (preview / pinned) ─────────────────────────────────────
 
   it('round-trips the preview mode (relative on disk, present in the view)', async () => {

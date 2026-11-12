@@ -66,9 +66,28 @@ function bindRefs(resolver: RefResolver, location: string): Refs {
 
 const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const
 
-function isOpenAPIv3(doc: AnyDoc): boolean {
-  return typeof doc['openapi'] === 'string' && String(doc['openapi']).startsWith('3')
+/**
+ * Whether `openapi` names a 3.x version. An unquoted two-part version (`3.0`,
+ * `3.1`) is a number once parsed, so it is accepted as `swagger: 2.0` is.
+ */
+export function isOpenApiV3Version(version: unknown): boolean {
+  if (typeof version === 'number') return Math.trunc(version) === 3
+  return typeof version === 'string' && version.startsWith('3')
 }
+
+function isOpenAPIv3(doc: AnyDoc): boolean {
+  return isOpenApiV3Version(doc['openapi'])
+}
+
+/**
+ * YAML loads with the core schema plus merge keys: no timestamp type, so an
+ * unquoted `2024-01-15` stays the string the author wrote (OpenAPI's YAML is
+ * JSON-compatible), while `<<: *anchor` merges keep working. js-yaml exports
+ * `types` at runtime; its typings leave it out.
+ */
+const YAML_SCHEMA = yaml.CORE_SCHEMA.extend({
+  implicit: [(yaml as unknown as { types: { merge: yaml.Type } }).types.merge]
+})
 
 function isSwaggerV2(doc: AnyDoc): boolean {
   return doc['swagger'] === '2.0' || doc['swagger'] === 2
@@ -79,7 +98,7 @@ export function parseSchemaText(raw: string): AnyDoc {
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     return JSON.parse(trimmed) as AnyDoc
   }
-  const loaded = yaml.load(trimmed)
+  const loaded = yaml.load(trimmed, { schema: YAML_SCHEMA })
   if (!loaded || typeof loaded !== 'object') {
     throw new Error('Schema is not a JSON/YAML object')
   }
@@ -333,7 +352,8 @@ function detectAuthFromSecurity(
   const name = scheme['name'] as string | undefined
 
   if (type === 'http' && schemeName === 'bearer') return { type: 'bearer', token: '' }
-  if (type === 'http' && schemeName === 'basic')
+  // `type: basic` is how Swagger 2.0 writes the OAS3 `http` + `basic` scheme.
+  if ((type === 'http' && schemeName === 'basic') || type === 'basic')
     return { type: 'basic', username: '', password: '' }
   if (type === 'apiKey' && (inLoc === 'header' || inLoc === 'query') && name) {
     return { type: 'api-key', key: name, value: '', location: inLoc }
@@ -346,6 +366,19 @@ function detectAuthFromSecurity(
     })
     return { type: 'bearer', token: '' }
   }
+  // A declared scheme with no mapping (openIdConnect, an apiKey in a cookie,
+  // another http scheme, an unknown type) is reported, never dropped silently.
+  const detail =
+    type === 'apiKey'
+      ? `apiKey in ${inLoc ?? 'an unknown location'}`
+      : type === 'http'
+        ? `http ${schemeName ?? ''}`.trim()
+        : type
+  warnings.push({
+    kind: 'unsupported-auth',
+    message: `Security scheme "${schemeKey}" (${detail}) is not supported — imported without auth`,
+    location
+  })
   return { type: 'none' }
 }
 

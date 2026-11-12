@@ -171,6 +171,69 @@ describe('workspace.history (REQ-0068)', () => {
     expect(afterA).toBe(expected)
   })
 
+  // HIS-12: a rename rewrites the source-file line as text. Bodies that are
+  // not in the parser's canonical layout keep every byte.
+  it.each<
+    [
+      string,
+      { request?: Partial<HistoryEntry['request']>; response?: Partial<HistoryEntry['response']> }
+    ]
+  >([
+    [
+      'a CRLF response body',
+      { response: { headers: { 'Content-Type': 'text/csv' }, body: 'id,name\r\n1,a\r\n2,b\r\n' } }
+    ],
+    ['a request body with a separator line', { request: { body: 'line1\n### Response\nline2' } }],
+    [
+      'a response body ending in a block lookalike',
+      { response: { headers: { 'Content-Type': 'text/plain' }, body: 'ok\n# @x\n# y\n# @end-x' } }
+    ],
+    [
+      'a response body quoting the source-file directive',
+      {
+        response: {
+          headers: { 'Content-Type': 'text/plain' },
+          body: '# @source-file: requests/auth/login.http'
+        }
+      }
+    ]
+  ])('updateSourceFile keeps %s byte-identical', async (_label, overrides) => {
+    const base = buildEntry({ id: uuid('echo') })
+    const entry = buildEntry({
+      id: base.id,
+      request: { ...base.request, ...overrides.request },
+      response: { ...base.response, ...overrides.response }
+    })
+    await save(ws, entry)
+    const before = await get(ws, entry.id)
+
+    await updateSourceFile(ws, 'requests/auth/login.http', 'requests/auth/sign-in.http', false)
+
+    expect(await get(ws, entry.id)).toBe(
+      before.replace(
+        '# @source-file: requests/auth/login.http',
+        '# @source-file: requests/auth/sign-in.http'
+      )
+    )
+  })
+
+  it('updateSourceFile keeps the line endings of a CRLF run file on a folder move', async () => {
+    await save(ws, buildEntry({ id: uuid('foxtrot') }))
+    const [file] = await fs.readdir(join(ws, 'requests', '.runs'))
+    const filepath = join(ws, 'requests', '.runs', file!)
+    const crlf = (await fs.readFile(filepath, 'utf-8')).replace(/\n/g, '\r\n')
+    await fs.writeFile(filepath, crlf, 'utf-8')
+
+    await updateSourceFile(ws, 'requests/auth', 'requests/identity', true)
+
+    expect(await fs.readFile(filepath, 'utf-8')).toBe(
+      crlf.replace(
+        '# @source-file: requests/auth/login.http\r\n',
+        '# @source-file: requests/identity/login.http\r\n'
+      )
+    )
+  })
+
   // Atomic writes — closing the write-safety coverage gap: these writers used
   // to do a direct fs.writeFile with no temp file at all.
   it('updateSourceFile leaves the previous entry intact when the write is interrupted (CA-04)', async () => {

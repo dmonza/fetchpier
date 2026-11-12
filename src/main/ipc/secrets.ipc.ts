@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { CoreError } from '@fetchpier/core'
 import type {
   Environment,
   EnvironmentLocalView,
@@ -35,7 +36,16 @@ export function registerSecretsHandlers(): void {
   ipcMain.handle('secrets:reveal', async (_e, envId: string, name: string): Promise<string> => {
     assertSafeIdentifier(envId, 'environment id')
     if (typeof name !== 'string' || !name) throw new Error('secrets:reveal — name required')
-    return service.revealValue(requireActiveWorkspaceHandle().path, envId, name)
+    try {
+      return await service.revealValue(requireActiveWorkspaceHandle().path, envId, name)
+    } catch (err) {
+      // The code does not survive IPC as a property; lead the message with it so the
+      // editor tells a corrupt value from a missing key (only the former may be cleared).
+      if (err instanceof CoreError) {
+        throw new Error(`${err.code}: ${err.message}`, { cause: err })
+      }
+      throw err
+    }
   })
 
   ipcMain.handle(

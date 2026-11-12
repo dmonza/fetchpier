@@ -35,6 +35,8 @@ import { buildHistoryEntry, viewerResponse } from '../../lib/send-result'
 import { buildHttpRequestPayload } from './build-send-payload'
 import { defaultReqTabForMethod } from './req-tab'
 import { labelSendError } from './send-error'
+import { treeNameErrorMessage } from '../sidebar/tree-name-error'
+import { useToastStore } from '../../stores/toast'
 import type {
   RequestEditorState,
   RequestEditorTab,
@@ -506,9 +508,13 @@ function RequestEditorInner(): React.JSX.Element {
         markClean(activeTab.id, hashString(content))
       } catch (err) {
         console.error('[RequestEditor] Failed to save new request:', err)
+        // A name the sidebar would refuse (not portable, or taken) is refused
+        // here too: say so, with the same message, rather than only logging it.
+        const nameError = treeNameErrorMessage(err, name, t)
+        if (nameError) useToastStore.getState().push(nameError, { type: 'error' })
       }
     },
-    [activeTab, request, updateTab, markClean]
+    [activeTab, request, updateTab, markClean, t]
   )
 
   // Latest request kept in a ref so the global-event listeners below stay stable

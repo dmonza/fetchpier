@@ -274,6 +274,20 @@ describe('sendRequest', () => {
     expect(result.sizeBytes).toBe(4)
   })
 
+  // ENG-05: the size is the byte count of the body as read, not the length of
+  // its lossy UTF-8 text (every invalid byte would count as a 3-byte U+FFFD).
+  it.each([
+    ['binary bytes', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x80, 0x81, 0x90])],
+    ['Latin-1 text', Buffer.from('café ñandú', 'latin1')],
+    ['a lone UTF-8 lead byte at the end', Buffer.from([0x61, 0x62, 0xe2])]
+  ])('reports the true byte count for %s', async (_label, bytes) => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, { 'content-type': 'image/png' }, bytes))
+
+    const result = await sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
+    expect(result.sizeBytes).toBe(bytes.length)
+    expect(result.sizeBytes).toBe(result.decompressedBytes)
+  })
+
   it('calls agent.destroy() after a successful request', async () => {
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
 

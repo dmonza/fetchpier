@@ -8,8 +8,9 @@
  * generic `workspace.atomicWriteBatch` primitive. The crypto stays here.
  */
 
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { secrets, workspace, CoreError } from '@fetchpier/core'
+import { isReservedVariableName } from '../../shared/lib/dynamic-variables'
 import type {
   Environment,
   HttpRequest,
@@ -74,16 +75,51 @@ export async function getStatus(workspacePath: string): Promise<SecretsStatus> {
  * manifest already exists (the caller should drive enter-key instead).
  */
 export async function setupKey(workspacePath: string): Promise<SecretsSetupResult> {
-  const ws = workspace.openWorkspace(workspacePath)
-  const existing = await ws.secrets.readManifest()
-  if (existing) {
-    throw new CoreError('WORKSPACE_INVALID', 'This workspace already has a secrets key.')
+  return withWorkspaceKeyLock(workspacePath, async () => {
+    const ws = workspace.openWorkspace(workspacePath)
+    // Re-checked inside the lock: a second setup queued behind the first (a double
+    // click) sees its manifest instead of minting another key.
+    const existing = await ws.secrets.readManifest()
+    if (existing) {
+      throw new CoreError('WORKSPACE_INVALID', 'This workspace already has a secrets key.')
+    }
+    const rawKey = await secrets.generateWorkspaceKey()
+    const manifest = await secrets.buildManifest(rawKey)
+    await ws.secrets.writeManifest(manifest)
+    await storeWorkspaceKey(manifest.encryption.keyId, rawKey, workspaceHint(workspacePath))
+    return { key: secrets.formatKey(rawKey), keyId: manifest.encryption.keyId }
+  })
+}
+
+/**
+ * Per-workspace promise lock for the operations that mint a key and move the
+ * manifest (setup, rotate). Unserialized, two setups both saw "no manifest",
+ * each generated a key, and the manifest and the keystore could end on different
+ * keys — the backup key the dialog showed no longer opened the workspace.
+ */
+const keyLocks = new Map<string, Promise<unknown>>()
+
+function withWorkspaceKeyLock<T>(workspacePath: string, fn: () => Promise<T>): Promise<T> {
+  const lockKey = resolve(workspacePath)
+  const previous = keyLocks.get(lockKey) ?? Promise.resolve()
+  const run = previous.then(fn, fn)
+  const tail = run.catch(() => undefined)
+  keyLocks.set(lockKey, tail)
+  void tail.then(() => {
+    if (keyLocks.get(lockKey) === tail) keyLocks.delete(lockKey)
+  })
+  return run
+}
+
+/** SEC-09: a `$` name is the reserved dynamic-variable namespace — never a secret. */
+function assertNotReserved(name: string): void {
+  if (isReservedVariableName(name)) {
+    throw new CoreError(
+      'RESERVED_VARIABLE_NAME',
+      `Variable name "${name}" begins with "$", which is reserved for system dynamic variables.`,
+      { variable: name }
+    )
   }
-  const rawKey = await secrets.generateWorkspaceKey()
-  const manifest = await secrets.buildManifest(rawKey)
-  await ws.secrets.writeManifest(manifest)
-  await storeWorkspaceKey(manifest.encryption.keyId, rawKey, workspaceHint(workspacePath))
-  return { key: secrets.formatKey(rawKey), keyId: manifest.encryption.keyId }
 }
 
 /** Validate and store a pasted `FPK1-…` key against the workspace challenge. */
@@ -170,6 +206,7 @@ export async function setSecret(
   name: string,
   plaintext: string
 ): Promise<Environment> {
+  assertNotReserved(name)
   const ws = workspace.openWorkspace(workspacePath)
   const key = await requireKey(ws)
   const env = await readEnv(ws, environmentId)
@@ -198,6 +235,7 @@ export async function clearSecret(
   environmentId: string,
   name: string
 ): Promise<Environment> {
+  assertNotReserved(name)
   const ws = workspace.openWorkspace(workspacePath)
   const env = await readEnv(ws, environmentId)
   const updated: Environment = { ...env, variables: { ...env.variables, [name]: null } }
@@ -355,6 +393,10 @@ export async function resolvePassphraseSecrets(
  * unlocking until they pull).
  */
 export async function rotateKey(workspacePath: string): Promise<SecretsSetupResult> {
+  return withWorkspaceKeyLock(workspacePath, () => rotateKeyLocked(workspacePath))
+}
+
+async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResult> {
   const ws = workspace.openWorkspace(workspacePath)
   const oldKey = await requireKey(ws)
   const newKey = await secrets.generateWorkspaceKey()

@@ -26,7 +26,8 @@ import { useToastStore } from '../../stores/toast'
 import type {
   EnvironmentLocalView,
   EnvironmentLocalViewRow,
-  SecretsSetupResult
+  SecretsSetupResult,
+  SecretsStatus
 } from '../../../shared/types'
 import { SecretSetupDialog } from './SecretSetupDialog'
 import { EnterKeyDialog } from './EnterKeyDialog'
@@ -402,7 +403,8 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
     duplicateEnvironment,
     saveEnvironment,
     deleteEnvironment,
-    replaceEnvironment
+    replaceEnvironment,
+    workspacePath
     // No `setActive` here on purpose: the editor never re-points the active
     // environment. `activeEnvironmentId` is read only to decide which row the
     // panel opens on.
@@ -443,6 +445,13 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
   } | null>(null)
   const [revealed, setRevealed] = useState<Record<string, string>>({})
   const [corruptNames, setCorruptNames] = useState<Set<string>>(new Set())
+  /**
+   * True while a make-secret flow runs (status check + first-time setup). The ref
+   * drops a second click that lands before the re-render disables the lock; the
+   * state disables the lock buttons.
+   */
+  const makeSecretBusyRef = useRef(false)
+  const [makeSecretBusy, setMakeSecretBusy] = useState(false)
   const [needsValueInput, setNeedsValueInput] = useState<Record<string, string>>({})
   // REQ-0074 — local value layer (Shared | Local two-column editor).
   const [localView, setLocalView] = useState<EnvironmentLocalView | null>(null)
@@ -473,10 +482,12 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
   const status = secretsStore.status
   const locked = status?.hasManifest === true && !status.unlocked
 
+  // Re-read on open and whenever the workspace changes under the open editor: a
+  // stale "unlocked" from the previous workspace would offer reveals that fail.
   useEffect(() => {
     secretsStore.refreshStatus().catch(console.error)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [workspacePath])
 
   /**
    * Surface a rejected auto-save. REQ-0111: these two flows have no Save button,
@@ -982,19 +993,30 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
     value: string,
     needsValue = false
   ): Promise<void> => {
-    if (!name.trim() || !selectedEnv) return
-    const current = await secretsStore.refreshStatus()
-    if (!current.hasManifest) {
-      try {
-        const result = await secretsStore.setup()
-        setPending({ name, value, needsValue })
-        setSetupResult(result)
-      } catch (err) {
-        pushToast(err instanceof Error ? err.message : String(err), {
-          type: 'error'
-        })
+    // A `$` name is the reserved system namespace: it can never be a secret.
+    if (!name.trim() || isReservedVariableName(name) || !selectedEnv) return
+    // A double click must not run first-time setup twice (two keys minted).
+    if (makeSecretBusyRef.current) return
+    makeSecretBusyRef.current = true
+    setMakeSecretBusy(true)
+    let current: SecretsStatus
+    try {
+      current = await secretsStore.refreshStatus()
+      if (!current.hasManifest) {
+        try {
+          const result = await secretsStore.setup()
+          setPending({ name, value, needsValue })
+          setSetupResult(result)
+        } catch (err) {
+          pushToast(err instanceof Error ? err.message : String(err), {
+            type: 'error'
+          })
+        }
+        return
       }
-      return
+    } finally {
+      makeSecretBusyRef.current = false
+      setMakeSecretBusy(false)
     }
     if (!current.unlocked) {
       setPending({ name, value, needsValue })
@@ -1018,9 +1040,15 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
       const plaintext = await secretsStore.reveal(selectedEnv.id, name)
       setRevealed((prev) => ({ ...prev, [name]: plaintext }))
     } catch (err) {
+      // Classified on the error code main puts at the head of the message: only a
+      // corrupt value offers "Clear and re-enter", which overwrites the ciphertext.
+      // A missing key (stale status) leaves the ciphertext valid — unlock instead.
       const msg = err instanceof Error ? err.message : String(err)
-      if (/decrypt|corrupt|tamper/i.test(msg)) {
+      if (msg.includes('SECRETS_VALUE_CORRUPT')) {
         setCorruptNames((prev) => new Set(prev).add(name))
+      } else if (msg.includes('SECRETS_KEY_MISSING')) {
+        await secretsStore.refreshStatus()
+        setShowEnterKey(true)
       } else {
         pushToast(msg, { type: 'error' })
       }
@@ -1236,7 +1264,12 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
         <div className="flex items-center justify-end gap-1">
           <button
             onClick={() => handleMakeSecret(row.key, row.value).catch(console.error)}
-            disabled={!row.key.trim()}
+            disabled={
+              !row.key.trim() ||
+              isReservedVariableName(row.key) ||
+              reservedNameRows.has(row.id) ||
+              makeSecretBusy
+            }
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-primary disabled:opacity-30"
             aria-label={t('secrets.makeSecret')}
             title={t('secrets.makeSecret')}
@@ -1466,7 +1499,8 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
       <div className="flex items-center justify-end gap-1">
         <button
           onClick={() => handleMakeSecret(r.name, '', true).catch(console.error)}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-primary"
+          disabled={makeSecretBusy}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-primary disabled:opacity-30"
           aria-label={t('secrets.makeSecret')}
           title={t('secrets.makeSecret')}
         >

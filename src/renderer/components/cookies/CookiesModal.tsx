@@ -43,11 +43,14 @@ function domainMatchesHostname(cookieDomain: string, hostname: string): boolean 
   return hostname === d || hostname.endsWith(`.${d}`)
 }
 
+// The jar's rule: a Max-Age lifetime is measured from the last time the cookie
+// was received (`updatedAt`), not from its first capture — a server that
+// refreshes a sliding session restarts the countdown.
 function isCookieExpired(cookie: Cookie, now = Date.now()): boolean {
   if (cookie.maxAge !== null) {
-    const created = Date.parse(cookie.createdAt)
-    if (!Number.isFinite(created)) return false
-    return created + cookie.maxAge * 1000 <= now
+    const received = Date.parse(cookie.updatedAt)
+    if (!Number.isFinite(received)) return false
+    return received + cookie.maxAge * 1000 <= now
   }
   if (cookie.expires) {
     const expiry = Date.parse(cookie.expires)
@@ -61,7 +64,7 @@ function formatExpires(cookie: Cookie, t: ReturnType<typeof useTranslation>['t']
   if (isCookieExpired(cookie)) return t('cookies.expired')
   if (!cookie.expires && cookie.maxAge === null) return t('cookies.session')
   if (cookie.maxAge !== null) {
-    const end = Date.parse(cookie.createdAt) + cookie.maxAge * 1000
+    const end = Date.parse(cookie.updatedAt) + cookie.maxAge * 1000
     const seconds = Math.max(0, Math.round((end - Date.now()) / 1000))
     return t('cookies.inSeconds', { count: seconds })
   }

@@ -119,6 +119,7 @@
       "moveConflict": "\"{{name}}\" ya existe en la carpeta de destino",
       "moveIntoItself": "Una carpeta no puede moverse dentro de sí misma",
       "nameConflict": "\"{{name}}\" ya existe en esta carpeta",
+      "invalidEntryName": "\"{{name}}\" no es un nombre válido en todos los sistemas operativos: no puede contener < > : \" / \\ | ? *, terminar en punto o espacio, ni ser un nombre reservado como CON o NUL",
       "duplicate": "Error al duplicar",
       "invalidInstanceName": "El nombre de la instancia solo puede contener letras, dígitos, guiones y guiones bajos",
       "instanceConflict": "Ya existe una instancia llamada \"{{name}}\"",
@@ -849,6 +850,7 @@
     "preview": {
       "label": "Certificado de cliente para este request",
       "none": "(ninguno — no hay coincidencias)",
+      "undetermined": "(no se puede determinar — el esquema o el host de la URL usa una variable sin resolver)",
       "scopeWorkspace": "scope del workspace",
       "scopeApp": "scope global de la app"
     }

@@ -15,6 +15,7 @@ import { tabsAffectedBy } from './tabs-affected'
 import { resolveRenameBlur } from './rename-blur'
 import { flattenVisible, resolveTreeKey, typeAheadMatch } from './tree-nav'
 import { treeRowStateClass } from './tree-row-style'
+import { treeNameErrorMessage } from './tree-name-error'
 import { beginRepoint, endRepoint } from '../../lib/repoint-guard'
 import { collectAllPaths } from '../../lib/tree-paths'
 import { useEnvironmentStore } from '../../stores/environment'
@@ -1244,14 +1245,9 @@ export function CollectionTree({
           lift()
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg.includes('REQUEST_NAME_CONFLICT') || msg.includes('COLLECTION_NAME_CONFLICT')) {
-          useToastStore.getState().push(
-            t('collection.errors.nameConflict', {
-              name: finalName.replace(/\.http$/, '')
-            }),
-            { type: 'error' }
-          )
+        const nameError = treeNameErrorMessage(err, finalName.replace(/\.http$/, ''), t)
+        if (nameError) {
+          useToastStore.getState().push(nameError, { type: 'error' })
         } else {
           console.error('[CollectionTree] Failed to rename:', err)
         }
@@ -1404,11 +1400,9 @@ export function CollectionTree({
           openTab({ title: trimmed.replace(/\.http$/, ''), filePath })
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg.includes('REQUEST_NAME_CONFLICT') || msg.includes('COLLECTION_NAME_CONFLICT')) {
-          useToastStore.getState().push(t('collection.errors.nameConflict', { name: trimmed }), {
-            type: 'error'
-          })
+        const nameError = treeNameErrorMessage(err, trimmed.replace(/\.http$/, ''), t)
+        if (nameError) {
+          useToastStore.getState().push(nameError, { type: 'error' })
         } else {
           console.error('[CollectionTree] Failed to create:', err)
         }

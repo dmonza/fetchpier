@@ -51,6 +51,39 @@ describe('collectReferencedVariableNames', () => {
     expect(names.has('cityName')).toBe(true)
   })
 
+  // SEC-01: a row that is never sent does not scope secret resolution — otherwise
+  // a disabled row's needs-value or locked secret refuses the whole send.
+  it('skips disabled query params, form fields and multipart parts', () => {
+    const names = collectReferencedVariableNames({
+      method: 'POST',
+      url: 'https://api.example.test/',
+      params: [
+        { id: 'p0', key: 'api_key', value: '{{legacy}}', enabled: false },
+        { id: 'p1', key: '{{offKey}}', value: 'x', enabled: false },
+        { id: 'p2', key: 'city', value: '{{cityName}}', enabled: true }
+      ],
+      headers: {},
+      formFields: [
+        { id: 'f0', key: 'token', value: '{{apiKey}}', enabled: false },
+        { id: 'f1', key: 'user', value: '{{userName}}', enabled: true }
+      ],
+      multipartParts: [
+        { kind: 'text', id: 'm0', name: '{{offPart}}', value: '{{partSecret}}', disabled: true },
+        {
+          kind: 'file',
+          id: 'm1',
+          name: 'doc',
+          file: { ref: 'a.bin' },
+          filename: '{{offFile}}',
+          disabled: true
+        },
+        { kind: 'text', id: 'm2', name: 'note', value: '{{noteVar}}', disabled: false },
+        { kind: 'text', id: 'm3', name: 'memo', value: '{{memoVar}}' }
+      ]
+    } as HttpRequest)
+    expect([...names].sort()).toEqual(['cityName', 'memoVar', 'noteVar', 'userName'])
+  })
+
   it('collects basic and api-key auth value fields', () => {
     const basic = collectReferencedVariableNames({
       method: 'GET',

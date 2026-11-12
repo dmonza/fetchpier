@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -105,6 +105,83 @@ describe('readTree — request instances grouping', () => {
     await write(root, 'orphan.x.instance.http')
     const tree = await readTree(root)
     expect(tree.map((n) => n.name)).toEqual(['zebra', 'apple.http', 'orphan.x.instance.http'])
+  })
+})
+
+describe('readTree — read errors', () => {
+  let root: string
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'core-tree-err-'))
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  const fsError = (code: string): NodeJS.ErrnoException =>
+    Object.assign(new Error(`${code}: simulated`), { code })
+
+  /** Make `readdir` / `stat` of exactly `target` fail with `code`; everything else is real. */
+  function failOn(op: 'readdir' | 'stat', target: string, code: string): void {
+    const real = fs[op].bind(fs) as (p: string) => Promise<unknown>
+    vi.spyOn(fs, op).mockImplementation((async (p: string) => {
+      if (p === target) throw fsError(code)
+      return real(p)
+    }) as never)
+  }
+
+  it('answers an empty tree when the root does not exist (ENOENT)', async () => {
+    await expect(readTree(join(root, 'missing'))).resolves.toEqual([])
+  })
+
+  it('answers an empty tree when the root is a file (ENOTDIR)', async () => {
+    await write(root, 'file.http')
+    failOn('readdir', join(root, 'file.http'), 'ENOTDIR')
+    await expect(readTree(join(root, 'file.http'))).resolves.toEqual([])
+  })
+
+  it.each(['EIO', 'EACCES', 'EBUSY'])('rejects when the root cannot be read (%s)', async (code) => {
+    await write(root, 'a.http')
+    failOn('readdir', root, code)
+    await expect(readTree(root)).rejects.toMatchObject({ code })
+  })
+
+  it.each(['EIO', 'EBUSY', 'EMFILE'])(
+    'rejects when a sub-folder fails transiently (%s), instead of showing it empty',
+    async (code) => {
+      await write(root, 'col/a.http')
+      failOn('readdir', join(root, 'col'), code)
+      await expect(readTree(root)).rejects.toMatchObject({ code })
+    }
+  )
+
+  // A lasting condition on one entry must not blank the whole sidebar forever:
+  // the entry is skipped and the rest of the tree is read.
+  it.each([
+    ['readdir', 'EACCES'],
+    ['readdir', 'EPERM'],
+    ['stat', 'ELOOP'],
+    ['stat', 'ENAMETOOLONG']
+  ] as const)('skips a sub-entry that %s cannot read for good (%s)', async (op, code) => {
+    await write(root, 'col/a.http')
+    await write(root, 'b.http')
+    failOn(op, join(root, 'col'), code)
+    const tree = await readTree(root)
+    expect(tree.map((n) => n.name)).toEqual(['b.http'])
+  })
+
+  it('rejects when an entry cannot be stat-ed for a reason other than ENOENT', async () => {
+    await write(root, 'a.http')
+    failOn('stat', join(root, 'a.http'), 'EIO')
+    await expect(readTree(root)).rejects.toMatchObject({ code: 'EIO' })
+  })
+
+  it('skips an entry deleted between the listing and the stat (ENOENT)', async () => {
+    await write(root, 'a.http')
+    await write(root, 'b.http')
+    failOn('stat', join(root, 'a.http'), 'ENOENT')
+    const tree = await readTree(root)
+    expect(tree.map((n) => n.name)).toEqual(['b.http'])
   })
 })
 
