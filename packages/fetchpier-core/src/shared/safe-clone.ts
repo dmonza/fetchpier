@@ -24,7 +24,13 @@ export function safeClone(value: unknown, depth = 0, seen = new WeakSet<object>(
         seen.delete(obj)
         return { __inspect: 'truncated', kind: 'array' }
       }
-      const result = obj.map((item) => safeClone(item, depth + 1, seen))
+      // `Array.prototype.map.call`, not `obj.map`: an array-like proxy such as
+      // the sandbox's multipart parts collection passes `Array.isArray` yet
+      // exposes no Array methods. `map` also keeps the holes of a sparse array,
+      // where an index loop would allocate every slot in host code.
+      const result: unknown[] = Array.prototype.map.call(obj, (item: unknown) =>
+        safeClone(item, depth + 1, seen)
+      )
       seen.delete(obj)
       return result
     }

@@ -415,6 +415,7 @@
       "contentTypeReplaced": "Tu header Content-Type se reemplazó por el de multipart (lleva el boundary).",
       "envWriteKeyMissing": "El script asignó el secreto \"{{name}}\", pero no se pudo guardar: el workspace está bloqueado.",
       "envWriteKeyMismatch": "El script asignó el secreto \"{{name}}\", pero no se pudo guardar: los valores locales de este environment usan una clave anterior del workspace.",
+      "envWriteFailed": "El script cambió \"{{name}}\", pero el cambio no se pudo guardar en los valores locales de este environment.",
       "dismiss": "Descartar"
     },
     "empty": "Enviá un request para ver la respuesta",

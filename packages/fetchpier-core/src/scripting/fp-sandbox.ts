@@ -184,7 +184,7 @@ const ALLOWED_GLOBALS: ReadonlySet<string> = new Set([
   'decodeURI'
 ])
 
-import { AssertionError, createExpect } from './mini-chai'
+import { AssertionError, createExpect, thrownMessage } from './mini-chai'
 import { parseXmlSafe, MAX_XML_BYTES, type Xml2JsonOptions } from './xml-parser'
 import type { FpApi, FpMultipartBody, FpMultipartPart, FpRequest, FpResponse } from './fp-api'
 import type { MultipartPart } from '@shared/types'
@@ -487,7 +487,8 @@ function wrapPart(part: MultipartPart, isPre: boolean): FpMultipartPart {
 function createMultipartBody(
   storage: MultipartPart[],
   isPre: boolean,
-  idCounter: { value: number }
+  idCounter: { value: number },
+  newSandboxArray: () => unknown[]
 ): FpMultipartBody {
   const guardWrite = (op: string): void => {
     if (!isPre) {
@@ -510,27 +511,45 @@ function createMultipartBody(
     storage.unshift(...normalised)
     return storage.length
   })
+  // Every part handed back to the script (pop/shift/splice results, sort
+  // comparator arguments) is a `wrapPart` wrapper, never the raw host part:
+  // the documented `fileRef` shape, and no `.constructor` reach.
+  const wrapOrUndefined = (p: MultipartPart | undefined): FpMultipartPart | undefined =>
+    p === undefined ? undefined : wrapPart(p, isPre)
   const popFn = freezeHostSurface(() => {
     guardWrite('pop')
-    return storage.pop()
+    return wrapOrUndefined(storage.pop())
   })
   const shiftFn = freezeHostSurface(() => {
     guardWrite('shift')
-    return storage.shift()
+    return wrapOrUndefined(storage.shift())
   })
-  const spliceFn = freezeHostSurface((start: number, deleteCount?: number, ...specs: unknown[]) => {
+  const spliceFn = freezeHostSurface((...args: unknown[]) => {
     guardWrite('splice')
+    // Array.prototype.splice arity: no argument removes nothing, `start` alone
+    // removes through the end, an explicit (even undefined) count is honoured.
+    const [start, deleteCount, ...specs] = args
     const normalised = specs.map((s) => validateAndNormalisePartSpec(s, idCounter))
-    return storage.splice(start, deleteCount ?? 0, ...normalised)
+    const removed =
+      args.length === 0
+        ? []
+        : args.length === 1
+          ? storage.splice(start as number)
+          : storage.splice(start as number, deleteCount as number, ...normalised)
+    // The returned array is built in the sandbox realm (a host array's
+    // `constructor` would be the host `Array`).
+    const result = newSandboxArray()
+    for (const p of removed) result.push(wrapPart(p, isPre))
+    return result
   })
   const reverseFn = freezeHostSurface(() => {
     guardWrite('reverse')
     storage.reverse()
     return partsProxy
   })
-  const sortFn = freezeHostSurface((cmp?: (a: MultipartPart, b: MultipartPart) => number) => {
+  const sortFn = freezeHostSurface((cmp?: (a: FpMultipartPart, b: FpMultipartPart) => number) => {
     guardWrite('sort')
-    storage.sort(cmp)
+    storage.sort(cmp ? (a, b) => cmp(wrapPart(a, isPre), wrapPart(b, isPre)) : undefined)
     return partsProxy
   })
 
@@ -584,6 +603,13 @@ function createMultipartBody(
         if (!isPre) {
           throw new TypeError('fp.request.body.parts[] is read-only in post-response scripts')
         }
+        // Writing past the end would leave holes that reach the send as null
+        // parts; index `length` itself appends.
+        if (Number(prop) > target.length) {
+          throw new TypeError(
+            `fp.request.body.parts[${prop}] would leave a gap: the list has length ${target.length}; use push() to append`
+          )
+        }
         target[Number(prop)] = validateAndNormalisePartSpec(value, idCounter)
         return true
       }
@@ -593,6 +619,12 @@ function createMultipartBody(
         }
         const n = Number(value)
         if (!Number.isFinite(n) || n < 0) return true
+        // Truncation only: growing the length would add empty slots.
+        if (n > target.length) {
+          throw new TypeError(
+            `fp.request.body.parts.length can only shrink the list (current length ${target.length})`
+          )
+        }
         target.length = n
         return true
       }
@@ -633,6 +665,20 @@ function createMultipartBody(
 }
 
 // ── Sandbox runner ──────────────────────────────────────────────────────────
+
+/**
+ * Lines the IIFE wrapper puts before the user script in the code the vm runs
+ * (`fp-<phase>-script.js`). A line number from a stack frame of that file minus
+ * this is the line in the user's script.
+ */
+export const SCRIPT_WRAPPER_HEADER_LINES = 1
+
+/**
+ * The wrapper's closing line, after the user script. V8 places a syntax error
+ * that runs to the end of the input (an unclosed bracket) on this line, which
+ * is not a line of the user's script.
+ */
+export const SCRIPT_WRAPPER_FOOTER = '}).call(void 0);'
 
 export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   const { phase, script, request, response, environment, variables, timeoutMs = 5000 } = input
@@ -698,7 +744,9 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   const multipartInitialSnapshot = JSON.stringify(multipartStorage)
   const scriptIdCounter = { value: 0 }
   const multipartBody: FpMultipartBody | undefined = isMultipart
-    ? createMultipartBody(multipartStorage, isPre, scriptIdCounter)
+    ? createMultipartBody(multipartStorage, isPre, scriptIdCounter, () =>
+        sandboxJsonParse ? (sandboxJsonParse('[]') as unknown[]) : []
+      )
     : undefined
 
   const headersProxy: Pick<
@@ -796,7 +844,12 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   // ── Response proxy ─────────────────────────────────────────────────────
   let responseObj: FpResponse | undefined
   if (response) {
-    const respHeaders = createHeaderStore(recordToHeaders(response.headers ?? {}))
+    // The live response's `headerList` keeps every value of a repeated name (the
+    // record joins them); a response rebuilt from history has only the record.
+    // `getAll` / `count` read the list; `get` / `toObject` keep reading the joined
+    // record, so a repeated header reads the same live, on replay and in the UI.
+    const respRecord = createHeaderStore(recordToHeaders(response.headers ?? {}))
+    const respHeaders = response.headerList ? createHeaderStore(response.headerList) : respRecord
     // Memoization: the default-options XML parse is cached so repeated
     // `fp.response.xml2Json()` calls in the same post-response script don't
     // re-parse. Calls with explicit options always re-parse (simple contract:
@@ -824,10 +877,10 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
       status: response.status,
       statusText: response.statusText,
       headers: {
-        get: (n: string) => respHeaders.get(n),
+        get: (n: string) => respRecord.get(n),
         getAll: (n: string) => intoSandbox(respHeaders.getAll(n)),
         count: () => respHeaders.count(),
-        toObject: () => intoSandbox(respHeaders.toObject())
+        toObject: () => intoSandbox(respRecord.toObject())
       },
       body: rawBody,
       decodingStatus,
@@ -928,8 +981,8 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
       fn()
       testResults.push({ name: String(name), passed: true })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      testResults.push({ name: String(name), passed: false, error: msg })
+      // `thrownMessage`, not `instanceof Error`: a script's Error is from the vm realm.
+      testResults.push({ name: String(name), passed: false, error: thrownMessage(err) })
     }
   }
 
@@ -1011,8 +1064,10 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   // Wrap the user script in an IIFE whose parameters shadow every forbidden
   // global with `undefined`. This works even for non-configurable globals like
   // `Promise` and `SharedArrayBuffer` that `delete` can't remove.
+  // The header takes SCRIPT_WRAPPER_HEADER_LINES lines, so line N of the
+  // wrapped script is line N - 1 of the user's; keep both constants in sync.
   const shadowParams = FORBIDDEN_GLOBALS.join(', ')
-  const wrappedScript = `(function(${shadowParams}) { "use strict";\n${script}\n}).call(void 0);`
+  const wrappedScript = `(function(${shadowParams}) { "use strict";\n${script}\n${SCRIPT_WRAPPER_FOOTER}`
 
   try {
     vm.runInContext(wrappedScript, context, {

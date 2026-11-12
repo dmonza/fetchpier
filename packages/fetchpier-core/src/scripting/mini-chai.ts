@@ -48,6 +48,24 @@ function describe(target: unknown): string {
   return stringify(target)
 }
 
+// Realm-independent checks. Script values come from the sandbox's vm realm,
+// whose `RegExp` and `Error` are not the host's, so `instanceof` is false for
+// them. The internal-slot tag and a duck-typed `message` hold in any realm.
+function isRegExp(v: unknown): v is RegExp {
+  return Object.prototype.toString.call(v) === '[object RegExp]'
+}
+
+function errorMessageOf(v: unknown): string | undefined {
+  if (v === null || typeof v !== 'object') return undefined
+  const message = (v as { message?: unknown }).message
+  return typeof message === 'string' ? message : undefined
+}
+
+/** The message of a thrown value: its string `message` when it has one, else `String(value)`. */
+export function thrownMessage(v: unknown): string {
+  return errorMessageOf(v) ?? String(v)
+}
+
 function typeOf(v: unknown): string {
   if (v === null) return 'null'
   if (Array.isArray(v)) return 'array'
@@ -362,8 +380,7 @@ function buildExpect(
     try {
       ok = !!predicate(t)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      fail(`predicate threw while evaluating ${describe(t)}: ${msg}`)
+      fail(`predicate threw while evaluating ${describe(t)}: ${thrownMessage(err)}`)
     }
     check(
       ok,
@@ -435,9 +452,7 @@ function buildExpect(
       check(
         didThrow,
         `expected function to throw`,
-        `expected function to not throw, but it threw ${describe(
-          thrown instanceof Error ? thrown.message : thrown
-        )}`
+        `expected function to not throw, but it threw ${describe(errorMessageOf(thrown) ?? thrown)}`
       )
       return
     }
@@ -447,14 +462,14 @@ function buildExpect(
       return
     }
 
-    const thrownMsg = thrown instanceof Error ? thrown.message : String(thrown)
+    const thrownMsg = thrownMessage(thrown)
     let matches: boolean
     let desc: string
 
     if (typeof matcher === 'string') {
       matches = thrownMsg.includes(matcher)
       desc = `including "${matcher}"`
-    } else if (matcher instanceof RegExp) {
+    } else if (isRegExp(matcher)) {
       matches = matcher.test(thrownMsg)
       desc = `matching ${matcher}`
     } else if (typeof matcher === 'function') {

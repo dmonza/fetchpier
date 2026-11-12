@@ -3,6 +3,7 @@ import { requests, CoreError, describeError } from '@fetchpier/core'
 import { readAppSettings } from './appsettings.ipc'
 import type {
   EnvironmentChanges,
+  EnvWriteNotPersistedWarning,
   HttpRequest,
   ParsedHttpFile,
   ExecutedRequestResult,
@@ -125,6 +126,10 @@ export function registerRequestHandlers(): void {
   ipcMain.handle(
     'http:send',
     async (_event, request: HttpRequest, executionId?: string): Promise<ExecutedRequestResult> => {
+      // The environment the send started with owns it end to end: the renderer
+      // may switch environments while the request is in flight, and the
+      // script's writes, the apply gate and the broadcasts must not follow.
+      const envId = activeEnvironmentId
       const workspaceSettings = await getResolvedWorkspaceSettings()
       const { requestTimeoutSeconds, proxy, hideSecretsInResponses } = readAppSettings()
 
@@ -190,12 +195,9 @@ export function registerRequestHandlers(): void {
       let localOrphanNotice: { environmentId: string; variables: string[] } | undefined
       if (workspacePathForCore) {
         try {
-          if (activeEnvironmentId) {
+          if (envId) {
             try {
-              localOrphanNotice = await normalizeLocalLayer(
-                workspacePathForCore,
-                activeEnvironmentId
-              )
+              localOrphanNotice = await normalizeLocalLayer(workspacePathForCore, envId)
             } catch (err) {
               // Degrades to the layer as it is on disk: the merge treats a
               // stale entry as an orphan, so resolution falls back to shared.
@@ -205,7 +207,7 @@ export function registerRequestHandlers(): void {
           const handle = requireActiveWorkspaceHandle()
           session = await requests.createVariableSession({
             workspace: handle,
-            environmentId: activeEnvironmentId,
+            environmentId: envId,
             basePlainVariables: effectiveRequest.variables ?? {},
             processEnv: process.env,
             getKey: async () => {
@@ -228,7 +230,7 @@ export function registerRequestHandlers(): void {
       let result: ExecutedRequestResult
       try {
         result = await requests.execute(effectiveRequest, {
-          environmentId: activeEnvironmentId,
+          environmentId: envId,
           workspaceSettings,
           proxy,
           signal: abortController.signal,
@@ -281,20 +283,30 @@ export function registerRequestHandlers(): void {
       // (`localvalues.json`), never the shared `config.json` — now through the
       // core's single writer. A write that cannot be persisted (no key) is an
       // advisory on the result, not a log line. Broadcast so an open editor
-      // refreshes its Local column.
-      if (session && activeEnvironmentId) {
-        if (result.environmentChanges) {
+      // refreshes its Local column. A write that throws (the layer could not be
+      // written, the environment is gone) is lost, so every name it carried
+      // comes back as a `WRITE_FAILED` advisory, shown by the response notice.
+      if (session && envId) {
+        const changes = result.environmentChanges
+        if (changes) {
           try {
-            const notPersisted = await session.apply(result.environmentChanges)
+            const notPersisted = await session.apply(changes)
             if (notPersisted.length > 0) {
               result = { ...result, warnings: [...(result.warnings ?? []), ...notPersisted] }
             }
-            broadcastLocalValuesChanged(activeEnvironmentId, localOrphanNotice)
+            broadcastLocalValuesChanged(envId, localOrphanNotice)
           } catch (err) {
             console.error('[request.ipc] failed to persist local env changes:', err)
+            const failed: EnvWriteNotPersistedWarning[] = [
+              ...Object.keys(changes.set),
+              ...changes.removed
+            ].map((name) => ({ code: 'ENV_WRITE_NOT_PERSISTED', name, reason: 'WRITE_FAILED' }))
+            if (failed.length > 0) {
+              result = { ...result, warnings: [...(result.warnings ?? []), ...failed] }
+            }
           }
         } else if (localOrphanNotice) {
-          broadcastLocalValuesChanged(activeEnvironmentId, localOrphanNotice)
+          broadcastLocalValuesChanged(envId, localOrphanNotice)
         }
       }
 

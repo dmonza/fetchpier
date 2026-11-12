@@ -678,10 +678,13 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 /**
  * Extracts the request UUID from the file-level `# @id <uuid>` metadata comment,
  * if present anywhere in the top-level comment block before the first request line.
+ * Blank lines inside that block are skipped, as the block parser's metadata loop
+ * does; the scan stops at the first non-blank line that is not a comment.
  */
 function extractRequestId(content: string): string | undefined {
   for (const line of content.split('\n')) {
     const trimmed = line.trim()
+    if (trimmed === '') continue
     if (!trimmed.startsWith('#') && !trimmed.startsWith('//')) break
     const match = trimmed.match(/^#\s*@id\s+(\S+)/)
     if (match && UUID_REGEX.test(match[1])) return match[1]

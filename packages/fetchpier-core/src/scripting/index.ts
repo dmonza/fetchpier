@@ -3,7 +3,12 @@
 // no filesystem: pure CPU-bound execution. Threat model: SECURITY.md, "Scope".
 export { executePreRequest, executePostResponse } from './script-runner'
 export type { ScriptContext, ScriptRunOutcome } from './script-runner'
-export { runFpScript, freezeHostSurface } from './fp-sandbox'
+export {
+  runFpScript,
+  freezeHostSurface,
+  SCRIPT_WRAPPER_HEADER_LINES,
+  SCRIPT_WRAPPER_FOOTER
+} from './fp-sandbox'
 export type { FpSandboxInput, FpSandboxOutcome, ScriptPhase } from './fp-sandbox'
 export { parseXmlSafe, MAX_XML_BYTES } from './xml-parser'
 export type { Xml2JsonOptions } from './xml-parser'

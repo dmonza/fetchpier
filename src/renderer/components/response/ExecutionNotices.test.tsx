@@ -95,6 +95,21 @@ describe('ExecutionNotices', () => {
     )
     expect(el.textContent).toContain('response.notices.envWriteKeyMismatch:{"name":"token"}')
   })
+
+  it('explains a script write whose save failed, one line per name', () => {
+    const el = render(
+      <ExecutionNotices
+        warnings={[
+          { code: 'ENV_WRITE_NOT_PERSISTED', name: 'token', reason: 'WRITE_FAILED' },
+          { code: 'ENV_WRITE_NOT_PERSISTED', name: 'old', reason: 'WRITE_FAILED' }
+        ]}
+      />
+    )
+    expect(el.querySelectorAll('li')).toHaveLength(2)
+    expect(el.textContent).toContain('response.notices.envWriteFailed:{"name":"token"}')
+    expect(el.textContent).toContain('response.notices.envWriteFailed:{"name":"old"}')
+    expect(el.textContent).not.toContain('envWriteKeyMismatch')
+  })
 })
 
 describe('ResponseSize', () => {

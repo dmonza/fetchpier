@@ -219,7 +219,9 @@ async function resolvePassphrase(
  * Resolve the TLS material for an outgoing request URL: composed CA bundle plus
  * the best-matching client certificate (loaded into Buffers) and its resolved
  * passphrase. Workspace content is read from `ctx.workspacePath`; app-global
- * content comes from `ctx.appGlobal` (desktop only).
+ * content comes from `ctx.appGlobal` (desktop only). A non-https URL gets the
+ * CA bundle only (for an https proxy in front of it); one that cannot be
+ * parsed gets nothing.
  */
 export async function resolveRequestTls(
   rawUrl: string,
@@ -232,8 +234,6 @@ export async function resolveRequestTls(
   } catch {
     return {}
   }
-  if (url.protocol !== 'https:') return {}
-
   const [workspaceScope, appScope] = [
     await loadWorkspaceScope(ctx.workspacePath),
     loadAppScope(ctx)
@@ -242,6 +242,14 @@ export async function resolveRequestTls(
   const runScope = normaliseTls(ctx.run?.settings)
   const material: ResolvedTlsMaterial = {
     ca: await buildCaBundle(workspaceScope, appScope, runScope, ctx)
+  }
+  // The CAs do not depend on the target: a plain-http target reached through an
+  // https proxy still needs them to trust the proxy. A client certificate
+  // identifies the client to an https server, so it is chosen for https only.
+  // With no CA of its own the bundle is just Node's roots: an explicit `ca` would
+  // then only drop the default store (NODE_EXTRA_CA_CERTS) the proxy relied on.
+  if (url.protocol !== 'https:') {
+    return (material.ca?.length ?? 0) > tls.rootCertificates.length ? material : {}
   }
 
   const match = matchClientCertificate(

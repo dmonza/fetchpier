@@ -109,9 +109,13 @@ export async function readTree(dirPath: string): Promise<WorkspaceTree[]> {
 
 // Matches `# @id <uuid-or-similar>` on its own line. Loose on UUID shape so any
 // stable identifier Fetchpier writes is accepted.
-const ID_LINE_REGEX = /^\s*#\s*@id\s+([0-9a-fA-F][0-9a-fA-F-]{7,})\s*$/m
+const ID_LINE_REGEX = /^\s*#\s*@id\s+([0-9a-fA-F][0-9a-fA-F-]{7,})\s*$/
 
-/** Read just the leading bytes of a `.http` file to extract its `# @id`. */
+/**
+ * Read just the leading bytes of a `.http` file to extract its `# @id`. Same
+ * region as the parser's reader: the leading comment block, blank lines skipped,
+ * up to the first non-blank line that is not a comment (the request line).
+ */
 async function extractRequestId(filePath: string): Promise<string | null> {
   let fh: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
@@ -119,8 +123,14 @@ async function extractRequestId(filePath: string): Promise<string | null> {
     const buf = Buffer.alloc(1024)
     const { bytesRead } = await fh.read(buf, 0, 1024, 0)
     const chunk = buf.subarray(0, bytesRead).toString('utf-8')
-    const match = ID_LINE_REGEX.exec(chunk)
-    return match ? match[1] : null
+    for (const line of chunk.split(/\r?\n|\r/)) {
+      const trimmed = line.trim()
+      if (trimmed === '') continue
+      if (!trimmed.startsWith('#') && !trimmed.startsWith('//')) break
+      const match = ID_LINE_REGEX.exec(trimmed)
+      if (match) return match[1]
+    }
+    return null
   } catch {
     return null
   } finally {

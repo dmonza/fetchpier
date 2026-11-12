@@ -177,6 +177,8 @@ describe('execute() — secret masking of the response', () => {
     expect(result.response?.body).toBe(JSON.stringify({ token: '{secret:token}' }))
     expect(result.response?.headers['x-session']).toBe('{secret:token}')
     expect(JSON.stringify(result.response)).not.toContain(FRESH)
+    // The per-value header list is for the script only, never returned (ENG-02).
+    expect(result.response).not.toHaveProperty('headerList')
     // The script read the real value, and the session still gets it to apply.
     expect(result.environmentChanges?.set.token).toBe(FRESH)
   })
@@ -210,6 +212,7 @@ describe('execute() — secret masking of the response', () => {
       { ...base, secretNames: ['other'] }
     )
     expect(result.response?.body).toContain(FRESH)
+    expect(result.response).not.toHaveProperty('headerList')
     expect(result.unmaskedResponse).toBeUndefined()
   })
 

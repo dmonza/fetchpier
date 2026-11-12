@@ -55,6 +55,44 @@ describe('execute() — TLS resolver error contract (REQ-0089)', () => {
     expect(result.response?.status).toBe(200)
   })
 
+  // ENG-09: the client sends a scheme-less URL over https, so TLS resolution,
+  // proxy routing and the snapshot must see that same https URL.
+  it.each([
+    ['a literal host and port', 'localhost:1/health', {}],
+    ['a variable base', '{{host}}/health', { host: 'localhost:1' }]
+  ])(
+    'gives the https URL actually used to TLS resolution and proxy routing for %s',
+    async (_label, url, variables) => {
+      const resolveTls = vi.fn().mockResolvedValue(undefined)
+      const proxy = vi.fn().mockReturnValue(undefined)
+      const result = await execute(
+        { method: 'GET', url, headers: {}, variables },
+        {
+          environmentId: null,
+          workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+          resolveTls,
+          proxy
+        }
+      )
+      // Nothing listens on port 1: the send fails, after routing was decided.
+      expect(result.error).toBeDefined()
+      expect(resolveTls.mock.calls[0][0]).toBe('https://localhost:1/health')
+      expect(proxy).toHaveBeenCalledWith('https://localhost:1/health')
+    }
+  )
+
+  it('keeps an explicit http scheme for TLS resolution and the snapshot', async () => {
+    await server.forGet('/ok').thenReply(200, 'ok')
+    const resolveTls = vi.fn().mockResolvedValue(undefined)
+    const result = await execute(getReq(), {
+      environmentId: null,
+      workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+      resolveTls
+    })
+    expect(resolveTls.mock.calls[0][0]).toBe(`${server.url}/ok`)
+    expect(result.request?.url).toBe(`${server.url}/ok`)
+  })
+
   it('never leaks the resolved passphrase plaintext into the result (CA-10)', async () => {
     await server.forGet('/ok').thenReply(200, 'ok')
     const PASSPHRASE = 'TOP-SECRET-PASSPHRASE-9f3a'

@@ -168,13 +168,49 @@ describe('sendRequest', () => {
     expect(mockRequest).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }))
   })
 
-  it('throws "Request cancelled" when the request is aborted', async () => {
+  // ENG-01 / ENG-03: "cancelled" is a fact of the signal, not of the error type.
+  it('does not report an abort-typed error as a cancellation when nothing aborted', async () => {
     const { errors } = await import('undici')
     mockRequest.mockRejectedValueOnce(new errors.RequestAbortedError())
 
-    await expect(
-      sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
-    ).rejects.toThrow('Request cancelled')
+    const failure = sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
+    await expect(failure).rejects.toThrow('Request aborted')
+    await expect(failure).rejects.not.toThrow('Request cancelled')
+  })
+
+  it.each([
+    [407, 'Proxy refused the tunnel (407 Proxy Authentication Required)'],
+    [403, 'Proxy refused the tunnel (403 Forbidden)'],
+    [502, 'Proxy refused the tunnel (502 Bad Gateway)'],
+    [599, 'Proxy refused the tunnel (599)']
+  ])('names a proxy that answers the tunnel with %d', async (status, message) => {
+    const { errors } = await import('undici')
+    const refusal = new errors.RequestAbortedError(
+      `Proxy response (${status}) !== 200 when HTTP Tunneling`
+    )
+    mockRequest.mockRejectedValueOnce(refusal)
+
+    const failure = sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
+    await expect(failure).rejects.toThrow(message)
+    await expect(failure).rejects.toMatchObject({ cause: refusal })
+  })
+
+  it.each([
+    ['the runtime abort error', () => new DOMException('This operation was aborted', 'AbortError')],
+    ['a proxy refusal that raced the abort', () => new Error('Proxy response (407) !== 200')],
+    ['any other failure', () => new Error('socket hang up')]
+  ])('reports a user abort as "Request cancelled" whatever undici raised (%s)', async (_, make) => {
+    const controller = new AbortController()
+    controller.abort()
+    const raised = make()
+    mockRequest.mockRejectedValueOnce(raised)
+
+    const failure = sendRequest(
+      { method: 'GET', url: 'https://example.com', headers: {} },
+      { signal: controller.signal }
+    )
+    await expect(failure).rejects.toThrow(/^Request cancelled$/)
+    await expect(failure).rejects.toMatchObject({ cause: raised })
   })
 
   it('re-throws generic errors from undici', async () => {
@@ -351,6 +387,78 @@ describe('sendRequest', () => {
     expect(callArg.body).toBeInstanceOf(Readable)
   })
 
+  // ENG-04: a streamed body has no length undici can read, so the client states
+  // it; otherwise HTTP/1.1 frames it chunked.
+  it.each([
+    ['a string body', { body: '{"q":"é"}' }, {}, 10],
+    ['a Buffer body', {}, { binaryBody: Buffer.from([1, 2, 3]) }, 3]
+  ])('declares the byte length of %s it streams', async (_, req, opts, length) => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    await sendRequestWithRaw(
+      { method: 'DELETE', url: 'https://example.com/u', headers: {}, ...req },
+      opts
+    )
+    const callArg = mockRequest.mock.calls[0][0] as { headers: Record<string, string> }
+    expect(callArg.headers['Content-Length']).toBe(String(length))
+  })
+
+  it('declares the length in the ordered header list form too', async () => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    await sendRequestWithRaw({
+      method: 'GET',
+      url: 'https://example.com/_search',
+      headers: { Accept: 'application/json' },
+      headerList: [{ name: 'Accept', value: 'application/json' }],
+      body: '{"q":1}'
+    })
+    const callArg = mockRequest.mock.calls[0][0] as { headers: string[] }
+    expect(callArg.headers).toEqual([
+      'Accept',
+      'application/json',
+      'User-Agent',
+      expect.stringMatching(/Fetchpier/),
+      'Content-Length',
+      '7'
+    ])
+  })
+
+  it.each([
+    ['record', { headers: { 'content-length': '7' } }],
+    [
+      'header list',
+      {
+        headers: { 'CONTENT-LENGTH': '7' },
+        headerList: [{ name: 'CONTENT-LENGTH', value: '7' }]
+      }
+    ]
+  ])('keeps a Content-Length the user set (%s form)', async (_, req) => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    await sendRequestWithRaw({
+      method: 'DELETE',
+      url: 'https://example.com/u',
+      body: 'abcdefg',
+      ...req
+    })
+    const headers = (mockRequest.mock.calls[0][0] as { headers: unknown }).headers
+    const lengths = (
+      Array.isArray(headers)
+        ? (headers as string[]).filter((_v, i) => i % 2 === 0)
+        : Object.keys(headers as object)
+    ).filter((name) => name.toLowerCase() === 'content-length')
+    expect(lengths).toHaveLength(1)
+    expect(JSON.stringify(headers)).toContain('"7"')
+  })
+
+  it.each([
+    ['POST with a body', { method: 'POST', body: 'hello' }],
+    ['DELETE without a body', { method: 'DELETE', body: '' }]
+  ])('adds no Content-Length for %s (the transport frames it)', async (_, req) => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
+    await sendRequestWithRaw({ url: 'https://example.com/u', headers: {}, ...req })
+    const callArg = mockRequest.mock.calls[0][0] as { headers: Record<string, string> }
+    expect(callArg.headers['Content-Length']).toBeUndefined()
+  })
+
   it('passes null when binaryBody is an empty Buffer', async () => {
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
     await sendRequestWithRaw(
@@ -440,6 +548,33 @@ describe('sendRequestWithRaw — Set-Cookie capture', () => {
     expect(rawSetCookie).toEqual([setCookieA, setCookieB])
     // headers field still joins by ", " for legacy display.
     expect(response.headers['set-cookie']).toBe(`${setCookieA}, ${setCookieB}`)
+  })
+
+  it('lists every response header value in order, one entry per value (ENG-02)', async () => {
+    const setCookieA = 'session=abc; Path=/; HttpOnly'
+    const setCookieB = 'csrf=xyz; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT'
+    mockRequest.mockResolvedValueOnce(
+      makeResponse(
+        200,
+        {
+          'content-type': 'text/plain',
+          'set-cookie': [setCookieA, setCookieB],
+          'x-trace': ['1', '2'],
+          'x-empty': undefined as unknown as string
+        },
+        'ok'
+      )
+    )
+    const { response } = await sendRequestWithRaw({ method: 'GET', url: 'https://x/', headers: {} })
+    expect(response.headerList).toEqual([
+      { name: 'content-type', value: 'text/plain' },
+      { name: 'set-cookie', value: setCookieA },
+      { name: 'set-cookie', value: setCookieB },
+      { name: 'x-trace', value: '1' },
+      { name: 'x-trace', value: '2' }
+    ])
+    // The joined record is unchanged.
+    expect(response.headers['x-trace']).toBe('1, 2')
   })
 
   it('returns an empty array when no Set-Cookie was received', async () => {
@@ -863,6 +998,17 @@ describe('sendRequestWithRaw — CLI readiness', () => {
     await expect(
       sendRequest({ method: 'GET', url: 'https://x/', headers: {} }, { signal: controller.signal })
     ).rejects.toThrow('timed out after 30 s')
+  })
+
+  it('keeps the timeout message when undici rejects with the abort reason itself', async () => {
+    // What undici really raises on an aborted signal: `signal.reason`.
+    const { timeoutAbortReason } = await import('./client')
+    const controller = new AbortController()
+    controller.abort(timeoutAbortReason(1500))
+    mockRequest.mockRejectedValueOnce(controller.signal.reason)
+    await expect(
+      sendRequest({ method: 'GET', url: 'https://x/', headers: {} }, { signal: controller.signal })
+    ).rejects.toThrow('timed out after 1.5 s')
   })
 
   it('a plain abort is still a cancellation', async () => {

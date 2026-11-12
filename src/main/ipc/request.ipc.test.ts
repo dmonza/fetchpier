@@ -12,12 +12,24 @@ type Handler = (event: unknown, ...args: unknown[]) => unknown
 
 const ipcHandlers = new Map<string, Handler>()
 
+// Every main → renderer event the handler broadcasts, as `[channel, payload]`.
+const sentEvents = vi.hoisted(() => [] as Array<[string, unknown]>)
+
 vi.mock('electron', () => ({
   app: { getVersion: () => '9.8.7' },
   ipcMain: {
     handle: (channel: string, fn: Handler) => ipcHandlers.set(channel, fn)
   },
-  BrowserWindow: { getAllWindows: () => [] }
+  BrowserWindow: {
+    getAllWindows: () => [
+      {
+        isDestroyed: () => false,
+        webContents: {
+          send: (channel: string, payload: unknown) => sentEvents.push([channel, payload])
+        }
+      }
+    ]
+  }
 }))
 
 const appSettingsState = vi.hoisted(() => ({ hideSecretsInResponses: true }))
@@ -94,7 +106,7 @@ const createVariableSession = vi.hoisted(() =>
         resolvePassphraseSecrets: async () => ({})
       }),
       apply: async (changes: unknown) => {
-        sessionState.apply(changes)
+        await sessionState.apply(changes)
         return sessionState.applyWarnings
       }
     }
@@ -150,7 +162,8 @@ beforeEach(async () => {
   ipcHandlers.clear()
   sessionState.secretNames = []
   sessionState.applyWarnings = []
-  sessionState.apply.mockClear()
+  sessionState.apply.mockReset()
+  sentEvents.length = 0
   resolveReferences.mockReset()
   resolveReferences.mockImplementation(async (vars: Record<string, string>) => vars)
   executeMock.mockClear()
@@ -296,6 +309,123 @@ describe('http:send — core-governed variables (CLI readiness)', () => {
       name: 'token',
       reason: 'KEY_MISSING'
     })
+  })
+})
+
+describe('http:send — script environment writes', () => {
+  function resultWithChanges(changes: { set: Record<string, string>; removed: string[] }) {
+    return {
+      response: { status: 200, statusText: 'OK', headers: {}, body: '', durationMs: 1 },
+      scriptResults: [],
+      environmentChanges: changes,
+      resolvedSettings: {},
+      cookies: { sent: [], received: [] }
+    } as never
+  }
+
+  function localValuesEvents(): unknown[] {
+    return sentEvents.filter(([channel]) => channel === 'localValues:changed').map(([, p]) => p)
+  }
+
+  // ENG-10: the environment the send started with owns its writes, whatever the
+  // renderer switches to while the request is in flight.
+  it.each([
+    ['No environment', null],
+    ['another environment', 'env-B']
+  ])(
+    'a switch to %s mid-send keeps the writes on the send’s environment',
+    async (_label, switchTo) => {
+      mod.setActiveEnvironmentForCookies('env-A')
+      const changes = { set: { token: 'new-token' }, removed: [] }
+      let release!: () => void
+      executeMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve(resultWithChanges(changes))
+          })
+      )
+
+      const pending = ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-switch') as Promise<{
+        warnings?: unknown[]
+      }>
+      await vi.waitFor(() => expect(executeMock).toHaveBeenCalledTimes(1))
+      mod.setActiveEnvironmentForCookies(switchTo)
+      release()
+      await pending
+
+      expect(sessionState.options).toMatchObject({ environmentId: 'env-A' })
+      expect(executeMock.mock.calls[0][1]).toMatchObject({ environmentId: 'env-A' })
+      expect(sessionState.apply).toHaveBeenCalledWith(changes)
+      expect(localValuesEvents()).toEqual([{ environmentId: 'env-A', orphanNotice: undefined }])
+    }
+  )
+
+  it('a send started with no environment does not apply, even after a switch to one', async () => {
+    mod.setActiveEnvironmentForCookies(null)
+    let release!: () => void
+    executeMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(resultWithChanges({ set: { token: 't' }, removed: [] }))
+        })
+    )
+    const pending = ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-none')
+    await vi.waitFor(() => expect(executeMock).toHaveBeenCalledTimes(1))
+    mod.setActiveEnvironmentForCookies('env-B')
+    release()
+    await pending
+
+    expect(sessionState.apply).not.toHaveBeenCalled()
+    expect(localValuesEvents()).toEqual([])
+  })
+
+  // ENG-11: a write that throws is a notice for every name it carried, never
+  // just a log line.
+  it('a rejected apply reports every set and removed name as WRITE_FAILED', async () => {
+    mod.setActiveEnvironmentForCookies('env-1')
+    sessionState.secretNames = ['token']
+    sessionState.apply.mockRejectedValueOnce(
+      Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })
+    )
+    executeMock.mockResolvedValueOnce(
+      resultWithChanges({ set: { token: 'plaintext-jwt', note: 'n' }, removed: ['old'] })
+    )
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const result = (await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-fail')) as {
+      warnings?: unknown[]
+      error?: string
+    }
+
+    expect(result.error).toBeUndefined()
+    expect(result.warnings).toEqual([
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'token', reason: 'WRITE_FAILED' },
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'note', reason: 'WRITE_FAILED' },
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'old', reason: 'WRITE_FAILED' }
+    ])
+    // Nothing was saved, so no editor is told to refresh; the value never leaks.
+    expect(localValuesEvents()).toEqual([])
+    expect(JSON.stringify(result)).not.toContain('plaintext-jwt')
+    errorSpy.mockRestore()
+  })
+
+  it('a rejected apply keeps the advisories the send already carried', async () => {
+    mod.setActiveEnvironmentForCookies('env-1')
+    sessionState.apply.mockRejectedValueOnce(new Error('ENVIRONMENT_NOT_FOUND'))
+    executeMock.mockResolvedValueOnce({
+      ...(resultWithChanges({ set: {}, removed: ['gone'] }) as object),
+      warnings: [{ code: 'HTTP2_DOWNGRADED' }]
+    } as never)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const result = (await ipcHandlers.get('http:send')!({}, BASE_REQUEST, 'exec-fail2')) as {
+      warnings?: unknown[]
+    }
+
+    expect(result.warnings).toEqual([
+      { code: 'HTTP2_DOWNGRADED' },
+      { code: 'ENV_WRITE_NOT_PERSISTED', name: 'gone', reason: 'WRITE_FAILED' }
+    ])
   })
 })
 

@@ -198,11 +198,37 @@ describe('resolveRequestTls — app-global passphrase is verbatim (CA-05)', () =
 })
 
 describe('resolveRequestTls — CA bundle and matching', () => {
-  it('returns {} for a non-https URL', async () => {
-    const ws = await makeWorkspace({ caCertificates: [], clientCertificates: [pfxCert('x')] })
+  // ENG-08: an https proxy in front of an http target still needs the CAs.
+  it('returns only the CA bundle for a non-https URL, never a client certificate', async () => {
+    const resolvePassphraseSecrets = vi.fn().mockResolvedValue({})
+    const ws = await makeWorkspace(
+      {
+        caCertificates: [{ id: 'ca-1', file: 'corp.pem' }],
+        clientCertificates: [pfxCert('{{cert_pass}}')]
+      },
+      { 'corp.pem': 'CORP-CA', 'client-1234.pfx': 'PFXBYTES' }
+    )
+    const material = await resolveRequestTls(
+      'http://api.example.com/x',
+      {},
+      { workspacePath: ws, resolvePassphraseSecrets }
+    )
+    expect(Object.keys(material)).toEqual(['ca'])
+    expect(material.ca?.length).toBe(tlsMod.rootCertificates.length + 1)
+    expect(material.ca?.some((b) => b.toString() === 'CORP-CA')).toBe(true)
+    expect(resolvePassphraseSecrets).not.toHaveBeenCalled()
+  })
+
+  it('returns {} for a non-https URL when no CA is configured, so Node keeps its default trust store', async () => {
+    const ws = await makeWorkspace({ caCertificates: [], clientCertificates: [] })
     expect(await resolveRequestTls('http://api.example.com/x', {}, { workspacePath: ws })).toEqual(
       {}
     )
+  })
+
+  it('returns {} for a URL that cannot be parsed', async () => {
+    const ws = await makeWorkspace({ caCertificates: [], clientCertificates: [] })
+    expect(await resolveRequestTls('not a url', {}, { workspacePath: ws })).toEqual({})
   })
 
   it('applies the workspace CA bundle on top of Node roots', async () => {

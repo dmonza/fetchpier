@@ -148,6 +148,65 @@ describe('URL assembly — adapter parity (REQ-0081 CA-01/CA-02)', () => {
     const reqs = await endpoint.getSeenRequests()
     expect(reqs[0].path).toBe('/list?a=1')
   })
+
+  // ENG-23: the script reads and edits the full template URL on both surfaces,
+  // and a URL it changed is split again, so both shapes put the same URL on the wire.
+  describe('pre-request script and the URL', () => {
+    const authored = '{{b}}/users?page=2&q=a%20b'
+    const shapes = (path: string, preRequestScript: string): HttpRequest[] => {
+      const variables = { b: `${server.url}${path}` }
+      const cli: HttpRequest = {
+        ...parseHttpFile(`GET ${authored}\n`).requests[0],
+        variables,
+        preRequestScript
+      }
+      const { baseUrl, params } = splitUrlAndParams(authored)
+      const desktop: HttpRequest = {
+        method: 'GET',
+        url: baseUrl,
+        // A disabled row never reaches the script nor the wire.
+        params: [...params, { id: 'off', key: 'off', value: '1', enabled: false }],
+        headers: {},
+        variables,
+        preRequestScript
+      }
+      return [cli, desktop]
+    }
+
+    it('reads the same template URL, query included, in both shapes; an untouched URL is sent as before', async () => {
+      const endpoint = await server.forGet('/read/users').thenReply(200, 'ok')
+      for (const req of shapes('/read', 'fp.environment.set("seen", fp.request.url)')) {
+        const postResponseScript = 'fp.environment.set("post", fp.request.url)'
+        const res = await execute({ ...req, postResponseScript }, opts())
+        expect(res.environmentChanges?.set).toMatchObject({ seen: authored, post: authored })
+      }
+      const seen = await endpoint.getSeenRequests()
+      expect(seen.map((r) => r.path)).toEqual([
+        '/read/users?page=2&q=a%20b',
+        '/read/users?page=2&q=a%20b'
+      ])
+    })
+
+    it('sends a query the script appended after the existing one, identically', async () => {
+      const endpoint = await server.forGet('/append/users').thenReply(200, 'ok')
+      for (const req of shapes('/append', 'fp.request.url = fp.request.url + "&extra={{x}}"')) {
+        await execute({ ...req, variables: { ...req.variables, x: 'p&q' } }, opts())
+      }
+      const seen = await endpoint.getSeenRequests()
+      const expected = '/append/users?page=2&q=a%20b&extra=p%26q'
+      expect(seen.map((r) => r.path)).toEqual([expected, expected])
+    })
+
+    it('replaces the query with the one a script wrote, split and encoded, identically', async () => {
+      const endpoint = await server.forGet('/replace/other').thenReply(200, 'ok')
+      for (const req of shapes('/replace', 'fp.request.url = "{{b}}/other?x=a b"')) {
+        const res = await execute(req, opts())
+        expect(res.error).toBeUndefined()
+      }
+      const seen = await endpoint.getSeenRequests()
+      expect(seen.map((r) => r.path)).toEqual(['/replace/other?x=a%20b', '/replace/other?x=a%20b'])
+    })
+  })
 })
 
 /**

@@ -112,22 +112,85 @@ describe('runFpScript — pre-request', () => {
       expect(outcome.request.headerList!.find((h) => h.name === 'X-Trace')?.value).toBe('1')
     })
 
-    it('exposes duplicate response headers via getAll in post-response', () => {
+    // ENG-02: the response store reads the ordered `headerList` (one entry per
+    // value), so repeated names — `Set-Cookie` included — stay separate.
+    it('exposes duplicate response headers via getAll and count in post-response', () => {
+      const session = 'session=abc; Path=/; HttpOnly'
+      const csrf = 'csrf=xyz; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT'
       const outcome = runFpScript({
         phase: 'post-response',
-        script: `fp.environment.set("cookies", String(fp.response.headers.getAll("Set-Cookie").length));`,
+        script: `
+          const cookies = fp.response.headers.getAll("set-cookie");
+          fp.environment.set("cookies", String(cookies.length));
+          fp.environment.set("csrf", cookies.find((c) => c.startsWith("csrf=")));
+          fp.environment.set("trace", fp.response.headers.getAll("X-Trace").join("|"));
+          fp.environment.set("n", String(fp.response.headers.count()));
+        `,
         request: baseRequest(),
         response: {
           ...baseResponse,
-          // The client joins duplicate response headers (except Set-Cookie) into
-          // one record value; this asserts the store still exposes getAll.
-          headers: { 'Set-Cookie': 'a=1' }
+          headers: { 'set-cookie': `${session}, ${csrf}`, 'x-trace': '1, 2' },
+          headerList: [
+            { name: 'set-cookie', value: session },
+            { name: 'set-cookie', value: csrf },
+            { name: 'x-trace', value: '1' },
+            { name: 'x-trace', value: '2' }
+          ]
         },
         environment: {},
         variables: {}
       })
       expect(outcome.result.success).toBe(true)
-      expect(outcome.result.environmentChanges?.set.cookies).toBe('1')
+      expect(outcome.result.environmentChanges?.set).toMatchObject({
+        cookies: '2',
+        csrf,
+        trace: '1|2',
+        n: '4'
+      })
+    })
+
+    // ENG-02 kept get/toObject on the joined record: a repeated response header
+    // reads the same in a live run, on replay and in the response panel.
+    it('keeps get and toObject on the joined value of a repeated response header', () => {
+      const outcome = runFpScript({
+        phase: 'post-response',
+        script: `
+          fp.environment.set("cc", fp.response.headers.get("Cache-Control"));
+          fp.environment.set("trace", fp.response.headers.toObject()["x-trace"]);
+        `,
+        request: baseRequest(),
+        response: {
+          ...baseResponse,
+          headers: { 'cache-control': 'no-cache, no-store', 'x-trace': '1, 2' },
+          headerList: [
+            { name: 'cache-control', value: 'no-cache' },
+            { name: 'cache-control', value: 'no-store' },
+            { name: 'x-trace', value: '1' },
+            { name: 'x-trace', value: '2' }
+          ]
+        },
+        environment: {},
+        variables: {}
+      })
+      expect(outcome.result.success).toBe(true)
+      expect(outcome.result.environmentChanges?.set).toMatchObject({
+        cc: 'no-cache, no-store',
+        trace: '1, 2'
+      })
+    })
+
+    it('falls back to the header record when the response has no headerList', () => {
+      const outcome = runFpScript({
+        phase: 'post-response',
+        script: `fp.environment.set("trace", fp.response.headers.getAll("X-Trace").join("|"));`,
+        request: baseRequest(),
+        // A response rebuilt from history carries only the joined record.
+        response: { ...baseResponse, headers: { 'X-Trace': '1, 2' } },
+        environment: {},
+        variables: {}
+      })
+      expect(outcome.result.success).toBe(true)
+      expect(outcome.result.environmentChanges?.set.trace).toBe('1, 2')
     })
   })
 
@@ -306,6 +369,84 @@ describe('runFpScript — post-response', () => {
     })
     expect(outcome.result.success).toBe(false)
     expect(outcome.result.error?.message).toMatch(/pre-request/)
+  })
+})
+
+describe('fp.test / fp.expect with values from the script realm', () => {
+  // The script runs in a vm realm: its RegExp and Error are not the host's,
+  // so these go through runFpScript rather than createExpect alone.
+  function testResults(script: string) {
+    return runFpScript({
+      phase: 'post-response',
+      script,
+      request: baseRequest(),
+      response: baseResponse,
+      environment: {},
+      variables: {}
+    }).result.testResults
+  }
+
+  it('throw(RegExp) matches the message of a script Error, literal or constructed', () => {
+    expect(
+      testResults(`
+        fp.test('literal', () => fp.expect(() => { throw new Error('boom') }).to.throw(/boom/))
+        fp.test('anchored', () => fp.expect(() => { throw new Error('boom') }).to.throw(/^boom$/))
+        fp.test('constructed', () => fp.expect(() => { throw new Error('boom') }).to.throw(new RegExp('oo')))
+        fp.test('thrown string', () => fp.expect(() => { throw 'oops' }).to.throw(/^oops$/))
+      `)
+    ).toEqual([
+      { name: 'literal', passed: true },
+      { name: 'anchored', passed: true },
+      { name: 'constructed', passed: true },
+      { name: 'thrown string', passed: true }
+    ])
+  })
+
+  it('throw(RegExp) fails naming the pattern and the message when it does not match', () => {
+    const [r] = testResults(
+      `fp.test('t', () => fp.expect(() => { throw new Error('boom') }).to.throw(/zzz/))`
+    )
+    expect(r.passed).toBe(false)
+    expect(r.error).toBe('expected function to throw an error matching /zzz/, got "boom"')
+  })
+
+  it('not.throw() reports the message of the script Error', () => {
+    const [r] = testResults(
+      `fp.test('t', () => fp.expect(() => { throw new Error('boom') }).to.not.throw())`
+    )
+    expect(r.error).toBe('expected function to not throw, but it threw "boom"')
+  })
+
+  it('a matcher that is neither string, RegExp nor class is still rejected', () => {
+    const [r] = testResults(
+      `fp.test('t', () => fp.expect(() => { throw new Error('boom') }).to.throw(5))`
+    )
+    expect(r).toEqual({ name: 't', passed: false, error: 'unsupported matcher 5' })
+  })
+
+  it('a script Error thrown inside fp.test is recorded by its message', () => {
+    expect(
+      testResults(`
+        fp.test('error', () => { throw new Error('x') })
+        fp.test('type error', () => { null.y })
+        fp.test('string', () => { throw 'plain' })
+      `)
+    ).toEqual([
+      { name: 'error', passed: false, error: 'x' },
+      {
+        name: 'type error',
+        passed: false,
+        error: "Cannot read properties of null (reading 'y')"
+      },
+      { name: 'string', passed: false, error: 'plain' }
+    ])
+  })
+
+  it('satisfy reports the message of a predicate that throws a script Error', () => {
+    const [r] = testResults(
+      `fp.test('t', () => fp.expect(1).to.satisfy(() => { throw new Error('bad') }))`
+    )
+    expect(r.error).toBe('predicate threw while evaluating 1: bad')
   })
 })
 

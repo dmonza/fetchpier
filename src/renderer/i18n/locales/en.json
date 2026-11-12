@@ -415,6 +415,7 @@
       "contentTypeReplaced": "Your Content-Type header was replaced by the multipart one (it carries the boundary).",
       "envWriteKeyMissing": "The script set secret \"{{name}}\", but it could not be saved: the workspace is locked.",
       "envWriteKeyMismatch": "The script set secret \"{{name}}\", but it could not be saved: this environment's local values use a previous workspace key.",
+      "envWriteFailed": "The script changed \"{{name}}\", but the change could not be saved to this environment's local values.",
       "dismiss": "Dismiss"
     },
     "empty": "Send a request to see the response",

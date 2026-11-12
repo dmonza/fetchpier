@@ -30,7 +30,12 @@ import {
   encodeTemplateComponent
 } from '@shared/lib/query-string'
 import { resolveSettings } from './settings-resolver'
-import { sendRequestWithRaw, type ExchangeFacts, type ProxyOption } from './client'
+import {
+  normalizeProtocol,
+  sendRequestWithRaw,
+  type ExchangeFacts,
+  type ProxyOption
+} from './client'
 import { evaluateFindings } from '../findings/evaluate'
 import { resolveFindingsSettings } from '@shared/lib/findings'
 import { openCookieSession, type CookieRejection, type CookieSession } from './cookie-jar'
@@ -202,6 +207,16 @@ function formBodyTemplate(fields: KeyValuePair[]): string {
 }
 
 /**
+ * The URL a script reads (`fp.request.url`): the base plus the enabled structured
+ * params (the desktop shape), literal segments encoded and `{{tokens}}` verbatim
+ * — the URL the `.http` file stores, which the CLI shape already carries flat.
+ */
+function scriptUrl(request: HttpRequest): string {
+  if (request.params === undefined) return request.url
+  return assembleQuery(request.url, request.params, true, encodeTemplateComponent)
+}
+
+/**
  * REQ-0115: turn a capture outcome into the send's non-fatal advisories. A
  * refused cookie is user-visible work that was dropped, so it is reported rather
  * than logged — the whole point of adding validation was to explain it.
@@ -368,8 +383,15 @@ export async function execute(
       liveRequest.formFields?.length && !isStructuredBody(liveRequest)
         ? formBodyTemplate(liveRequest.formFields)
         : undefined
+    // Likewise the URL: the desktop's base + structured params reach the script
+    // as the full template URL the CLI shape reads.
+    const urlTemplate = scriptUrl(liveRequest)
     const pre = executePreRequest(request.preRequestScript, {
-      request: formTemplate !== undefined ? { ...liveRequest, body: formTemplate } : liveRequest,
+      request: {
+        ...liveRequest,
+        url: urlTemplate,
+        ...(formTemplate !== undefined ? { body: formTemplate } : {})
+      },
       environment: scriptEnv,
       variables: scriptVars
     })
@@ -405,10 +427,14 @@ export async function execute(
     // An untouched form template keeps the fields; a body the script changed
     // replaces them and goes out through the raw-form path below.
     const keepFormFields = formTemplate === undefined || pre.request.body === formTemplate
+    // An untouched URL keeps the structured params; one the script changed
+    // replaces them and is split again below, as the CLI shape is.
+    const keepUrl = pre.request.url === urlTemplate
     liveRequest = {
       ...liveRequest,
       method: pre.request.method,
-      url: pre.request.url,
+      url: keepUrl ? liveRequest.url : pre.request.url,
+      params: keepUrl ? liveRequest.params : undefined,
       headers: pre.request.headers,
       headerList: pre.request.headerList,
       body: keepFormFields && formTemplate !== undefined ? liveRequest.body : pre.request.body,
@@ -583,20 +609,27 @@ export async function execute(
   // structured params, contextually percent-encoded when `encodeUrl` is on, raw
   // (assembled by hand, no `new URL()`) when off. Wire vs log differ only with secrets.
   const resolvedSettings = resolveSettings(request.settings, workspaceSettings)
-  const wireUrl = assembleQuery(
+  const assembledWireUrl = assembleQuery(
     wireWithAuth.url,
     wireWithAuth.params ?? [],
     resolvedSettings.encodeUrl
   )
+  // The client sends a scheme-less URL over https: normalize it once here, so TLS
+  // resolution, proxy routing, the cookie lookup and the snapshot all see the URL
+  // actually used. The scheme is decided on the wire side; the log side follows
+  // it (a masked `{secret:…}` base must not be judged scheme-less on its own).
+  const wireUrl = normalizeProtocol(assembledWireUrl)
+  const schemeAdded = wireUrl !== assembledWireUrl.trim()
   // The masked snapshot keeps `{secret:<name>}` masks legible (unencoded) while
   // still encoding the surrounding literal/plain segments — the wire above is
   // unaffected (it encodes the resolved plaintext).
-  const logUrl = assembleQuery(
+  const assembledLogUrl = assembleQuery(
     logWithAuth.url,
     logWithAuth.params ?? [],
     resolvedSettings.encodeUrl,
     maskLog ? encodeQueryComponentPreservingMasks : undefined
   )
+  const logUrl = schemeAdded ? `https://${assembledLogUrl.trim()}` : assembledLogUrl.trim()
   // Cookie snapshots name each hop's URL as it went on the wire, secrets and
   // all. The first hop is reported as the snapshot URL; a later hop (a redirect
   // target) gets the value mask.
@@ -870,7 +903,7 @@ export async function execute(
   // the returned response afterwards.
   if (request.postResponseScript && request.postResponseScript.trim()) {
     const post = executePostResponse(request.postResponseScript, {
-      request: liveRequest,
+      request: { ...liveRequest, url: scriptUrl(liveRequest) },
       response,
       environment: scriptEnv,
       variables: scriptVars
@@ -998,21 +1031,25 @@ export async function execute(
   const remoteIp =
     exchange?.finalVia === 'direct' ? exchange.finalConnection?.remoteAddress : undefined
 
+  // The per-value `headerList` is for the post-response script only: it is
+  // transport-only, so it never leaves the send (nor needs masking).
+  const received = { ...response }
+  delete received.headerList
   const responseMask = secretValueMask(envChanges)
-  const maskedBody = responseMask(response.body)
+  const maskedBody = responseMask(received.body)
   const maskedHeaders = Object.fromEntries(
-    Object.entries(response.headers).map(([k, v]) => [k, responseMask(v)])
+    Object.entries(received.headers).map(([k, v]) => [k, responseMask(v)])
   )
   const responseChanged =
-    maskedBody !== response.body ||
-    Object.entries(maskedHeaders).some(([k, v]) => v !== response.headers[k])
+    maskedBody !== received.body ||
+    Object.entries(maskedHeaders).some(([k, v]) => v !== received.headers[k])
   const maskedResponse = responseChanged
-    ? { ...response, body: maskedBody, headers: maskedHeaders }
-    : response
+    ? { ...received, body: maskedBody, headers: maskedHeaders }
+    : received
 
   return {
     response: maskedResponse,
-    ...(options.revealResponse && responseChanged ? { unmaskedResponse: response } : {}),
+    ...(options.revealResponse && responseChanged ? { unmaskedResponse: received } : {}),
     scriptResults: maskedScripts(scriptResults, envChanges),
     environmentChanges: envChanges,
     resolvedSettings,

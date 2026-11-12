@@ -286,3 +286,125 @@ describe('runFpScript — multipart body surface (REQ-0066)', () => {
     expect(outcome.variables.threw).toBe(true)
   })
 })
+
+describe('runFpScript — the parts collection follows Array semantics', () => {
+  // text a, file b (REF_A), file c (REF_B)
+  function runOnThreeParts(script: string, phase: 'pre-request' | 'post-response' = 'pre-request') {
+    return runFpScript({
+      phase,
+      script,
+      request: multipartRequest([
+        textPart('mp-0', 'a', 'A'),
+        filePart('mp-1', 'b', REF_A, 'beach.jpg'),
+        filePart('mp-2', 'c', REF_B, 'sunset.jpg')
+      ]),
+      response:
+        phase === 'post-response'
+          ? { status: 200, statusText: 'OK', headers: {}, body: '', timingMs: 1, sizeBytes: 0 }
+          : undefined,
+      environment: {},
+      variables: {}
+    })
+  }
+  const sentNames = (outcome: ReturnType<typeof runFpScript>): string[] | undefined =>
+    outcome.result.modifiedRequest?.multipartParts?.map((p) => p.name)
+
+  it('splice(start) removes through the end and returns the removed parts as parts', () => {
+    const outcome = runOnThreeParts(`
+      const removed = fp.request.body.parts.splice(1)
+      fp.variables.set('removed', removed.length)
+      fp.variables.set('refs', [removed[0].fileRef, removed[1].fileRef])
+      fp.variables.set('len', fp.request.body.parts.length)
+    `)
+    expect(outcome.result.success).toBe(true)
+    expect(outcome.variables).toMatchObject({ removed: 2, refs: [REF_A, REF_B], len: 1 })
+    expect(sentNames(outcome)).toEqual(['a'])
+  })
+
+  it('splice with a negative start, with no arguments and with an explicit count of 0', () => {
+    expect(sentNames(runOnThreeParts(`fp.request.body.parts.splice(-1)`))).toEqual(['a', 'b'])
+    const none = runOnThreeParts(`
+      fp.variables.set('r0', fp.request.body.parts.splice().length)
+      fp.variables.set('r1', fp.request.body.parts.splice(0, 0).length)
+    `)
+    expect(none.variables).toMatchObject({ r0: 0, r1: 0 })
+    expect(none.result.modifiedRequest).toBeUndefined()
+  })
+
+  it('pop and shift return the removed part as a part, and undefined on an empty list', () => {
+    const outcome = runOnThreeParts(`
+      const parts = fp.request.body.parts
+      fp.variables.set('popped', parts.pop().fileRef)
+      fp.variables.set('shifted', parts.shift().value)
+      parts.pop()
+      fp.variables.set('emptyPop', parts.pop() === undefined)
+      fp.variables.set('emptyShift', parts.shift() === undefined)
+    `)
+    expect(outcome.result.success).toBe(true)
+    expect(outcome.variables).toMatchObject({
+      popped: REF_B,
+      shifted: 'A',
+      emptyPop: true,
+      emptyShift: true
+    })
+  })
+
+  it('a sort comparator receives parts, so it can compare by fileRef', () => {
+    const outcome = runOnThreeParts(`
+      fp.request.body.parts.sort((x, y) => String(y.fileRef || '').localeCompare(String(x.fileRef || '')))
+    `)
+    expect(outcome.result.success).toBe(true)
+    expect(sentNames(outcome)).toEqual(['c', 'b', 'a'])
+  })
+
+  it('an index write at length appends; one past it is rejected and leaves no hole', () => {
+    const appended = runOnThreeParts(
+      `fp.request.body.parts[3] = { kind: 'text', name: 'd', value: 'D' }`
+    )
+    expect(sentNames(appended)).toEqual(['a', 'b', 'c', 'd'])
+
+    const gap = runOnThreeParts(`
+      try { fp.request.body.parts[5] = { kind: 'text', name: 'x', value: 'y' } }
+      catch (e) { fp.variables.set('msg', e.message) }
+      fp.variables.set('len', fp.request.body.parts.length)
+    `)
+    expect(gap.variables.msg).toMatch(/parts\[5\].*length 3/)
+    expect(gap.variables.len).toBe(3)
+    expect(gap.result.modifiedRequest).toBeUndefined()
+  })
+
+  it('length can truncate but not grow the list', () => {
+    expect(sentNames(runOnThreeParts(`fp.request.body.parts.length = 1`))).toEqual(['a'])
+    const grow = runOnThreeParts(`
+      try { fp.request.body.parts.length = 6 } catch (e) { fp.variables.set('msg', e.message) }
+      fp.request.body.parts.length = 3
+      fp.variables.set('len', fp.request.body.parts.length)
+    `)
+    expect(grow.variables.msg).toMatch(/length.*3/)
+    expect(grow.variables.len).toBe(3)
+    expect(grow.result.modifiedRequest).toBeUndefined()
+  })
+
+  it.each(['pre-request', 'post-response'] as const)(
+    'logging the multipart body, its parts and fp.request works in %s',
+    (phase) => {
+      const outcome = runOnThreeParts(
+        `fp.log(fp.request.body); fp.log(fp.request.body.parts); console.log(fp.request)`,
+        phase
+      )
+      expect(outcome.result.success).toBe(true)
+      const [body, parts, request] = outcome.result.logs.map((l) => l.args[0]) as [
+        { parts: unknown[] },
+        unknown[],
+        { body: { parts: unknown[] } }
+      ]
+      expect(parts).toEqual([
+        { kind: 'text', name: 'a', value: 'A' },
+        { kind: 'file', name: 'b', fileRef: REF_A },
+        { kind: 'file', name: 'c', fileRef: REF_B }
+      ])
+      expect(body.parts).toEqual(parts)
+      expect(request.body.parts).toHaveLength(3)
+    }
+  )
+})

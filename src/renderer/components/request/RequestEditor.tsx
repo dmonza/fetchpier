@@ -34,6 +34,7 @@ import { LoadNotices } from './LoadNotices'
 import { buildHistoryEntry, viewerResponse } from '../../lib/send-result'
 import { buildHttpRequestPayload } from './build-send-payload'
 import { defaultReqTabForMethod } from './req-tab'
+import { labelSendError } from './send-error'
 import type {
   RequestEditorState,
   RequestEditorTab,
@@ -355,13 +356,15 @@ function RequestEditorInner(): React.JSX.Element {
     try {
       const executed = await window.api.request.send(httpRequest, executionId)
       const { scriptResults, error: execError, cookies: cookiesSummary } = executed
+      // A cancel arrives in-band, as the result's error (not through the catch).
+      const wasCancelled = userCancelledRef.current.delete(executionId)
       updateTab(activeTab.id, {
         // The viewer may show the response as received (setting off); the
         // activity log below always records the masked one.
         response: viewerResponse(executed) ?? null,
         isLoading: false,
         scriptResults,
-        error: execError ?? null,
+        error: labelSendError(execError, wasCancelled, t('request.cancelled')),
         inFlightExecutionId: undefined,
         // REQ-0115: feeds the Cookies section. Cleared on every send (below) so a
         // stale chain never reads as belonging to the current response.

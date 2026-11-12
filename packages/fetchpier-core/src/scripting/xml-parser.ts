@@ -58,6 +58,13 @@ function buildParser(opts: Xml2JsonOptions): XMLParser {
     parseTagValue: false,
     trimValues: true,
     processEntities: true,
+    // XML 1.0 §4.1: character references (`&#233;`, `&#xE9;`) must be
+    // replaced. The library decodes them only when `htmlEntities` is set; an
+    // empty map turns that on without adding any HTML named entity (`&nbsp;`
+    // stays literal). The predefined five and the expansion limits are unchanged.
+    // The typings say `boolean`, but the parser takes an object as the named
+    // map (fast-xml-parser 5.x, OrderedObjParser); `true` would decode HTML names.
+    htmlEntities: {} as unknown as boolean,
     allowBooleanAttributes: true,
     ignoreDeclaration: true,
     ignorePiTags: true,

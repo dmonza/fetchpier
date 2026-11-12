@@ -6,6 +6,7 @@ import {
   canonicalDomain,
   defaultPath,
   domainMatch,
+  getPublicSuffix,
   pathMatch
 } from 'tough-cookie'
 import type { Cookie, CookieJar, CookieRejectionReason, CookieSnapshot } from '@shared/types'
@@ -119,6 +120,40 @@ async function writeJar(workspacePath: string, jar: CookieJar): Promise<void> {
   await atomicWriteFile(filePath, JSON.stringify(jar, null, 2))
 }
 
+/**
+ * Every read-modify-write of one jar file runs under this in-process lock, keyed
+ * by (workspace, environment). A send and the Cookies panel share the file: two
+ * unserialized writers each write back the state they read, and the later one
+ * silently undoes the other — a captured session lost, a "Clear all" reverted.
+ *
+ * The lock is not reentrant: locked functions never call each other.
+ */
+const jarLocks = new Map<string, Promise<void>>()
+
+async function withJarLock<T>(
+  workspacePath: string,
+  environmentId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const key = `${workspacePath}\u0000${environmentId}`
+  const run = (jarLocks.get(key) ?? Promise.resolve()).then(fn)
+  const tail = run.then(
+    () => undefined,
+    () => undefined
+  )
+  jarLocks.set(key, tail)
+  try {
+    return await run
+  } finally {
+    if (jarLocks.get(key) === tail) jarLocks.delete(key)
+  }
+}
+
+async function unlinkJar(workspacePath: string, environmentId: string): Promise<void> {
+  const filePath = await cookieFilePath(workspacePath, environmentId)
+  await fs.unlink(filePath).catch(() => undefined)
+}
+
 // ── Expiry ──────────────────────────────────────────────────────────────────
 
 /**
@@ -194,16 +229,18 @@ function isSecureContext(url: URL): boolean {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export async function loadJar(workspacePath: string, environmentId: string): Promise<CookieJar> {
-  const jar = await readJar(workspacePath, environmentId)
-  const cleaned = dropExpired(jar.cookies)
-  if (cleaned.length !== jar.cookies.length) {
-    await writeJar(workspacePath, { environmentId, cookies: cleaned })
-  }
-  return { environmentId, cookies: cleaned }
+  return withJarLock(workspacePath, environmentId, async () => {
+    const jar = await readJar(workspacePath, environmentId)
+    const cleaned = dropExpired(jar.cookies)
+    if (cleaned.length !== jar.cookies.length) {
+      await writeJar(workspacePath, { environmentId, cookies: cleaned })
+    }
+    return { environmentId, cookies: cleaned }
+  })
 }
 
 export async function saveJar(workspacePath: string, jar: CookieJar): Promise<void> {
-  await writeJar(workspacePath, jar)
+  await withJarLock(workspacePath, jar.environmentId, () => writeJar(workspacePath, jar))
 }
 
 export async function list(workspacePath: string, environmentId: string): Promise<Cookie[]> {
@@ -212,8 +249,7 @@ export async function list(workspacePath: string, environmentId: string): Promis
 }
 
 export async function clear(workspacePath: string, environmentId: string): Promise<void> {
-  const filePath = await cookieFilePath(workspacePath, environmentId)
-  await fs.unlink(filePath).catch(() => undefined)
+  await withJarLock(workspacePath, environmentId, () => unlinkJar(workspacePath, environmentId))
 }
 
 export async function deleteJar(workspacePath: string, environmentId: string): Promise<void> {
@@ -248,30 +284,32 @@ export async function upsert(
   environmentId: string,
   cookie: Omit<Cookie, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<Cookie> {
-  const jar = await readJar(workspacePath, environmentId)
-  const now = new Date().toISOString()
-  const { domain, hostOnly } = normalizeAuthoredDomain(cookie)
-  const incoming = { ...cookie, domain, hostOnly, path: cookie.path || '/' }
-  const key = identityKey(incoming.domain, incoming.path, incoming.name)
-  const existingIdx = jar.cookies.findIndex((c) => identityKey(c.domain, c.path, c.name) === key)
+  return withJarLock(workspacePath, environmentId, async () => {
+    const jar = await readJar(workspacePath, environmentId)
+    const now = new Date().toISOString()
+    const { domain, hostOnly } = normalizeAuthoredDomain(cookie)
+    const incoming = { ...cookie, domain, hostOnly, path: cookie.path || '/' }
+    const key = identityKey(incoming.domain, incoming.path, incoming.name)
+    const existingIdx = jar.cookies.findIndex((c) => identityKey(c.domain, c.path, c.name) === key)
 
-  let result: Cookie
-  if (existingIdx >= 0) {
-    const existing = jar.cookies[existingIdx]
-    result = {
-      ...existing,
-      ...incoming,
-      id: existing.id,
-      createdAt: existing.createdAt,
-      updatedAt: now
+    let result: Cookie
+    if (existingIdx >= 0) {
+      const existing = jar.cookies[existingIdx]
+      result = {
+        ...existing,
+        ...incoming,
+        id: existing.id,
+        createdAt: existing.createdAt,
+        updatedAt: now
+      }
+      jar.cookies[existingIdx] = result
+    } else {
+      result = { ...incoming, id: randomUUID(), createdAt: now, updatedAt: now }
+      jar.cookies.push(result)
     }
-    jar.cookies[existingIdx] = result
-  } else {
-    result = { ...incoming, id: randomUUID(), createdAt: now, updatedAt: now }
-    jar.cookies.push(result)
-  }
-  await writeJar(workspacePath, { environmentId, cookies: dropExpired(jar.cookies) })
-  return result
+    await writeJar(workspacePath, { environmentId, cookies: dropExpired(jar.cookies) })
+    return result
+  })
 }
 
 export async function update(
@@ -280,23 +318,25 @@ export async function update(
   cookieId: string,
   changes: Partial<Cookie>
 ): Promise<Cookie> {
-  const jar = await readJar(workspacePath, environmentId)
-  const idx = jar.cookies.findIndex((c) => c.id === cookieId)
-  if (idx < 0) throw new Error(`[cookie-jar] Cookie not found: ${cookieId}`)
-  const merged = { ...jar.cookies[idx], ...changes }
-  const { domain, hostOnly } = normalizeAuthoredDomain(merged)
-  const updated: Cookie = {
-    ...merged,
-    domain,
-    hostOnly,
-    path: merged.path || '/',
-    id: jar.cookies[idx].id,
-    createdAt: jar.cookies[idx].createdAt,
-    updatedAt: new Date().toISOString()
-  }
-  jar.cookies[idx] = updated
-  await writeJar(workspacePath, { environmentId, cookies: dropExpired(jar.cookies) })
-  return updated
+  return withJarLock(workspacePath, environmentId, async () => {
+    const jar = await readJar(workspacePath, environmentId)
+    const idx = jar.cookies.findIndex((c) => c.id === cookieId)
+    if (idx < 0) throw new Error(`[cookie-jar] Cookie not found: ${cookieId}`)
+    const merged = { ...jar.cookies[idx], ...changes }
+    const { domain, hostOnly } = normalizeAuthoredDomain(merged)
+    const updated: Cookie = {
+      ...merged,
+      domain,
+      hostOnly,
+      path: merged.path || '/',
+      id: jar.cookies[idx].id,
+      createdAt: jar.cookies[idx].createdAt,
+      updatedAt: new Date().toISOString()
+    }
+    jar.cookies[idx] = updated
+    await writeJar(workspacePath, { environmentId, cookies: dropExpired(jar.cookies) })
+    return updated
+  })
 }
 
 export async function remove(
@@ -304,13 +344,15 @@ export async function remove(
   environmentId: string,
   cookieId: string
 ): Promise<void> {
-  const jar = await readJar(workspacePath, environmentId)
-  const filtered = jar.cookies.filter((c) => c.id !== cookieId)
-  if (filtered.length === 0) {
-    await clear(workspacePath, environmentId)
-    return
-  }
-  await writeJar(workspacePath, { environmentId, cookies: filtered })
+  await withJarLock(workspacePath, environmentId, async () => {
+    const jar = await readJar(workspacePath, environmentId)
+    const filtered = jar.cookies.filter((c) => c.id !== cookieId)
+    if (filtered.length === 0) {
+      await unlinkJar(workspacePath, environmentId)
+      return
+    }
+    await writeJar(workspacePath, { environmentId, cookies: filtered })
+  })
 }
 
 /**
@@ -340,6 +382,31 @@ function isSecureOverwrite(incoming: LibCookie, requestUrl: URL, stored: Cookie[
         domainMatch(s.domain, incomingDomain, true) === true) &&
       pathMatch(incomingPath, s.path)
   )
+}
+
+/**
+ * RFC 6265 §5.3 step 5: a Domain attribute that is a public suffix is ignored
+ * only when it differs from the request host; when it **is** the host, the
+ * cookie is stored host-only. The library refuses every Domain without a
+ * registrable domain (an IPv4 address, a single-label name such as a compose
+ * service, a bare suffix) and never compares it with the host, so this applies
+ * the step in front of the delegation: it drops the attribute on `parsed` and
+ * returns `true` when the cookie must be stored host-only.
+ *
+ * `allowSpecialUseDomain` mirrors the jar's setting; a lookup that throws (a
+ * bare special-use label) is a Domain the library would refuse too.
+ */
+function storeHostOnlyIfOwnSuffix(parsed: LibCookie, host: string): boolean {
+  if (!parsed.domain || parsed.cdomain() !== host) return false
+  let suffix: string | undefined
+  try {
+    suffix = getPublicSuffix(host, { allowSpecialUseDomain: true })
+  } catch {
+    suffix = undefined
+  }
+  if (suffix != null) return false
+  parsed.domain = null
+  return true
 }
 
 /** Best-effort cookie name for reporting a header the parser refused. */
@@ -377,44 +444,47 @@ export async function captureFromResponse(
   }
   const host = canonicalDomain(url.hostname) ?? url.hostname.toLowerCase()
 
-  const stored = await readJar(workspacePath, environmentId)
-  const { jar, previous } = await buildLibJar(stored.cookies)
-  const result: CookieCaptureResult = { accepted: [], rejected: [], crossSiteInsecure: [] }
-  const acceptedKeys: string[] = []
+  return withJarLock(workspacePath, environmentId, async () => {
+    const stored = await readJar(workspacePath, environmentId)
+    const { jar, previous } = await buildLibJar(stored.cookies)
+    const result: CookieCaptureResult = { accepted: [], rejected: [], crossSiteInsecure: [] }
+    const acceptedKeys: string[] = []
 
-  for (const header of setCookieHeaders) {
-    const parsed = LibCookie.parse(header)
-    if (!parsed) {
-      result.rejected.push({ name: nameFromRawHeader(header), host, reason: 'MALFORMED' })
-      continue
-    }
-    if (isSecureOverwrite(parsed, url, stored.cookies)) {
-      result.rejected.push({ name: parsed.key, host, reason: 'INSECURE_OVERWRITE' })
-      continue
-    }
-    try {
-      const settled = await jar.setCookie(header, requestUrl)
-      if (!settled) continue
-      acceptedKeys.push(identityKey(settled.domain ?? host, settled.path ?? '/', settled.key))
-      // Stored, but a browser would refuse it — report the divergence (§6.6).
-      if ((settled.sameSite ?? '').toLowerCase() === 'none' && !settled.secure) {
-        result.crossSiteInsecure.push({ name: settled.key, host })
+    for (const header of setCookieHeaders) {
+      const parsed = LibCookie.parse(header)
+      if (!parsed) {
+        result.rejected.push({ name: nameFromRawHeader(header), host, reason: 'MALFORMED' })
+        continue
       }
-    } catch (err) {
-      result.rejected.push({ name: parsed.key, host, reason: classifyRejection(err) })
+      if (isSecureOverwrite(parsed, url, stored.cookies)) {
+        result.rejected.push({ name: parsed.key, host, reason: 'INSECURE_OVERWRITE' })
+        continue
+      }
+      try {
+        const toSet = storeHostOnlyIfOwnSuffix(parsed, host) ? parsed : header
+        const settled = await jar.setCookie(toSet, requestUrl)
+        if (!settled) continue
+        acceptedKeys.push(identityKey(settled.domain ?? host, settled.path ?? '/', settled.key))
+        // Stored, but a browser would refuse it — report the divergence (§6.6).
+        if ((settled.sameSite ?? '').toLowerCase() === 'none' && !settled.secure) {
+          result.crossSiteInsecure.push({ name: settled.key, host })
+        }
+      } catch (err) {
+        result.rejected.push({ name: parsed.key, host, reason: classifyRejection(err) })
+      }
     }
-  }
 
-  const drained = await drainLibJar(jar, previous)
-  // A cookie that is already expired when captured replaces the stored one and is
-  // then dropped, so the net effect is a deletion and it is not reported as
-  // captured — preserved from the pre-REQ-0115 behavior.
-  const surviving = dropExpired(drained)
-  const accepted = new Set(acceptedKeys)
-  result.accepted = surviving.filter((c) => accepted.has(identityKey(c.domain, c.path, c.name)))
+    const drained = await drainLibJar(jar, previous)
+    // A cookie that is already expired when captured replaces the stored one and is
+    // then dropped, so the net effect is a deletion and it is not reported as
+    // captured — preserved from the pre-REQ-0115 behavior.
+    const surviving = dropExpired(drained)
+    const accepted = new Set(acceptedKeys)
+    result.accepted = surviving.filter((c) => accepted.has(identityKey(c.domain, c.path, c.name)))
 
-  await writeJar(workspacePath, { environmentId, cookies: surviving })
-  return result
+    await writeJar(workspacePath, { environmentId, cookies: surviving })
+    return result
+  })
 }
 
 // ── Per-hop session ─────────────────────────────────────────────────────────
@@ -489,6 +559,16 @@ export async function openCookieSession(
   // Snapshot of what was on disk when the send started — the secure-overwrite
   // guard compares against this, and it is the only thing that guard needs.
   let guardBaseline = stored.cookies
+  // Receipt time per identity. The library moves `lastAccessed` — which our
+  // `updatedAt` maps to — on every cookie it returns for a send, so a lifetime
+  // measured from it would restart on each send instead of on each receipt
+  // (RFC 6265 §5.3 step 3). Seeded from disk; overwritten only by a capture.
+  const receivedAt = new Map(
+    stored.cookies.map((c) => [identityKey(c.domain, c.path, c.name), c.updatedAt])
+  )
+  // The identities this session set or expired through `Set-Cookie`: the only
+  // ones `flush()` writes, so a concurrent send or panel edit is not undone.
+  const capturedKeys = new Set<string>()
 
   const sent: CookieSnapshot[] = []
   const offered: CookieSnapshot[] = []
@@ -519,11 +599,11 @@ export async function openCookieSession(
         return null
       }
       for (const lc of matching) {
-        const rec = fromLibCookie(
-          lc,
-          previous.get(identityKey(lc.domain ?? '', lc.path ?? '/', lc.key))
+        const key = identityKey(lc.domain ?? '', lc.path ?? '/', lc.key)
+        const rec = fromLibCookie(lc, previous.get(key))
+        sent.push(
+          snapshotFromRecord({ ...rec, updatedAt: receivedAt.get(key) ?? rec.updatedAt }, url)
         )
-        sent.push(snapshotFromRecord(rec, url))
       }
       return matching.map((c) => `${c.key}=${c.value}`).join('; ')
     },
@@ -537,12 +617,12 @@ export async function openCookieSession(
         return
       }
       const host = canonicalDomain(parsed.hostname) ?? parsed.hostname.toLowerCase()
-      const receivedAt = new Date()
+      const receipt = new Date()
 
       for (const header of setCookieHeaders) {
         // Recorded before any verdict: the response sent this, which is fact.
         // Whether the jar keeps it is a separate question, answered by `stored`.
-        const snapshot = snapshotFromSetCookie(header, url, receivedAt)
+        const snapshot = snapshotFromSetCookie(header, url, receipt)
         const incoming = LibCookie.parse(header)
         if (!incoming || !snapshot) {
           rejected.push({ name: nameFromRawHeader(header), host, reason: 'MALFORMED' })
@@ -556,17 +636,22 @@ export async function openCookieSession(
           continue
         }
         try {
-          const settled = jar.setCookieSync(header, url)
+          const hostOnly = storeHostOnlyIfOwnSuffix(incoming, host)
+          const settled = jar.setCookieSync(hostOnly ? incoming : header, url)
           if (!settled) {
             snapshot.stored = false
             continue
           }
           snapshot.stored = true
+          if (hostOnly) snapshot.hostOnly = true
           acceptedCount++
-          const rec = fromLibCookie(
-            settled,
-            previous.get(identityKey(settled.domain ?? host, settled.path ?? '/', settled.key))
-          )
+          const key = identityKey(settled.domain ?? host, settled.path ?? '/', settled.key)
+          capturedKeys.add(key)
+          receivedAt.set(key, receipt.toISOString())
+          const rec = {
+            ...fromLibCookie(settled, previous.get(key)),
+            updatedAt: receipt.toISOString()
+          }
           // The guard must see cookies set earlier in the same chain, or a hop
           // could plant a plain cookie that a later hop then shadows.
           guardBaseline = [...guardBaseline.filter((c) => c.id !== rec.id), rec]
@@ -582,8 +667,42 @@ export async function openCookieSession(
 
     async flush(): Promise<boolean> {
       if (acceptedCount === 0) return false
-      const surviving = dropExpired(await drainLibJar(jar, previous))
-      await writeJar(workspacePath, { environmentId, cookies: surviving })
+      const ours = new Map<string, Cookie>()
+      for (const c of await drainLibJar(jar, previous)) {
+        const key = identityKey(c.domain, c.path, c.name)
+        if (capturedKeys.has(key))
+          ours.set(key, { ...c, updatedAt: receivedAt.get(key) ?? c.updatedAt })
+      }
+      // Re-read under the lock and apply only this session's deltas: what is on
+      // disk now may hold another send's captures or a panel edit made after the
+      // session opened, and writing the start-of-send snapshot back would undo it.
+      await withJarLock(workspacePath, environmentId, async () => {
+        const current = await readJar(workspacePath, environmentId)
+        const next: Cookie[] = []
+        const written = new Set<string>()
+        for (const c of current.cookies) {
+          const key = identityKey(c.domain, c.path, c.name)
+          if (!capturedKeys.has(key)) {
+            next.push(c)
+            continue
+          }
+          written.add(key)
+          const mine = ours.get(key)
+          // The record on disk keeps the identity the panel knows it by.
+          if (mine) next.push({ ...mine, id: c.id, createdAt: c.createdAt, source: c.source })
+        }
+        for (const [key, mine] of ours) {
+          if (written.has(key)) continue
+          // Gone from disk since the session opened (deleted or cleared): a
+          // fresh capture, so it starts a fresh identity.
+          next.push(
+            previous.has(key)
+              ? { ...mine, id: randomUUID(), createdAt: mine.updatedAt, source: 'response' }
+              : mine
+          )
+        }
+        await writeJar(workspacePath, { environmentId, cookies: dropExpired(next) })
+      })
       return true
     }
   }

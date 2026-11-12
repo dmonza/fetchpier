@@ -10,6 +10,7 @@ import type {
   ScriptMutationSummary,
   UnitFindings
 } from '../../types'
+import { scripting } from '@fetchpier/core'
 import { redactHeaders, redactUrl, type ApiKeyCredential } from '../../output/formatters'
 import { findingMessage } from '../../output/findings-messages'
 
@@ -57,11 +58,34 @@ function mapLogs(logs: CoreScriptLog[]): ScriptLog[] {
   })
 }
 
-/** Best-effort extraction of a line number from a sandbox stack trace. */
+/** The file name the sandbox gives the wrapped script (`fp-<phase>-script.js`). */
+const SCRIPT_FILE = String.raw`fp-(?:pre-request|post-response)-script\.js`
+// `displayErrors` header: `<file>:N`, then the source line, on the first lines.
+const HEADER_RE = new RegExp(String.raw`^${SCRIPT_FILE}:(\d+)\r?\n([^\r\n]*)`)
+// Innermost stack frame in the script itself (host frames come before it when
+// an `fp` API call threw).
+const FRAME_RE = new RegExp(String.raw`^\s+at (?:.*\()?${SCRIPT_FILE}:(\d+):\d+\)?$`, 'm')
+
+/**
+ * The line in the user's script that a sandbox error points at, or undefined.
+ * Only the sandbox's own file counts (never a host frame or a number in the
+ * message), and the wrapper's header offset is taken off. A syntax error V8
+ * places on the wrapper's closing line has no line in the script.
+ */
 function lineFromStack(stack?: string): number | undefined {
   if (!stack) return undefined
-  const m = stack.match(/<anonymous>:(\d+):\d+/) ?? stack.match(/:(\d+):\d+\)?/)
-  return m ? Number(m[1]) : undefined
+  const header = stack.match(HEADER_RE)
+  let wrapped: number
+  if (header) {
+    if (header[2] === scripting.SCRIPT_WRAPPER_FOOTER) return undefined
+    wrapped = Number(header[1])
+  } else {
+    const frame = stack.match(FRAME_RE)
+    if (!frame) return undefined
+    wrapped = Number(frame[1])
+  }
+  const line = wrapped - scripting.SCRIPT_WRAPPER_HEADER_LINES
+  return line >= 1 ? line : undefined
 }
 
 function mapErrors(section: ScriptExecutionResult): ScriptError[] {

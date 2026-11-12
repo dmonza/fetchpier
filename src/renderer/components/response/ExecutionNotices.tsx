@@ -59,9 +59,14 @@ export function ExecutionNotices({ warnings }: ExecutionNoticesProps): React.JSX
       case 'CONTENT_TYPE_REPLACED':
         return t('response.notices.contentTypeReplaced')
       case 'ENV_WRITE_NOT_PERSISTED':
-        return w.reason === 'KEY_MISSING'
-          ? t('response.notices.envWriteKeyMissing', { name: w.name })
-          : t('response.notices.envWriteKeyMismatch', { name: w.name })
+        switch (w.reason) {
+          case 'KEY_MISSING':
+            return t('response.notices.envWriteKeyMissing', { name: w.name })
+          case 'LOCAL_KEY_MISMATCH':
+            return t('response.notices.envWriteKeyMismatch', { name: w.name })
+          case 'WRITE_FAILED':
+            return t('response.notices.envWriteFailed', { name: w.name })
+        }
     }
   }
 

@@ -399,12 +399,15 @@ export interface ContentTypeReplacedWarning {
  * - `KEY_MISSING`: a secret-named write needs the workspace key and none is available.
  * - `LOCAL_KEY_MISMATCH`: the local layer is encrypted under a different
  *   (older) workspace key; writing would make its entries unreadable.
+ * - `WRITE_FAILED`: saving the write threw (the local layer could not be
+ *   written, or the environment is gone). One entry per name the script set or
+ *   removed. Reported by the desktop; the CLI still fails the run instead.
  * Carries the variable name, never the value.
  */
 export interface EnvWriteNotPersistedWarning {
   code: 'ENV_WRITE_NOT_PERSISTED'
   name: string
-  reason: 'KEY_MISSING' | 'LOCAL_KEY_MISMATCH'
+  reason: 'KEY_MISSING' | 'LOCAL_KEY_MISMATCH' | 'WRITE_FAILED'
 }
 
 /**
@@ -1202,7 +1205,15 @@ export type DecodingStatus = 'decoded' | 'not-required' | 'unsupported' | 'faile
 export interface HttpResponse {
   status: number
   statusText: string
+  /** One entry per name; a repeated header's values are joined with `", "`. */
   headers: Record<string, string>
+  /**
+   * Every response header value as its own entry (repeated names, `Set-Cookie`
+   * included, stay separate), values of one name in the order received. Built by
+   * the client for a live response; transport-only, never persisted, so a
+   * response rebuilt from history has only `headers`.
+   */
+  headerList?: HeaderEntry[]
   body: string
   timingMs: number
   /** Byte length of `body` as read (i.e. after decoding). Unchanged meaning. */

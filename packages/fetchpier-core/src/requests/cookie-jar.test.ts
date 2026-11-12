@@ -11,11 +11,13 @@ import {
   list as _list,
   loadJar as _loadJar,
   matchesRequest,
+  openCookieSession as _openCookieSession,
   remove as _remove,
   saveJar as _saveJar,
   update as _update,
   upsert as _upsert,
-  type CookieCaptureResult
+  type CookieCaptureResult,
+  type CookieSession
 } from './cookie-jar'
 import type { Cookie, CookieJar } from '@shared/types'
 
@@ -60,6 +62,8 @@ const upsert = (
   envId: string,
   cookie: Omit<Cookie, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<Cookie> => _upsert(workspaceDir, envId, cookie)
+const openCookieSession = (envId: string): Promise<CookieSession> =>
+  _openCookieSession(workspaceDir, envId)
 
 beforeEach(async () => {
   workspaceDir = await fs.mkdtemp(join(tmpdir(), 'cookie-jar-test-'))
@@ -845,5 +849,194 @@ describe('REQ-0115 — jars written before this change (CA-15)', () => {
     expect((await list('dev'))[0].hostOnly).toBe(true)
     expect(await getCookieHeaderFor('dev', 'https://sub.example.test/')).toBe('')
     expect(await getCookieHeaderFor('dev', 'https://example.test/')).toBe('old=b')
+  })
+})
+
+// ── Cookie session: concurrent writers, receipt time, host-only public suffix ─
+
+describe('cookie session flush — concurrent writers do not undo each other', () => {
+  const authored = (name: string): Omit<Cookie, 'id' | 'createdAt' | 'updatedAt'> => {
+    const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = baseCookie({ name })
+    return rest
+  }
+  const names = async (): Promise<string[]> => (await list('dev')).map((c) => c.name).sort()
+
+  it('keeps the captures of two interleaved sessions', async () => {
+    const slow = await openCookieSession('dev')
+    const login = await openCookieSession('dev')
+    login.capture('https://example.com/login', ['session=abc; Path=/'])
+    expect(await login.flush()).toBe(true)
+    slow.capture('https://example.com/slow', ['AWSALB=lb1; Path=/'])
+    expect(await slow.flush()).toBe(true)
+    expect(await names()).toEqual(['AWSALB', 'session'])
+  })
+
+  it('keeps a clear made between the session opening and its flush', async () => {
+    await upsert('dev', authored('old'))
+    const session = await openCookieSession('dev')
+    await clear('dev')
+    session.capture('https://example.com/', ['n=1; Path=/'])
+    await session.flush()
+    expect(await names()).toEqual(['n'])
+  })
+
+  it('keeps a delete and an edit made while the session is open', async () => {
+    const gone = await upsert('dev', authored('gone'))
+    const edited = await upsert('dev', authored('edited'))
+    const session = await openCookieSession('dev')
+    await remove('dev', gone.id)
+    await update('dev', edited.id, { value: 'changed' })
+    session.capture('https://example.com/', ['n=1; Path=/'])
+    await session.flush()
+    expect(await names()).toEqual(['edited', 'n'])
+    expect((await list('dev')).find((c) => c.name === 'edited')?.value).toBe('changed')
+  })
+
+  it('applies a deletion made through Set-Cookie without touching cookies added meanwhile', async () => {
+    await captureFromResponse('dev', 'https://example.com/', ['sid=alive; Path=/'])
+    const session = await openCookieSession('dev')
+    await upsert('dev', authored('added'))
+    session.capture('https://example.com/', ['sid=; Max-Age=0; Path=/'])
+    await session.flush()
+    expect(await names()).toEqual(['added'])
+  })
+
+  it('a re-captured cookie keeps the identity the panel sees', async () => {
+    await captureFromResponse('dev', 'https://example.com/', ['sid=v1; Path=/'])
+    const before = (await list('dev'))[0]
+    const session = await openCookieSession('dev')
+    session.capture('https://example.com/', ['sid=v2; Path=/'])
+    await session.flush()
+    const after = await list('dev')
+    expect(after).toHaveLength(1)
+    expect(after[0]).toMatchObject({ id: before.id, createdAt: before.createdAt, value: 'v2' })
+  })
+
+  it('serializes concurrent panel writes and a flush on the same environment', async () => {
+    const session = await openCookieSession('dev')
+    session.capture('https://example.com/', ['fromSend=1; Path=/'])
+    await Promise.all([
+      upsert('dev', authored('a')),
+      upsert('dev', authored('b')),
+      session.flush(),
+      upsert('dev', authored('c'))
+    ])
+    expect(await names()).toEqual(['a', 'b', 'c', 'fromSend'])
+  })
+})
+
+describe('cookie session — a relative lifetime runs from receipt, not from sending', () => {
+  const seedMaxAge = async (receivedAgoMs: number): Promise<Cookie> => {
+    const at = new Date(Date.now() - receivedAgoMs).toISOString()
+    const sid = baseCookie({
+      name: 'sid',
+      value: 'abc',
+      domain: 'api.example.com',
+      maxAge: 300,
+      source: 'response',
+      createdAt: at,
+      updatedAt: at
+    })
+    await saveJar({ environmentId: 'dev', cookies: [sid] })
+    return sid
+  }
+
+  it('sending a cookie without re-capturing it leaves its updatedAt unchanged', async () => {
+    const sid = await seedMaxAge(290_000)
+    const session = await openCookieSession('dev')
+    expect(session.headerFor('http://api.example.com/x')).toBe('sid=abc')
+    session.capture('http://api.example.com/x', ['lb=1; Path=/'])
+    await session.flush()
+    const stored = (await list('dev')).find((c) => c.name === 'sid')
+    expect(stored?.updatedAt).toBe(sid.updatedAt)
+  })
+
+  it('the Sent snapshot reports the expiry from the stored receipt time', async () => {
+    const sid = await seedMaxAge(290_000)
+    const session = await openCookieSession('dev')
+    session.headerFor('http://api.example.com/x')
+    expect(session.sent[0]?.expires).toBe(
+      new Date(Date.parse(sid.updatedAt) + 300_000).toISOString()
+    )
+  })
+
+  it('a cookie sent on every request still expires at its original deadline', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      const first = await openCookieSession('dev')
+      first.capture('http://api.example.com/', ['sid=abc; Max-Age=60; Path=/'])
+      await first.flush()
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:40.000Z'))
+      const second = await openCookieSession('dev')
+      expect(second.headerFor('http://api.example.com/')).toBe('sid=abc')
+      second.capture('http://api.example.com/', ['lb=1; Path=/'])
+      await second.flush()
+
+      vi.setSystemTime(new Date('2026-01-01T00:01:10.000Z'))
+      const third = await openCookieSession('dev')
+      expect(third.headerFor('http://api.example.com/')).toBe('lb=1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a cookie captured in the session takes the receipt time', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+      await seedMaxAge(290_000)
+      vi.setSystemTime(new Date('2026-01-01T00:00:30.000Z'))
+      const session = await openCookieSession('dev')
+      session.capture('http://api.example.com/', ['sid=abc; Max-Age=300; Domain=api.example.com'])
+      await session.flush()
+      const stored = (await list('dev')).find((c) => c.name === 'sid')
+      expect(stored?.updatedAt).toBe('2026-01-01T00:00:30.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('RFC 6265 §5.3 step 5 — a Domain that is the host itself and has no registrable domain', () => {
+  it.each([
+    ['http://127.0.0.1:3000/', 'Domain=127.0.0.1', '127.0.0.1'],
+    ['http://192.168.1.10:8080/', 'Domain=192.168.1.10', '192.168.1.10'],
+    ['http://backend:8080/', 'Domain=backend', 'backend'],
+    ['http://backend:8080/', 'Domain=.BACKEND', 'backend'],
+    ['https://co.uk/', 'Domain=co.uk', 'co.uk']
+  ])('%s with %s is stored host-only', async (url, attr, host) => {
+    const res = await captureFromResponse('dev', url, [`sid=1; ${attr}`])
+    expect(res.rejected).toEqual([])
+    expect(res.accepted).toHaveLength(1)
+    expect(res.accepted[0]).toMatchObject({ domain: host, hostOnly: true })
+    expect(await getCookieHeaderFor('dev', url)).toBe('sid=1')
+  })
+
+  it('is stored host-only by the per-hop session too, and reported as stored', async () => {
+    const session = await openCookieSession('dev')
+    session.capture('http://backend:8080/login', ['sid=1; Domain=backend; Path=/'])
+    expect(session.rejected).toEqual([])
+    expect(session.offered[0]).toMatchObject({ stored: true, hostOnly: true, domain: 'backend' })
+    expect(session.headerFor('http://backend:8080/x')).toBe('sid=1')
+    await session.flush()
+    expect((await list('dev'))[0]).toMatchObject({ domain: 'backend', hostOnly: true })
+  })
+
+  it('still refuses such a Domain offered by a different host', async () => {
+    const res = await captureFromResponse('dev', 'http://127.0.0.2/', ['sid=1; Domain=127.0.0.1'])
+    expect(res.accepted).toHaveLength(0)
+    expect(res.rejected).toHaveLength(1)
+    const session = await openCookieSession('dev')
+    session.capture('http://anything.com/', ['sid=1; Domain=com'])
+    expect(session.rejected[0]?.reason).toBe('PUBLIC_SUFFIX')
+  })
+
+  it('keeps a Domain equal to a host with a registrable domain a domain cookie', async () => {
+    const res = await captureFromResponse('dev', 'https://example.test/', [
+      'sid=1; Domain=example.test'
+    ])
+    expect(res.accepted[0]).toMatchObject({ domain: 'example.test', hostOnly: false })
   })
 })

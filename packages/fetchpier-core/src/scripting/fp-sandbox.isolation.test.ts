@@ -556,6 +556,16 @@ describe('recursive constructor walk over fp and console', () => {
       walk(fp.request.body.parts[1], "fp.request.body.parts[1]", 0);
       walk(fp.request.body.parts.push, "fp.request.body.parts.push", 0);
       walk(fp.request.body.parts.splice, "fp.request.body.parts.splice", 0);
+      // Values the collection hands back: comparator arguments and removed parts.
+      fp.request.body.parts.sort((a, b) => {
+        walk(a, "sort comparator a", 0);
+        walk(b, "sort comparator b", 0);
+        return 0;
+      });
+      fp.request.body.parts.push({ kind: 'text', name: 'x', value: '1' }, { kind: 'text', name: 'y', value: '2' });
+      walk(fp.request.body.parts.pop(), "fp.request.body.parts.pop()", 0);
+      walk(fp.request.body.parts.shift(), "fp.request.body.parts.shift()", 0);
+      walk(fp.request.body.parts.splice(0), "fp.request.body.parts.splice(0)", 0);
       fp.variables.set("leaks", LEAKS);
     `)
     expect(outcome.result.success).toBe(true)

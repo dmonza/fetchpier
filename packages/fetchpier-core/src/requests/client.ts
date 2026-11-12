@@ -8,9 +8,11 @@ import {
   errors as undiciErrors
 } from 'undici'
 import { Readable } from 'node:stream'
+import { STATUS_CODES } from 'node:http'
 import { connectionFactsOf, type ConnectionFacts } from './connection-facts'
 import type {
   ExecutionWarning,
+  HeaderEntry,
   HttpRequest,
   HttpResponse,
   ProxyConfig,
@@ -67,8 +69,11 @@ const METHODS_EXPECTING_PAYLOAD: ReadonlySet<string> = new Set(['POST', 'PUT', '
  *
  * The stream write path (`writeStream`) does not have that assertion, so we
  * coerce non-empty bodies on bodyless methods (GET/HEAD/DELETE/OPTIONS/etc.)
- * into a one-shot `Readable`. Behavior over HTTP/1.1 is unchanged because the
- * H1 client accepts stream bodies natively.
+ * into a `Readable`, and keep the bytes (`streamed`). A stream has no length
+ * undici can read, so the caller declares `Content-Length` (HTTP/1.1 would
+ * otherwise frame it chunked), and re-creates the stream on every hop
+ * ({@link replayBodyInterceptor}): undici will not follow a redirect once the
+ * body has been read.
  *
  * Empty / missing bodies are passed through as `null` so undici still emits
  * the right `Content-Length: 0` semantics on payload methods.
@@ -79,18 +84,54 @@ const METHODS_EXPECTING_PAYLOAD: ReadonlySet<string> = new Set(['POST', 'PUT', '
 function prepareBodyForUndici(
   method: string,
   body: string | Buffer | undefined | null
-): string | Buffer | Readable | null {
-  if (body == null) return null
-  if (typeof body === 'string') {
-    if (body === '') return null
-    if (METHODS_EXPECTING_PAYLOAD.has(method.toUpperCase())) return body
-    return Readable.from(Buffer.from(body))
-  }
-  // Buffer body. Empty buffer behaves like missing body.
-  if (body.byteLength === 0) return null
-  if (METHODS_EXPECTING_PAYLOAD.has(method.toUpperCase())) return body
-  return Readable.from(body)
+): { body: string | Buffer | Readable | null; streamed?: Buffer } {
+  if (body == null) return { body: null }
+  if (typeof body === 'string' ? body === '' : body.byteLength === 0) return { body: null }
+  if (METHODS_EXPECTING_PAYLOAD.has(method.toUpperCase())) return { body }
+  const streamed = typeof body === 'string' ? Buffer.from(body) : body
+  return { body: Readable.from(streamed), streamed }
 }
+
+/**
+ * A streamed body (see {@link prepareBodyForUndici}), fresh on every hop.
+ * Composed inside the redirect interceptor, so the redirect handler holds a
+ * stream nobody reads and follows 301/302/307/308 with the body, as its own
+ * rules say. A hop it sends without a body (a 303) stays without one.
+ */
+function replayBodyInterceptor(bytes: Buffer): Interceptor {
+  return (dispatch) => (opts, handler) =>
+    dispatch(opts.body == null ? opts : { ...opts, body: Readable.from(bytes) }, handler)
+}
+
+/**
+ * Repeated request header names as arrays (`{ 'X-Tag': ['one', 'two'] }`).
+ *
+ * The proxy agent rebuilds a positional header array into a record keyed by
+ * name, keeping only the last value of each; a record whose values are arrays
+ * reaches the wire with every value. Composed onto the proxy agent only: the
+ * direct path sends the positional form as it is.
+ */
+function proxyHeadersInterceptor(): Interceptor {
+  return (dispatch) => (opts, handler) => {
+    if (!Array.isArray(opts.headers)) return dispatch(opts, handler)
+    const headers = opts.headers as string[]
+    const record: Record<string, string | string[]> = {}
+    for (let i = 0; i < headers.length; i += 2) {
+      const [name, value] = [headers[i], headers[i + 1]]
+      const previous = record[name]
+      record[name] =
+        previous === undefined
+          ? value
+          : Array.isArray(previous)
+            ? [...previous, value]
+            : [previous, value]
+    }
+    return dispatch({ ...opts, headers: record }, handler)
+  }
+}
+
+/** undici's message when a proxy answers the CONNECT tunnel with anything but 200. */
+const PROXY_TUNNEL_REFUSAL = /^Proxy response \((\d{3})\) !== 200/
 
 /** Maps common HTTP status codes to their standard reason phrases. */
 const STATUS_TEXT: Record<number, string> = {
@@ -627,7 +668,7 @@ function buildBaseDispatcher(
         // identifies the client to the target server, and the proxy is not it.
         proxyTls: trust,
         ...factory
-      })
+      }).compose(proxyHeadersInterceptor())
     : new Agent({ allowH2, connect: tlsOptions, ...factory })
 }
 
@@ -640,10 +681,12 @@ interface ChainParts {
   authorization: string[]
   /** Passive security findings: records each hop (see {@link hopObserver}). */
   observer?: Interceptor
+  /** The bytes of a streamed body, re-sent on every hop (see {@link replayBodyInterceptor}). */
+  streamedBody?: Buffer
 }
 
 function composeChain(base: Dispatcher, parts: ChainParts): Dispatcher {
-  const { settings, cookies, router, authorization, observer } = parts
+  const { settings, cookies, router, authorization, observer, streamedBody } = parts
   const maxRedirections = settings.followRedirects ? settings.maxRedirects : 0
 
   // Order matters. `compose` applies left to right, and each interceptor wraps the
@@ -660,6 +703,7 @@ function composeChain(base: Dispatcher, parts: ChainParts): Dispatcher {
     chain.push(followAuthorizationInterceptor(authorization))
   }
   if (cookies) chain.push(cookieInterceptor(cookies))
+  if (maxRedirections > 0 && streamedBody) chain.push(replayBodyInterceptor(streamedBody))
   if (maxRedirections > 0) {
     chain.push(relativeLocationInterceptor(), interceptors.redirect({ maxRedirections }))
   }
@@ -667,7 +711,12 @@ function composeChain(base: Dispatcher, parts: ChainParts): Dispatcher {
   return base.compose(chain)
 }
 
-function normalizeProtocol(rawUrl: string): string {
+/**
+ * The URL the client actually sends: trimmed, with `https://` prefixed when it
+ * has no `http(s)://` scheme. `execute()` applies it once, so TLS resolution,
+ * proxy routing, the cookie lookup and the snapshot see that same URL.
+ */
+export function normalizeProtocol(rawUrl: string): string {
   const trimmed = rawUrl.trim()
   if (/^https?:\/\//i.test(trimmed)) return trimmed
   return `https://${trimmed}`
@@ -772,6 +821,12 @@ export async function sendRequestWithRaw(
 
   const start = performance.now()
 
+  const effectiveBody: string | Buffer | undefined | null =
+    options.multipartBody?.body ?? options.binaryBody ?? httpRequest.body
+  const prepared = prepareBodyForUndici(httpRequest.method, effectiveBody)
+  // A streamed body states its length unless the user did (see prepareBodyForUndici).
+  const declaredLength = prepared.streamed ? String(prepared.streamed.byteLength) : undefined
+
   // When the request carries the ordered `headerList`, send undici the
   // positional array form (`[name, value, …]`) so order **and** duplicate names
   // survive on the wire — the object form would collapse same-name entries.
@@ -790,6 +845,9 @@ export async function sendRequestWithRaw(
         list = removeHeaders(list, 'content-type')
       }
       list.push({ name: 'Content-Type', value: options.multipartBody.contentType })
+    }
+    if (declaredLength && !hasHeader(list, 'content-length')) {
+      list.push({ name: 'Content-Length', value: declaredLength })
     }
     headers = headersToUndiciArray(list)
   } else {
@@ -811,6 +869,9 @@ export async function sendRequestWithRaw(
         record = { ...record, 'Content-Type': options.multipartBody.contentType }
       }
     }
+    if (declaredLength && !Object.keys(record).some((k) => k.toLowerCase() === 'content-length')) {
+      record = { ...record, 'Content-Length': declaredLength }
+    }
     headers = record
   }
 
@@ -819,20 +880,18 @@ export async function sendRequestWithRaw(
     cookies: options.cookies,
     router: hopRouter(target.origin, dispatcherFor),
     authorization: authorizationValues(headers),
-    ...(observing ? { observer: hopObserver(hops) } : {})
+    ...(observing ? { observer: hopObserver(hops) } : {}),
+    ...(prepared.streamed ? { streamedBody: prepared.streamed } : {})
   })
 
   try {
-    const effectiveBody: string | Buffer | undefined | null =
-      options.multipartBody?.body ?? options.binaryBody ?? httpRequest.body
-
     const response = await agent.request({
       origin: target.origin,
       path: target.path,
       method: httpRequest.method as
         'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'CONNECT' | 'TRACE',
       headers,
-      body: prepareBodyForUndici(httpRequest.method, effectiveBody),
+      body: prepared.body,
       signal: signal ?? null
     })
 
@@ -852,16 +911,17 @@ export async function sendRequestWithRaw(
 
     // Normalise headers: undici returns them as string | string[] per field.
     // Capture raw Set-Cookie as a separate array before joining, since comma
-    // joins corrupt date attributes inside the cookie header.
+    // joins corrupt date attributes inside the cookie header. `headerList` keeps
+    // one entry per value so the post-response script sees every duplicate.
     const normalisedHeaders: Record<string, string> = {}
+    const headerList: HeaderEntry[] = []
     const rawSetCookie: string[] = []
     for (const [key, value] of Object.entries(response.headers)) {
       if (value === undefined) continue
-      if (key.toLowerCase() === 'set-cookie') {
-        if (Array.isArray(value)) rawSetCookie.push(...value)
-        else rawSetCookie.push(value)
-      }
-      normalisedHeaders[key] = Array.isArray(value) ? value.join(', ') : value
+      const values = Array.isArray(value) ? value : [value]
+      if (key.toLowerCase() === 'set-cookie') rawSetCookie.push(...values)
+      for (const v of values) headerList.push({ name: key, value: v })
+      normalisedHeaders[key] = values.join(', ')
     }
 
     return {
@@ -869,6 +929,7 @@ export async function sendRequestWithRaw(
         status: response.statusCode,
         statusText: STATUS_TEXT[response.statusCode] ?? String(response.statusCode),
         headers: normalisedHeaders,
+        headerList,
         body: responseBody,
         timingMs: Math.round(timingMs),
         sizeBytes,
@@ -895,8 +956,23 @@ export async function sendRequestWithRaw(
     if (reason instanceof Error && reason.name === TIMEOUT_ABORT_NAME) {
       throw new Error(reason.message, { cause: err })
     }
-    if (err instanceof undiciErrors.RequestAbortedError) {
-      throw new Error('Request cancelled', { cause: err })
+    // A send is cancelled if and only if its signal was aborted for another
+    // reason, whatever undici raised: on an aborted signal it rejects with the
+    // signal's reason (a DOMException for a bare `abort()`), not with its own
+    // abort error, and it raises that abort error for things no one cancelled.
+    if (signal?.aborted) throw new Error('Request cancelled', { cause: err })
+    // A proxy that answers the tunnel with anything but 200 (credentials,
+    // policy, upstream failure) is a transport failure that names the proxy.
+    const refusal =
+      err instanceof undiciErrors.RequestAbortedError
+        ? PROXY_TUNNEL_REFUSAL.exec(err.message)
+        : null
+    if (refusal) {
+      const status = Number(refusal[1])
+      const phrase = STATUS_CODES[status]
+      throw new Error(`Proxy refused the tunnel (${status}${phrase ? ` ${phrase}` : ''})`, {
+        cause: err
+      })
     }
     // A contractual failure keeps its identity: `execute` re-throws a CoreError
     // so it stays fatal instead of degrading into an ordinary failed request,

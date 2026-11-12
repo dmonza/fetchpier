@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { promises as fs, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readTree } from './tree'
+import { collectRequestIds, readTree } from './tree'
 import type { WorkspaceTree } from '@shared/types'
 
 async function write(
@@ -105,5 +105,33 @@ describe('readTree — request instances grouping', () => {
     await write(root, 'orphan.x.instance.http')
     const tree = await readTree(root)
     expect(tree.map((n) => n.name)).toEqual(['zebra', 'apple.http', 'orphan.x.instance.http'])
+  })
+})
+
+describe('collectRequestIds — reads the @id the parser recognizes', () => {
+  const ID_A = '550e8400-e29b-41d4-a716-446655440000'
+  const ID_B = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+  let root: string
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'core-tree-ids-'))
+  })
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('collects an @id that follows comments and blank lines in the leading block', async () => {
+    await write(root, 'requests/a.http', `# Users API\n\n# @id ${ID_A}\nGET https://example.com\n`)
+    await write(root, 'requests/b.http', `\r\n# @id ${ID_B}\r\nGET https://example.com\r\n`)
+    expect([...(await collectRequestIds(root))].sort()).toEqual([ID_A, ID_B].sort())
+  })
+
+  it('ignores an @id line after the request line', async () => {
+    await write(root, 'requests/a.http', `GET https://example.com\n# @id ${ID_A}\n`)
+    await write(
+      root,
+      'requests/b.http',
+      `# Users API\n\nGET https://example.com\n\n# @id ${ID_B}\n`
+    )
+    expect(await collectRequestIds(root)).toEqual(new Set())
   })
 })

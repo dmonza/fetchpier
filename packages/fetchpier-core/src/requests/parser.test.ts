@@ -8,6 +8,8 @@ function req(parsed: ReturnType<typeof parseHttpFile>, idx = 0) {
   return parsed.requests[idx]
 }
 
+const UUID_A = '550e8400-e29b-41d4-a716-446655440000'
+
 // ── Test suites ────────────────────────────────────────────────────────────
 
 describe('parseHttpFile', () => {
@@ -308,6 +310,41 @@ describe('parseHttpFile', () => {
     const content = ['GET https://api.example.com/users', `# @id ${id}`].join('\n')
     const result = parseHttpFile(content)
     expect(result.requestId).toBeUndefined()
+  })
+
+  it.each([
+    ['a comment then a blank line', ['# Users API', '', `# @id ${UUID_A}`].join('\n') + '\n'],
+    ['a leading blank line', ['', `# @id ${UUID_A}`].join('\n') + '\n'],
+    [
+      'several blank lines with CRLF',
+      ['# Users API', '', '', `# @id ${UUID_A}`].join('\r\n') + '\r\n'
+    ]
+  ])('finds the @id after %s in the leading comment block', (_label, head) => {
+    const result = parseHttpFile(`${head}GET https://api.example.com/users`)
+    expect(result.requestId).toBe(UUID_A)
+    // The id line is metadata, never a preserved comment; the other comments stay.
+    expect(req(result).comments ?? []).not.toContainEqual(expect.stringContaining('@id'))
+  })
+
+  it('keeps the other comments of the leading block when the @id follows a blank line', () => {
+    const content = [
+      '# Users API',
+      '',
+      `# @id ${UUID_A}`,
+      'GET https://api.example.com/users'
+    ].join('\n')
+    expect(req(parseHttpFile(content)).comments).toEqual(['# Users API'])
+  })
+
+  it('still stops at the request line when blank lines precede it', () => {
+    const content = [
+      '# Users API',
+      '',
+      'GET https://api.example.com/users',
+      '',
+      `# @id ${UUID_A}`
+    ].join('\n')
+    expect(parseHttpFile(content).requestId).toBeUndefined()
   })
 
   // ── Pre/post-request scripts ──────────────────────────────────────────────

@@ -120,6 +120,25 @@ describe('parseXmlSafe — CDATA, entities, declaration, comments', () => {
     expect(r.x).toBe('a & b')
   })
 
+  it('decimal and hex character references are decoded in text (XML 1.0 §4.1)', () => {
+    expect(parseXmlSafe('<x>Jos&#233;</x>')).toEqual({ x: 'José' })
+    expect(parseXmlSafe('<x>caf&#xE9;</x>')).toEqual({ x: 'café' })
+    expect(parseXmlSafe('<x>caf&#xe9;</x>')).toEqual({ x: 'café' })
+    expect(parseXmlSafe('<x>a&#xD;b</x>')).toEqual({ x: 'a\rb' })
+  })
+
+  it('character references are decoded in attribute values', () => {
+    expect(parseXmlSafe('<x a="&amp;&#233;" b="&#x41;"/>')).toEqual({
+      x: { '@_a': '&é', '@_b': 'A' }
+    })
+  })
+
+  it('an escaped reference is decoded once, and HTML named entities stay literal', () => {
+    expect(parseXmlSafe('<x>&amp;&lt;&gt;&quot;&apos;</x>')).toEqual({ x: '&<>"\'' })
+    expect(parseXmlSafe('<x>&amp;#233;</x>')).toEqual({ x: '&#233;' })
+    expect(parseXmlSafe('<x>a&nbsp;b</x>')).toEqual({ x: 'a&nbsp;b' })
+  })
+
   it('XML declaration is ignored (no stray key)', () => {
     const r = parseXmlSafe('<?xml version="1.0"?><a>hi</a>')
     expect(r).toEqual({ a: 'hi' })
