@@ -5,6 +5,7 @@ import {
   encodeQueryComponent,
   encodeQueryComponentPreservingMasks,
   encodeTemplateComponent,
+  splitFormBody,
   splitUrlAndParams
 } from './query-string'
 
@@ -319,5 +320,52 @@ describe('assembleQuery — value-less parameters (REQ-0124)', () => {
     const url = 'https://api/x?a&b=&c=1'
     const { baseUrl, params } = splitUrlAndParams(url)
     expect(assembleQuery(baseUrl, params, true)).toBe(url)
+  })
+})
+
+// One decoder for a form-urlencoded body, shared by the desktop loader, the
+// history Open builder and the core's fallback for a raw form body (CLI).
+describe('splitFormBody — form-urlencoded body into fields', () => {
+  const pairs = (body: string) => splitFormBody(body).map((f) => [f.key, f.value])
+
+  it('splits on `&`, then on the first `=`; every field is enabled with a stable id', () => {
+    expect(splitFormBody('a=1&b=x=y')).toEqual([
+      { id: 'f-0', key: 'a', value: '1', enabled: true },
+      { id: 'f-1', key: 'b', value: 'x=y', enabled: true }
+    ])
+  })
+
+  it('drops empty pairs and reads a pair without `=` as a key with an empty value', () => {
+    expect(pairs('&a=1&&flag&')).toEqual([
+      ['a', '1'],
+      ['flag', '']
+    ])
+  })
+
+  it('reads `+` as a space and `%2B` as a plus (form semantics)', () => {
+    expect(pairs('scope=openid+profile&sig=a%2Bb&k+1=v')).toEqual([
+      ['scope', 'openid profile'],
+      ['sig', 'a+b'],
+      ['k 1', 'v']
+    ])
+  })
+
+  it('decodes literal segments only; `{{tokens}}` stay verbatim, `+` and `%` included', () => {
+    expect(pairs('id={{client+id}}&x=a+{{b%41}}%20c')).toEqual([
+      ['id', '{{client+id}}'],
+      ['x', 'a {{b%41}} c']
+    ])
+  })
+
+  it('keeps the raw text of a literal with a malformed escape; siblings still decode', () => {
+    expect(pairs('discount=10%&scope=read+write&bad%E0=v')).toEqual([
+      ['discount', '10%'],
+      ['scope', 'read write'],
+      ['bad%E0', 'v']
+    ])
+  })
+
+  it('returns no fields for an empty body', () => {
+    expect(splitFormBody('')).toEqual([])
   })
 })

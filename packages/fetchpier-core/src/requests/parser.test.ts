@@ -584,6 +584,61 @@ describe('parseHttpFile — load-time diagnostics (CLI readiness)', () => {
   })
 })
 
+// A block whose terminator is missing (or misspelled) used to swallow the
+// request line, headers and body: the request vanished with no warning (FMT-08).
+describe('parseHttpFile — unterminated script and settings blocks (FMT-08)', () => {
+  const request = ['POST https://api.example.com/users', 'X-Tag: one', '', '{"a":1}', ''].join('\n')
+
+  it.each([
+    ['# @pre-request-script', '# fp.environment.set("a", 1)', '# @endscript'],
+    ['# @post-response-script', '# fp.environment.set("a", 1)', '# @end_script'],
+    ['# @settings', '# verifySsl: false', '# @endsettings']
+  ])('%s with a misspelled terminator: the request still parses', (marker, inner, typo) => {
+    const parsed = parseHttpFile([marker, inner, typo, request].join('\n'))
+    expect(parsed.requests).toHaveLength(1)
+    const r = parsed.requests[0]
+    expect(r.method).toBe('POST')
+    expect(r.url).toBe('https://api.example.com/users')
+    expect(r.headerList).toEqual([{ name: 'X-Tag', value: 'one' }])
+    expect(r.body).toContain('{"a":1}')
+    expect(r.preRequestScript).toBeUndefined()
+    expect(r.postResponseScript).toBeUndefined()
+    expect(r.settings).toBeUndefined()
+    // Only the marker line is consumed: the lines after it are kept as comments.
+    expect(r.comments).toEqual([inner, typo])
+    expect(r.loadWarnings).toHaveLength(1)
+    expect(parsed.warnings).toEqual(r.loadWarnings)
+  })
+
+  it('in a multi-request file, the first request stays first and the tail starts at the separator', () => {
+    const tail = '### two\nGET https://api.example.com/2\n'
+    const text =
+      '# @pre-request-script\n# x\n# @endscript\nGET https://api.example.com/1\n\n' + tail
+    const parsed = parseHttpFile(text)
+    expect(parsed.requests.map((r) => r.url)).toEqual([
+      'https://api.example.com/1',
+      'https://api.example.com/2'
+    ])
+    expect(parsed.tail).toBe(tail)
+    expect(parsed.requests[0].loadWarnings).toEqual([
+      expect.stringMatching(/missing "# @end-script"/)
+    ])
+    expect(parsed.requests[1].loadWarnings).toBeUndefined()
+  })
+
+  it('an unterminated block in the second request warns on that request only', () => {
+    const parsed = parseHttpFile(
+      'GET https://api.example.com/1\n\n###\n# @settings\n# verifySsl: false\nGET https://api.example.com/2\n'
+    )
+    expect(parsed.requests).toHaveLength(2)
+    expect(parsed.requests[0].loadWarnings).toBeUndefined()
+    expect(parsed.requests[1].url).toBe('https://api.example.com/2')
+    expect(parsed.requests[1].loadWarnings).toEqual([
+      expect.stringMatching(/missing "# @end-settings"/)
+    ])
+  })
+})
+
 // Each request carries the diagnostics a save of **that** request would act on
 // (drop or rewrite) — the desktop shows them and marks the tab modified. The
 // file-level list keeps every diagnostic for the command line.
@@ -601,6 +656,21 @@ describe('parseHttpFile — per-request load warnings', () => {
       'an unterminated # @auth block',
       '# @auth\n# type: bearer\nGET https://x/\n',
       /missing "# @end-auth"/
+    ],
+    [
+      'an unterminated # @pre-request-script block',
+      '# @pre-request-script\n# fp.environment.set("a", 1)\nGET https://x/\n',
+      /invalid # @pre-request-script block: missing "# @end-script"/
+    ],
+    [
+      'an unterminated # @post-response-script block',
+      '# @post-response-script\n# fp.environment.set("a", 1)\nGET https://x/\n',
+      /invalid # @post-response-script block: missing "# @end-script"/
+    ],
+    [
+      'an unterminated # @settings block',
+      '# @settings\n# verifySsl: false\nGET https://x/\n',
+      /invalid # @settings block: missing "# @end-settings"/
     ],
     [
       'an unknown # @settings key',

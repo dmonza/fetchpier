@@ -101,3 +101,46 @@ describe('watcher lifecycle (REQ-0104 CA-08/CA-09)', () => {
     expect(send).not.toHaveBeenCalled()
   })
 })
+
+// WSP-02: the dot-segment ignore rule applies below `requests/` only.
+describe('watcher dot rule', () => {
+  let dottedParent: string
+
+  beforeEach(async () => {
+    dottedParent = realpathSync.native(await mkdtemp(join(tmpdir(), 'fp-watcher-dot-')))
+  })
+  afterEach(async () => {
+    await rm(dottedParent, { recursive: true, force: true })
+  })
+
+  it('delivers events for a workspace under a dot-prefixed ancestor folder', async () => {
+    const ws = join(dottedParent, '.api', 'ws')
+    await mkdir(join(ws, 'requests'), { recursive: true })
+    await mod.startWatcher(ws)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    send.mockClear()
+
+    await writeFile(join(ws, 'requests', 'login.http'), 'GET https://example.com\n')
+    await waitFor(() => send.mock.calls.some(([c]) => c === 'filesystem:changed'), 2000)
+    expect(send.mock.calls.some(([c]) => c === 'filesystem:changed')).toBe(true)
+
+    send.mockClear()
+    await writeFile(join(ws, 'requests', 'login.http'), 'GET https://example.com/v2\n')
+    const changed = (): boolean => send.mock.calls.some(([c]) => c === 'filesystem:fileChanged')
+    await waitFor(changed, 2000)
+    expect(send).toHaveBeenCalledWith('filesystem:fileChanged', join(ws, 'requests', 'login.http'))
+  })
+
+  it('still ignores dot entries below requests/', async () => {
+    const ws = join(dottedParent, 'plain')
+    await mkdir(join(ws, 'requests', '.runs'), { recursive: true })
+    await mod.startWatcher(ws)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    send.mockClear()
+
+    await writeFile(join(ws, 'requests', '.runs', 'run.http'), 'GET https://example.com\n')
+    await writeFile(join(ws, 'requests', '.login.http.tmp'), 'GET https://example.com\n')
+    await waitFor(() => send.mock.calls.length > 0, 800)
+    expect(send).not.toHaveBeenCalled()
+  })
+})

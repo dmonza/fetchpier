@@ -3,6 +3,9 @@ import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { importPostman, isPostmanCollection } from './postman'
+import { serializeRequest } from '@shared/lib/http-serializer'
+import { splitUrlAndParams } from '@shared/lib/query-string'
+import { parseHttpFile } from '../../requests/parser'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURES = join(here, '__fixtures__', 'postman')
@@ -318,5 +321,88 @@ describe('importPostman — malformed and edge inputs', () => {
     expect(() => importPostman(makeMinimalCollection({ info: {} as never }))).toThrow(
       /Not a recognizable Postman collection/
     )
+  })
+})
+
+describe('importPostman — query parameters', () => {
+  const RAW =
+    'https://api.example.com/search?q=hello%20world&redirect=https%3A%2F%2Fx.example.com&wsdl'
+
+  function importUrl(url: unknown) {
+    const payload = JSON.stringify({
+      info: { name: 'X', schema: POSTMAN_V21_SCHEMA },
+      item: [{ name: 'Search', request: { method: 'GET', url } }]
+    })
+    return importPostman(payload)
+  }
+
+  /** import → serialize → load: the URL the .http file stores, and its params read back. */
+  function roundTrip(url: unknown) {
+    const { schema } = importUrl(url)
+    const state = schema.operations[0].editorState
+    const loaded = parseHttpFile(serializeRequest(state)).requests[0].url
+    return { state, loaded, reloaded: splitUrlAndParams(loaded).params }
+  }
+
+  const structured = {
+    raw: RAW,
+    protocol: 'https',
+    host: ['api', 'example', 'com'],
+    path: ['search'],
+    query: [
+      { key: 'q', value: 'hello%20world' },
+      { key: 'redirect', value: 'https%3A%2F%2Fx.example.com' },
+      { key: 'wsdl', value: null }
+    ]
+  }
+
+  it.each([
+    ['structured query[]', structured],
+    ['raw string URL', RAW]
+  ])('decodes each key and value once and keeps a bare flag valueless (%s)', (_label, url) => {
+    const { state, loaded, reloaded } = roundTrip(url)
+    expect(state.params.map(({ key, value, valueless }) => ({ key, value, valueless }))).toEqual([
+      { key: 'q', value: 'hello world', valueless: undefined },
+      { key: 'redirect', value: 'https://x.example.com', valueless: undefined },
+      { key: 'wsdl', value: '', valueless: true }
+    ])
+    expect(loaded).toBe(
+      'https://api.example.com/search?q=hello%20world&redirect=https%3A%2F%2Fx.example.com&wsdl'
+    )
+    expect(reloaded.map(({ key, value }) => ({ key, value }))).toEqual([
+      { key: 'q', value: 'hello world' },
+      { key: 'redirect', value: 'https://x.example.com' },
+      { key: 'wsdl', value: '' }
+    ])
+  })
+
+  it('keeps {{tokens}} verbatim while decoding the literal around them', () => {
+    const { state } = roundTrip({
+      raw: 'https://x/y?k={{a%b}}%20tail',
+      query: [{ key: 'k', value: '{{a%b}}%20tail' }]
+    })
+    expect(state.params[0]).toMatchObject({ key: 'k', value: '{{a%b}} tail' })
+    expect(state.params[0].malformed).toBeUndefined()
+  })
+
+  it.each([
+    [
+      'structured query[]',
+      {
+        raw: 'https://x/y?bad=%E0&ok=1',
+        query: [
+          { key: 'bad', value: '%E0' },
+          { key: 'ok', value: '1' }
+        ]
+      }
+    ],
+    ['raw string URL', 'https://x/y?bad=%E0&ok=1']
+  ])('keeps a malformed pair raw, flags it, and warns (%s)', (_label, url) => {
+    const { schema, warnings } = importUrl(url)
+    const params = schema.operations[0].editorState.params
+    expect(params[0]).toMatchObject({ key: 'bad', value: '%E0', malformed: true })
+    expect(params[1]).toMatchObject({ key: 'ok', value: '1' })
+    expect(params[1].malformed).toBeUndefined()
+    expect(warnings.some((w) => w.kind === 'other' && /bad/.test(w.message))).toBe(true)
   })
 })

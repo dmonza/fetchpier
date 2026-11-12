@@ -50,6 +50,20 @@ async function readEnvSafe(
   }
 }
 
+/** Decrypt one local value; a failure names the environment and the variable. */
+async function decryptLocal(
+  key: Uint8Array,
+  environmentId: string,
+  name: string,
+  value: string
+): Promise<string> {
+  try {
+    return await secrets.decryptValue(key, name, value)
+  } catch {
+    throw secrets.valueCorruptError(environmentId, name)
+  }
+}
+
 /**
  * Normalize an environment's `localvalues.json` against the current workspace key:
  *
@@ -97,7 +111,7 @@ async function normalizeLocalValues(
     // Lazy re-wrap (§6.2 / CA-06).
     const nextValues: Record<string, string> = { ...local.variables }
     for (const name of encryptedNames) {
-      const plaintext = await secrets.decryptValue(oldKey, name, local.variables[name])
+      const plaintext = await decryptLocal(oldKey, environmentId, name, local.variables[name])
       nextValues[name] = await secrets.encryptValue(currentKey, name, plaintext)
     }
     const rewritten: secrets.LocalValuesFile = {
@@ -447,9 +461,14 @@ export async function getLocalView(
 
 /**
  * Build a rotation write-entry for an environment's `localvalues.json` (§6.7 / CA-08).
- * Decrypts each encrypted value with `oldKey`, re-encrypts with `newKey`, and
- * returns a `{ finalPath, tmpPath, content }` to fold into `rotateKey`'s atomic
- * temp-then-rename batch. Returns `null` when there is nothing encrypted to carry.
+ * The file is normalized first ({@link normalizeLocalValues}): one still under an
+ * earlier key — a rotation pulled from elsewhere, environment not opened since —
+ * is re-wrapped with the retained key, or its orphaned values dropped. Then each
+ * encrypted value is decrypted with `oldKey` (the current key), re-encrypted with
+ * `newKey`, and a `{ finalPath, tmpPath, content }` is returned to fold into
+ * `rotateKey`'s atomic temp-then-rename batch. Returns `null` when there is
+ * nothing encrypted to carry. A value that cannot be decrypted throws
+ * `SECRETS_VALUE_CORRUPT` naming the variable.
  */
 export async function reWrapLocalValuesForRotation(
   workspacePath: string,
@@ -459,7 +478,7 @@ export async function reWrapLocalValuesForRotation(
   newKeyId: string,
   stamp: string
 ): Promise<{ finalPath: string; tmpPath: string; content: string } | null> {
-  const local = await secrets.readLocalValues(workspacePath, environmentId)
+  const { local } = await normalizeLocalValues(workspacePath, environmentId)
   const encryptedNames = Object.entries(local.variables)
     .filter(([, v]) => secrets.isEncryptedValue(v))
     .map(([name]) => name)
@@ -467,7 +486,7 @@ export async function reWrapLocalValuesForRotation(
 
   const nextValues: Record<string, string> = { ...local.variables }
   for (const name of encryptedNames) {
-    const plaintext = await secrets.decryptValue(oldKey, name, local.variables[name])
+    const plaintext = await decryptLocal(oldKey, environmentId, name, local.variables[name])
     nextValues[name] = await secrets.encryptValue(newKey, name, plaintext)
   }
   const rewritten: secrets.LocalValuesFile = { version: 1, keyId: newKeyId, variables: nextValues }

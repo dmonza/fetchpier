@@ -9,7 +9,7 @@ import type {
 } from '../../../shared/types'
 import { splitUrlAndParams } from '@shared/lib/http-serializer'
 import { reinterleaveDisabled } from '@shared/lib/disabled-rows'
-import { mapTokenLiterals } from '@shared/lib/token-grammar'
+import { splitFormBody } from '@shared/lib/query-string'
 
 /**
  * Maps a parsed `.http` request (output of `request:parseFile`) into the
@@ -59,32 +59,9 @@ export function mapHttpRequestToEditorState(first: HttpRequest): RequestEditorSt
     const ctLower = contentType.toLowerCase()
     if (ctLower.includes('application/x-www-form-urlencoded')) {
       bodyType = 'x-www-form-urlencoded'
-      let fieldId = 0
-      formFields = first.body
-        .split('&')
-        .filter(Boolean)
-        .map((pair) => {
-          // Token-aware decode (REQ-0081 §6.4): only literal segments are
-          // percent-decoded; `{{variable}}` tokens pass through verbatim, so a
-          // token with a literal `%` (`{{a%41b}}` / `{{a%b}}`) round-trips
-          // losslessly — mirrors the query load path.
-          //
-          // This used to claim it "never throws on load", which held only for a
-          // `%` *inside* a token: a malformed escape in a literal segment did
-          // throw, and took the whole load with it. The grammar now contains it
-          // (REQ-0113 §6.6) and the offending literal keeps its author bytes.
-          // Form fields get containment only — deliberately not the `malformed`
-          // flag / advisory / save-time-removal chain, which stays exclusive to
-          // query parameters (REQ-0113 §2.2).
-          const eqIdx = pair.indexOf('=')
-          const key =
-            eqIdx === -1
-              ? mapTokenLiterals(pair, decodeURIComponent)
-              : mapTokenLiterals(pair.slice(0, eqIdx), decodeURIComponent)
-          const value =
-            eqIdx === -1 ? '' : mapTokenLiterals(pair.slice(eqIdx + 1), decodeURIComponent)
-          return { id: `f-${fieldId++}`, key, value, enabled: true }
-        })
+      // The shared form decoder (token-aware, `+` → space, a malformed escape
+      // keeps its author bytes) — the same one history and the core use.
+      formFields = splitFormBody(first.body)
       body = ''
     } else {
       bodyType = 'raw'

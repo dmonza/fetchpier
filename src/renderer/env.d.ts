@@ -12,6 +12,7 @@ import type {
   Environment,
   HistoryEntry,
   HistoryEntryListItem,
+  HistoryListFilter,
   ParsedHttpFile,
   WorkspaceStateView,
   WorkspaceSessionTab,
@@ -219,7 +220,7 @@ declare global {
       }
       history: {
         save: (entry: HistoryEntry) => Promise<void>
-        list: (filter?: { requestId?: string; limit?: number }) => Promise<HistoryEntryListItem[]>
+        list: (filter?: HistoryListFilter) => Promise<HistoryEntryListItem[]>
         /** Raw `.http` text for one entry. Use `activityLogToHistoryEntry`
          * from `@/shared/lib/activity-log` to reconstruct the in-memory shape. */
         get: (entryId: string) => Promise<string>
@@ -232,6 +233,8 @@ declare global {
         ) => Promise<void>
         countForPath: (relPath: string, isFolder: boolean) => Promise<number>
         deleteForPath: (relPath: string, isFolder: boolean) => Promise<void>
+        /** Fires in every window after a run is saved, deleted, cleared or relinked. */
+        onChanged: (callback: () => void) => () => void
       }
       certificates: {
         list: (scope: TlsScope) => Promise<TlsScopeSettings>

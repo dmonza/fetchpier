@@ -11,6 +11,8 @@ import type {
   AuthConfig
 } from '@shared/types'
 import { DEFAULT_REQUEST_STATE } from '@shared/types'
+import { splitUrlAndParams } from '@shared/lib/query-string'
+import { mapTokenLiteralsSafe } from '@shared/lib/token-grammar'
 import { sanitizeName } from '../sanitize'
 
 // ── Types that model the subset of the Postman schema we consume ──────────
@@ -21,7 +23,8 @@ interface PostmanVariable {
 
 interface PostmanKeyValue {
   key: string
-  value?: string
+  /** `null` in a `url.query[]` entry marks a bare flag (`?wsdl`). */
+  value?: string | null
   disabled?: boolean
 }
 
@@ -193,21 +196,12 @@ function stripQuery(url: string): string {
   return q === -1 ? url : url.slice(0, q)
 }
 
-/** Parse `?a=1&b=2` from a URL (when `query[]` is absent). */
+/**
+ * Parse `?a=1&b=2` from a URL (when `query[]` is absent) with the shared
+ * token-aware splitter, so params hold decoded values as the editor model does.
+ */
 function parseQueryString(url: string): KeyValuePair[] {
-  const q = url.indexOf('?')
-  if (q === -1) return []
-  const qs = url.slice(q + 1)
-  if (!qs) return []
-  return qs
-    .split('&')
-    .filter(Boolean)
-    .map((pair, i) => {
-      const eq = pair.indexOf('=')
-      const key = eq === -1 ? pair : pair.slice(0, eq)
-      const value = eq === -1 ? '' : pair.slice(eq + 1)
-      return { id: `q-${i}`, key, value, enabled: true }
-    })
+  return splitUrlAndParams(url).params
 }
 
 function convertPathParams(url: string): { url: string; converted: boolean } {
@@ -239,16 +233,31 @@ function headersFromPostman(headers: PostmanHeader[] | undefined): KeyValuePair[
     }))
 }
 
+/**
+ * Postman keeps query keys and values in their wire form, so each is decoded
+ * once, token-aware, the way `splitUrlAndParams` reads a stored URL. A pair
+ * that fails to decode is kept raw and flagged `malformed`; a `null` value is
+ * a bare flag (`?wsdl`) and is kept `valueless`.
+ */
 function queryFromPostman(query: PostmanUrlQuery[] | undefined): KeyValuePair[] {
   if (!query) return []
   return query
     .filter((q) => q && typeof q.key === 'string')
-    .map((q, i) => ({
-      id: `q-${i}`,
-      key: q.key,
-      value: q.value ?? '',
-      enabled: !q.disabled
-    }))
+    .map((q, i) => {
+      const rawValue = q.value ?? ''
+      const key = mapTokenLiteralsSafe(q.key, decodeURIComponent)
+      const value = mapTokenLiteralsSafe(rawValue, decodeURIComponent)
+      const malformed = key.failed || value.failed
+      const valueless = q.value == null && q.key !== ''
+      return {
+        id: `q-${i}`,
+        key: malformed ? q.key : key.text,
+        value: malformed ? rawValue : value.text,
+        enabled: !q.disabled,
+        ...(malformed && { malformed }),
+        ...(valueless && { valueless })
+      }
+    })
 }
 
 // ── Body mapping ──────────────────────────────────────────────────────────
@@ -548,6 +557,16 @@ function buildOperation(
   const headers = headersFromPostman(request.header)
   const params =
     url.query && url.query.length > 0 ? queryFromPostman(url.query) : parseQueryString(rawUrl)
+  // The writer drops a malformed pair on save (it cannot be re-encoded
+  // faithfully), so the drop is reported instead of happening silently.
+  for (const p of params) {
+    if (!p.malformed) continue
+    ctx.warnings.push({
+      kind: 'other',
+      message: `Query parameter "${p.key}" has malformed percent-encoding and was not imported`,
+      location
+    })
+  }
 
   // Body
   const body = mapBody(request.body, ctx.warnings, location)

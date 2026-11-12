@@ -1,10 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
-import {
-  SEND_REQUEST_EVENT,
-  SAVE_NOW_EVENT,
-  URL_BAR_FOCUS_EVENT,
-  HISTORY_UPDATED_EVENT
-} from '../../lib/events'
+import { SEND_REQUEST_EVENT, SAVE_NOW_EVENT, URL_BAR_FOCUS_EVENT } from '../../lib/events'
 import { Send, Loader2, Lock, Cookie as CookieIcon, Ban, X, AlertTriangle } from 'lucide-react'
 import { useCookieStore } from '../../stores/cookies'
 import { CookiesModal } from '../cookies/CookiesModal'
@@ -398,12 +393,10 @@ function RequestEditorInner(): React.JSX.Element {
           })
         : undefined
       if (entry) {
-        window.api.history
-          .save(entry)
-          .then(() => window.dispatchEvent(new Event(HISTORY_UPDATED_EVENT)))
-          .catch((err) => {
-            console.error('[RequestEditor] Failed to save history entry:', err)
-          })
+        // Main broadcasts `history:changed` to every window once the run is on disk.
+        window.api.history.save(entry).catch((err) => {
+          console.error('[RequestEditor] Failed to save history entry:', err)
+        })
       }
     } catch (err) {
       const wasCancelled = userCancelledRef.current.delete(executionId)

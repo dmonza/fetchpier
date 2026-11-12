@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/
 import { SettingsDialogShell, SettingsTabPanel } from '../settings/SettingsDialogShell'
 import { useWorkspaceSettingsStore } from '../../stores/workspaceSettings'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useToastStore } from '../../stores/toast'
 import { CertificatesPanel } from '../settings/CertificatesPanel'
 import { LazyBoundary } from '../ui/LazyBoundary'
 import { useAppearanceStore } from '../../stores/appearance'
@@ -65,19 +66,26 @@ export function WorkspaceSettingsDialog({ open, onOpenChange }: Props): React.JS
   // the selection survives close/reopen, not a remount.
   useEffect(() => () => useWorkspaceSettingsDialogStore.getState().setTab('http'), [])
 
+  const pushToast = useToastStore((s) => s.push)
+  // A refused write (e.g. a settings.json that no longer parses) must reach the
+  // user: the file was left as it was, so the change did not take effect. The
+  // main-process text is English (and IPC-prefixed), so it stays in the log.
+  const reportWriteFailure = (err: unknown): void => {
+    console.error('[WorkspaceSettings] update failed:', err)
+    pushToast(t('workspaceSettings.saveFailed'), { type: 'error' })
+  }
+
   const set = <K extends keyof WorkspaceHttpSettings>(
     key: K,
     value: WorkspaceHttpSettings[K]
   ): void => {
     if (!workspacePath) return
-    update({ [key]: value } as Partial<WorkspaceHttpSettings>).catch((err) =>
-      console.error('[WorkspaceSettings] update failed:', err)
-    )
+    update({ [key]: value } as Partial<WorkspaceHttpSettings>).catch(reportWriteFailure)
   }
 
   const handleReset = (): void => {
     if (!workspacePath) return
-    resetToDefaults().catch((err) => console.error('[WorkspaceSettings] reset failed:', err))
+    resetToDefaults().catch(reportWriteFailure)
     setConfirmReset(false)
   }
 

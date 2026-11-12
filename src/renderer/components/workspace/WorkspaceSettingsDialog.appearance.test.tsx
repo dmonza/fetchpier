@@ -19,6 +19,7 @@ import { WorkspaceSettingsDialog } from './WorkspaceSettingsDialog'
 import { useAppearanceStore } from '../../stores/appearance'
 import { useThemeStore } from '../../stores/theme'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useToastStore } from '../../stores/toast'
 import type { AppearancePalettes } from '../../../shared/types'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -197,6 +198,24 @@ describe('Workspace Settings → Appearance', () => {
     expect(updateHttpSettings).toHaveBeenCalled()
     expect(setWorkspace).not.toHaveBeenCalled()
     expect(useAppearanceStore.getState().workspace).toEqual(ws)
+  })
+
+  // WSP-01: a refused write (an unparseable settings.json) reaches the user.
+  it('shows the error when the HTTP settings write is refused', async () => {
+    updateHttpSettings.mockRejectedValueOnce(new Error('Workspace settings could not be read'))
+    useToastStore.setState({ messages: [] })
+    await mount()
+    await press(byText('workspaceSettings.resetFactory'))
+    const confirm = [...document.querySelectorAll('button')].filter(
+      (b) => b.textContent === 'workspaceSettings.resetFactory'
+    )
+    await press(confirm[confirm.length - 1])
+    expect(useToastStore.getState().messages).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        message: 'workspaceSettings.saveFailed'
+      })
+    ])
   })
 
   it('offers the HTTP reset on the HTTP tab only (CA-21)', async () => {

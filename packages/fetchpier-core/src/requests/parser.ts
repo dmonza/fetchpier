@@ -24,9 +24,12 @@ const RAW_SUBTYPE_MARKER = /^\s*#\s*@rawSubtype\s*:\s*(\S+)\s*$/
 
 /**
  * `# @binary-file: <ref>` — set by the serializer when `bodyType === 'binary'`.
- * The ref points at a file staged in `<workspace>/requests/.files/`.
+ * The ref points at a file staged in `<workspace>/requests/.files/`. The value
+ * is the rest of the line (a staged name may hold spaces, FMT-05);
+ * `BINARY_REF_VALIDATOR` is the gate, so a malformed value still ends in
+ * `invalidBinaryRef`.
  */
-const BINARY_FILE_MARKER = /^\s*#\s*@binary-file\s*:\s*(\S+)\s*$/
+const BINARY_FILE_MARKER = /^\s*#\s*@binary-file\s*:\s*(\S.*?)\s*$/
 const BINARY_REF_VALIDATOR = /^[a-f0-9]{64}__.+$/
 
 // Regex to detect {{variable}} placeholders
@@ -244,33 +247,46 @@ function extractSettingsBlock(
   startIdx: number
 ): { settings: RequestSettings; nextIdx: number } {
   const settings: RequestSettings = {}
-  let i = startIdx + 1
-  while (i < lines.length && !SETTINGS_END_MARKER.test(lines[i])) {
+  // Terminator first, as in `extractAuthBlock`: an unterminated block used to
+  // swallow the request line, headers and body with no warning (FMT-08).
+  let end = startIdx + 1
+  while (end < lines.length && !SETTINGS_END_MARKER.test(lines[end])) end++
+  if (end >= lines.length) {
+    parseWarning('invalid # @settings block: missing "# @end-settings"; the block is ignored')
+    return { settings, nextIdx: startIdx + 1 }
+  }
+  for (let i = startIdx + 1; i < end; i++) {
     const parsed = parseSettingLine(lines[i])
     if (parsed) {
       const [key, value] = parsed
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(settings as any)[key] = value
     }
-    i++
   }
-  if (i < lines.length && SETTINGS_END_MARKER.test(lines[i])) i++
-  return { settings, nextIdx: i }
+  return { settings, nextIdx: end + 1 }
 }
 
 /**
  * Extract one `# @pre-request-script` / `# @post-response-script` section that
  * starts at `lines[startIdx]` (the marker line) and runs to its `# @end-script`.
  * Returns the de-commented script content and the index just past the end marker.
+ * With no terminator, warns and consumes only the marker line (`content` is
+ * undefined), like `extractAuthBlock` (FMT-08).
  */
-function extractScriptAt(lines: string[], startIdx: number): { content: string; nextIdx: number } {
-  const scriptLines: string[] = []
-  let i = startIdx + 1
-  while (i < lines.length && !END_MARKER.test(lines[i])) {
-    scriptLines.push(stripScriptCommentPrefix(lines[i]))
-    i++
+function extractScriptAt(
+  lines: string[],
+  startIdx: number
+): { content: string | undefined; nextIdx: number } {
+  let end = startIdx + 1
+  while (end < lines.length && !END_MARKER.test(lines[end])) end++
+  if (end >= lines.length) {
+    const marker = PRE_MARKER.test(lines[startIdx]) ? 'pre-request-script' : 'post-response-script'
+    parseWarning(`invalid # @${marker} block: missing "# @end-script"; the block is ignored`)
+    return { content: undefined, nextIdx: startIdx + 1 }
   }
-  if (i < lines.length && END_MARKER.test(lines[i])) i++ // skip the end marker
+  const scriptLines: string[] = []
+  for (let i = startIdx + 1; i < end; i++) scriptLines.push(stripScriptCommentPrefix(lines[i]))
+  const i = end + 1 // skip the end marker
   // Trim surrounding blank lines but preserve internal structure.
   while (scriptLines.length > 0 && scriptLines[scriptLines.length - 1].trim() === '')
     scriptLines.pop()
@@ -482,13 +498,13 @@ function parseRequestBlockInner(block: string): HttpRequest | null {
       }
       if (PRE_MARKER.test(line)) {
         const x = extractScriptAt(lines, i)
-        pre = x.content
+        if (x.content !== undefined) pre = x.content
         i = x.nextIdx
         continue
       }
       if (POST_MARKER.test(line)) {
         const x = extractScriptAt(lines, i)
-        post = x.content
+        if (x.content !== undefined) post = x.content
         i = x.nextIdx
         continue
       }

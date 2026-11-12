@@ -220,6 +220,31 @@ describe('workspace.history (REQ-0068)', () => {
     expect(items[0]!.response.status).toBe(200)
   })
 
+  it('list({ requestIds }) keeps only those requests and applies the limit after filtering', async () => {
+    // Oldest first: two runs of req-a, one of req-b, then three newer runs of req-other.
+    const runs: Array<[string, string]> = [
+      ['a1', 'req-a'],
+      ['a2', 'req-a'],
+      ['b1', 'req-b'],
+      ['o1', 'req-other'],
+      ['o2', 'req-other'],
+      ['o3', 'req-other']
+    ]
+    for (const [i, [seed, requestId]] of runs.entries()) {
+      await save(
+        ws,
+        buildEntry({ id: uuid(seed), requestId, timestamp: `2026-05-15T14:23:0${i}.000Z` })
+      )
+    }
+    const two = await list(ws, { requestIds: ['req-a', 'req-b'], limit: 2 })
+    expect(two.map((e) => e.id)).toEqual([uuid('b1'), uuid('a2')])
+    const all = await list(ws, { requestIds: ['req-a', 'req-b'], limit: 50 })
+    expect(all.map((e) => e.id)).toEqual([uuid('b1'), uuid('a2'), uuid('a1')])
+    // An empty set is no filter, as an absent one.
+    expect(await list(ws, { requestIds: [], limit: 2 })).toHaveLength(2)
+    expect((await list(ws, { requestIds: [] }))[0]!.id).toBe(uuid('o3'))
+  })
+
   it('clear() removes `.http` files but leaves stale `.json` alone', async () => {
     await save(ws, buildEntry())
     await fs.writeFile(

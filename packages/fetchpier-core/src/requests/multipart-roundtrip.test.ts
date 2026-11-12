@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseHttpFile } from './parser'
+import { sanitizeOriginalName } from './binary-store'
 import { serializeRequest } from '@shared/lib/http-serializer'
 import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import type { MultipartFilePart, MultipartTextPart, RequestEditorState } from '@shared/types'
@@ -92,6 +93,34 @@ describe('multipart round-trip (CA-02)', () => {
       name: 'photo',
       filename: 'café-sunset.jpg'
     })
+  })
+
+  it('a file ref whose staged name has spaces round-trips whole (FMT-04)', () => {
+    const name = sanitizeOriginalName('C:/Users/me/My Report 2026.pdf')
+    const ref = `${HASH_A}__${name}`
+    const original = state({
+      // Size 0: the parser does not read it, and the preview prints it.
+      multipartParts: [filePart('mp-0', 'doc', ref, name, 0, 'application/pdf')]
+    })
+    const text = serializeRequest(original)
+    expect(text).toContain(`file="${ref}"`)
+    const parsed = parseHttpFile(text)
+    expect(parsed.warnings).toBeUndefined()
+    const part = parsed.requests[0].multipartParts![0]
+    expect(part).toMatchObject({ kind: 'file', name: 'doc' })
+    expect(part.disabled).toBeFalsy()
+    if (part.kind === 'file') expect(part.file.ref).toBe(ref)
+    // A second save writes the same bytes.
+    const reparsed = parsed.requests[0].multipartParts!
+    expect(serializeRequest(state({ multipartParts: reparsed }))).toBe(text)
+  })
+
+  it('a file ref with no special characters stays unquoted (FMT-04)', () => {
+    const text = serializeRequest(
+      state({ multipartParts: [filePart('mp-0', 'photo', REF_A, 'beach.jpg', 1, 'image/jpeg')] })
+    )
+    expect(text).toContain(`file=${REF_A}`)
+    expect(text).not.toContain(`file="${REF_A}"`)
   })
 
   it('preserves disabled parts through round-trip (CA-12)', () => {

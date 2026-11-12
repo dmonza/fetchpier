@@ -27,7 +27,7 @@ export interface HistoryExpansionState {
   setParsed: (id: string, file: ActivityLogFile) => void
   setError: (id: string, message: string) => void
   clearError: (id: string) => void
-  /** Drop the cached entry (e.g. on `HISTORY_UPDATED_EVENT` if the same id was rewritten). */
+  /** Drop the cached entry (e.g. on `history:changed` if the same id was rewritten). */
   invalidate: (id: string) => void
   /** Reset everything — call when the workspace switches. */
   reset: () => void

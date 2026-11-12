@@ -57,12 +57,22 @@ export async function loadHttpSettings(workspacePath: string): Promise<Workspace
 export async function loadHttpSettingsStrict(
   workspacePath: string
 ): Promise<WorkspaceHttpSettings> {
+  return mergeWithDefaults((await readSettingsFileStrict(workspacePath)).http)
+}
+
+/**
+ * Read the whole settings file strictly: a missing file is `{}`; any other read
+ * error, a parse error or a non-object root throws.
+ *
+ * @throws CoreError `WORKSPACE_INVALID` naming the file and the cause.
+ */
+async function readSettingsFileStrict(workspacePath: string): Promise<SettingsFile> {
   const filePath = join(workspacePath, SETTINGS_FILE)
   let raw: string
   try {
     raw = await fs.readFile(filePath, 'utf-8')
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return mergeWithDefaults(undefined)
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
     throw new CoreError(
       'WORKSPACE_INVALID',
       `Workspace settings could not be read: ${filePath}: ${describeError(err)}`
@@ -83,18 +93,25 @@ export async function loadHttpSettingsStrict(
       `Workspace settings could not be read: ${filePath}: expected a JSON object`
     )
   }
-  return mergeWithDefaults((parsed as SettingsFile).http)
+  return parsed as SettingsFile
 }
 
 /**
  * Persist a partial HTTP-settings patch and return the merged result. Pure I/O —
  * caching and broadcasting are the adapter's responsibility.
+ *
+ * The existing file is read strictly: rewriting from a lenient `{}` would turn a
+ * temporary parse failure (a merge conflict, a hand-edit typo) into permanent
+ * loss of the TLS block, the findings policy and every unknown key.
+ *
+ * @throws CoreError `WORKSPACE_INVALID` when the existing file cannot be read or
+ *   parsed; nothing is written.
  */
 export async function updateHttpSettings(
   workspacePath: string,
   partial: Partial<WorkspaceHttpSettings>
 ): Promise<WorkspaceHttpSettings> {
-  const file = await readSettingsFile(workspacePath)
+  const file = await readSettingsFileStrict(workspacePath)
   const current = mergeWithDefaults(file.http)
   const next: WorkspaceHttpSettings = { ...current, ...partial }
   const updated: SettingsFile = { ...file, http: next }

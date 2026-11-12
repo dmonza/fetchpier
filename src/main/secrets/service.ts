@@ -368,8 +368,22 @@ export async function rotateKey(workspacePath: string): Promise<SecretsSetupResu
   const writes: Array<{ finalPath: string; tmpPath: string; content: string }> = []
   const stamp = `${process.pid}-${Date.now()}`
 
-  for (const env of await ws.environments.list()) {
-    // `list()` already carries the folder each config was found in, so the path
+  // An environment whose `config.json` exists but cannot be read would keep its
+  // secrets under the old key while the manifest moves on — unrecoverable once
+  // the file is readable again. Refuse before building any write.
+  const { environments, unreadable } = await ws.environments.listWithErrors()
+  if (unreadable.length > 0) {
+    const names = unreadable.map((u) => `"${u.folder}" (${u.file}: ${u.reason})`).join(', ')
+    throw new CoreError(
+      'WORKSPACE_INVALID',
+      `The workspace key was not rotated: these environments could not be read: ${names}. ` +
+        `Fix them and rotate again.`,
+      { unreadable: unreadable.map((u) => u.folder) }
+    )
+  }
+
+  for (const env of environments) {
+    // The listing already carries the folder each config was found in, so the path
     // is built from that rather than from the opaque identifier.
     const configPath = ws.environments.configPath(env.folder)
 
@@ -400,20 +414,16 @@ export async function rotateKey(workspacePath: string): Promise<SecretsSetupResu
     }
 
     // REQ-0074 §6.7/CA-08: carry the local layer in the same atomic flow. A
-    // corrupt local value aborts the whole rotation before any rename.
-    let localWrite: Awaited<ReturnType<typeof reWrapLocalValuesForRotation>>
-    try {
-      localWrite = await reWrapLocalValuesForRotation(
-        workspacePath,
-        env.id,
-        oldKey,
-        newKey,
-        newKeyId,
-        stamp
-      )
-    } catch {
-      throw secrets.valueCorruptError(env.id, '(local)')
-    }
+    // corrupt local value aborts the whole rotation before any rename, naming
+    // the variable.
+    const localWrite = await reWrapLocalValuesForRotation(
+      workspacePath,
+      env.id,
+      oldKey,
+      newKey,
+      newKeyId,
+      stamp
+    )
     if (localWrite) writes.push(localWrite)
   }
 

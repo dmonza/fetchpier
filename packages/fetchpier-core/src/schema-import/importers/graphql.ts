@@ -102,19 +102,38 @@ function renderTypeRef(type: GraphQLType): string {
   return 'Unknown'
 }
 
+/** Selection for a composite type with nothing else to select (depth cap, no usable field). */
+const TYPENAME_SELECTION = '{\n  __typename\n}'
+
+function isLeafType(type: GraphQLType): boolean {
+  const bare = unwrapType(type)
+  return isScalarType(bare) || isEnumType(bare)
+}
+
+/**
+ * Selection set for `type`, or '' for a scalar/enum leaf (which takes none).
+ * GraphQL requires a non-empty selection on every object, interface and union
+ * field (ScalarLeafs), so a composite never comes back bare: past the depth cap,
+ * or when no field survives, it selects `__typename`.
+ */
 function renderSelectionSet(type: GraphQLType, depth = 0): string {
-  if (depth > 3) return ''
   const bare = unwrapType(type)
   if (isScalarType(bare) || isEnumType(bare)) return ''
+  if (depth > 3) return TYPENAME_SELECTION
   if (isObjectType(bare) || isInterfaceType(bare)) {
     const fields = bare.getFields()
     const entries = Object.values(fields).slice(0, 10)
     const parts: string[] = []
     for (const f of entries) {
+      if (isLeafType(f.type)) {
+        parts.push(f.name)
+        continue
+      }
       const inner = renderSelectionSet(f.type, depth + 1)
-      parts.push(inner ? `${f.name} ${inner}` : f.name)
+      // A composite field with no selection would be invalid: skip it.
+      if (inner) parts.push(`${f.name} ${inner}`)
     }
-    if (parts.length === 0) return ''
+    if (parts.length === 0) return TYPENAME_SELECTION
     return `{\n${parts.map((p) => `  ${p}`).join('\n')}\n}`
   }
   if (isUnionType(bare)) {

@@ -17,6 +17,7 @@ import type {
   Environment,
   HistoryEntry,
   HistoryEntryListItem,
+  HistoryListFilter,
   ParsedHttpFile,
   WorkspaceStateView,
   WorkspaceSessionTab,
@@ -620,7 +621,7 @@ const api = {
   // ── History ───────────────────────────────────────────────────────────────
   history: {
     save: (entry: HistoryEntry): Promise<void> => invoke('history:save', entry),
-    list: (filter?: { requestId?: string; limit?: number }): Promise<HistoryEntryListItem[]> =>
+    list: (filter?: HistoryListFilter): Promise<HistoryEntryListItem[]> =>
       invoke('history:list', filter),
     /** Returns the raw `.http` text for one entry. Consumers rebuild the
      * in-memory `HistoryEntry` via `activityLogToHistoryEntry` from
@@ -633,7 +634,13 @@ const api = {
     countForPath: (relPath: string, isFolder: boolean): Promise<number> =>
       invoke('history:countForPath', relPath, isFolder),
     deleteForPath: (relPath: string, isFolder: boolean): Promise<void> =>
-      invoke('history:deleteForPath', relPath, isFolder)
+      invoke('history:deleteForPath', relPath, isFolder),
+    /** Fires in every window after a run is saved, deleted, cleared or relinked. */
+    onChanged: (callback: () => void): (() => void) => {
+      const handler = (): void => callback()
+      ipcRenderer.on('history:changed', handler)
+      return () => ipcRenderer.removeListener('history:changed', handler)
+    }
   }
 }
 

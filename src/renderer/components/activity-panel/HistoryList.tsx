@@ -7,7 +7,6 @@ import { useRequestStore } from '../../stores/request'
 import { useHistoryExpansionStore } from '../../stores/historyExpansion'
 import { useHistoryChipsStore } from '../../stores/historyChips'
 import { useToastStore } from '../../stores/toast'
-import { HISTORY_UPDATED_EVENT } from '../../lib/events'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -89,8 +88,8 @@ interface HistoryListProps {
 }
 
 /**
- * Shared list of history entries. Filters to the active tab's `requestId`,
- * subscribes to HISTORY_UPDATED_EVENT, and routes interactions through the
+ * Shared list of history entries. Filters to the checked request chips,
+ * reloads on `history:changed`, and routes interactions through the
  * request store (open / repeat / raw / delete).
  *
  * REQ-0069: each row toggles inline expansion on click. On first expand the
@@ -140,6 +139,8 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     return out
   }, [chips])
   const hasActiveFilter = checkedRequestIds.size > 0
+  // Stable primitive for the load effect and the page reset below ('' ⇒ no filter).
+  const checkedKey = [...checkedRequestIds].join('\n')
 
   const PAGE_SIZE = 50
   const [entries, setEntries] = useState<HistoryEntryListItem[]>([])
@@ -158,6 +159,14 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     setIsLoading(Boolean(workspacePath))
   }
 
+  // A different chip selection is a different list: start again from the first page.
+  const [prevCheckedKey, setPrevCheckedKey] = useState(checkedKey)
+  if (prevCheckedKey !== checkedKey) {
+    setPrevCheckedKey(checkedKey)
+    setLoadedCount(PAGE_SIZE)
+    setHasMore(true)
+  }
+
   // Reset expansion + chip state ONLY on a real workspace change. The initial
   // mount must not reset — otherwise it would wipe chips populated by the
   // sync-with-open-tabs effect (or wipe expansion cache from another open
@@ -170,9 +179,9 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     resetChips()
   }, [workspacePath, resetExpansion, resetChips])
 
-  // Filter on the renderer because the IPC only supports a single `requestId`
-  // filter and we may have several checked chips. Pagination still works
-  // because the IPC limit caps total entries fetched.
+  // The IPC filters by the checked chips before its `limit`, so each page holds
+  // only matching runs. Filtering here too keeps the rows right while a reload
+  // for a new chip selection is still in flight.
   const visibleEntries = useMemo(() => {
     if (!hasActiveFilter) return entries
     return entries.filter((e) => e.requestId !== undefined && checkedRequestIds.has(e.requestId))
@@ -184,7 +193,11 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     void (async () => {
       setIsLoadingMore(true)
       try {
-        const result = await window.api.history.list({ limit: loadedCount })
+        const result = await window.api.history.list(
+          checkedKey
+            ? { requestIds: checkedKey.split('\n'), limit: loadedCount }
+            : { limit: loadedCount }
+        )
         if (cancelled) return
         setEntries(result)
         // If the IPC returned fewer than we asked for, there's nothing more on
@@ -202,7 +215,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     return () => {
       cancelled = true
     }
-  }, [workspacePath, loadedCount, reloadVersion])
+  }, [workspacePath, loadedCount, reloadVersion, checkedKey])
 
   const handleScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
@@ -215,11 +228,9 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     [hasMore, isLoadingMore]
   )
 
-  useEffect(() => {
-    const handler = (): void => setReloadVersion((v) => v + 1)
-    window.addEventListener(HISTORY_UPDATED_EVENT, handler)
-    return () => window.removeEventListener(HISTORY_UPDATED_EVENT, handler)
-  }, [])
+  // Main broadcasts `history:changed` to every window after a run is saved,
+  // deleted, cleared or relinked — so a popped-out panel converges too.
+  useEffect(() => window.api.history.onChanged(() => setReloadVersion((v) => v + 1)), [])
 
   const handleClear = useCallback(async () => {
     if (!workspacePath) return

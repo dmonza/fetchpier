@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { promises as fs } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 import { getLocal, type Mockttp } from 'mockttp'
 import { execute } from './execute'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../workspace/defaults'
@@ -149,6 +152,204 @@ describe('execute() — secret masking (REQ-0070 §6.6)', () => {
     expect(await seen[0].body.getText()).toBe(foreign)
     expect(result.request!.body).toBe(foreign)
     expect(result.request!.secretsMasked).toBeUndefined()
+  })
+
+  // ENG-19: a pre-request script that copies a secret verbatim leaves no marker,
+  // so only the value mask can catch it in the snapshot.
+  describe('a secret copied verbatim by a pre-request script', () => {
+    // A space and a slash: the URL copy is percent-encoded on assembly, so a mask
+    // applied after encoding would miss it.
+    const KEY = 'APIKEY secret/9999'
+
+    it('is masked in the snapshot URL, header, and body, and reported in secretsMasked', async () => {
+      const endpoint = await server.forPost('/copy').thenReply(200, 'ok')
+      const masker = maskerFor({ apiKey: KEY })
+      const req: HttpRequest = {
+        method: 'POST',
+        url: `${server.url}/copy`,
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        variables: { ...masker.markerVariables },
+        preRequestScript: [
+          `const k = fp.environment.get('apiKey')`,
+          `fp.request.url = fp.request.url + '?k=' + k`,
+          `fp.request.headers.set('X-Api-Key', k)`,
+          `fp.request.body = JSON.stringify({ password: k })`
+        ].join('\n')
+      }
+      const result = await execute(req, {
+        environmentId: null,
+        workspaceSettings: { ...DEFAULT_WORKSPACE_HTTP_SETTINGS, encodeUrl: true },
+        secrets: masker
+      })
+      expect(result.error).toBeUndefined()
+
+      // The wire still carries the plaintext the script wrote.
+      const seen = await endpoint.getSeenRequests()
+      expect(seen[0].headers['x-api-key']).toBe(KEY)
+      expect(await seen[0].body.getText()).toBe(JSON.stringify({ password: KEY }))
+      expect(seen[0].path).toBe(`/copy?k=${encodeURIComponent(KEY)}`)
+
+      const snap = result.request!
+      expect(snap.url).toContain('k={secret:apiKey}')
+      expect(snap.headers['X-Api-Key']).toBe('{secret:apiKey}')
+      expect(snap.body).toBe('{"password":"{secret:apiKey}"}')
+      const text = JSON.stringify(snap)
+      expect(text).not.toContain(KEY)
+      expect(text).not.toContain(encodeURIComponent(KEY))
+      expect(snap.secretsMasked).toEqual(['apiKey'])
+    })
+
+    it('is masked in a multipart text part through a plain variable holding it', async () => {
+      const ws = await fs.mkdtemp(join(tmpdir(), 'secrets-mp-'))
+      try {
+        const endpoint = await server.forPost('/mp').thenReply(200, 'ok')
+        const masker = maskerFor({ apiKey: KEY })
+        const req: HttpRequest = {
+          method: 'POST',
+          url: `${server.url}/mp`,
+          headers: {},
+          bodyType: 'multipart-form',
+          variables: { copy: '', ...masker.markerVariables },
+          multipartParts: [{ kind: 'text', id: 'mp-0', name: 'cred', value: 'key={{copy}}' }],
+          preRequestScript: `fp.environment.set('copy', fp.environment.get('apiKey'))`
+        }
+        const result = await execute(req, {
+          environmentId: null,
+          workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+          workspacePath: ws,
+          secrets: masker
+        })
+        expect(result.error).toBeUndefined()
+        const seen = await endpoint.getSeenRequests()
+        expect((await seen[0].body.getDecodedBuffer())!.toString('utf8')).toContain(`key=${KEY}`)
+
+        const part = result.request!.multipartParts![0]
+        expect(part.kind === 'text' && part.value).toBe('key={secret:apiKey}')
+        expect(JSON.stringify(result.request)).not.toContain(KEY)
+        expect(result.request!.secretsMasked).toEqual(['apiKey'])
+      } finally {
+        await fs.rm(ws, { recursive: true, force: true })
+      }
+    })
+
+    it('is masked with no masker when the script writes it under a secret name', async () => {
+      await server.forGet('/jwt').thenReply(200, 'ok')
+      const JWT = 'eyJhbGciOiJIUzI1NiJ9.NEWTOKEN.sig'
+      const req: HttpRequest = {
+        method: 'GET',
+        url: `${server.url}/jwt`,
+        headers: { 'X-Plain': 'plain-value' },
+        preRequestScript: [
+          `fp.environment.set('accessToken', '${JWT}')`,
+          `fp.request.headers.set('X-Auth', 'Bearer ' + fp.environment.get('accessToken'))`
+        ].join('\n')
+      }
+      const result = await execute(req, {
+        environmentId: null,
+        workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+        secretNames: ['accessToken']
+      })
+      expect(result.error).toBeUndefined()
+      const snap = result.request!
+      expect(snap.headers['X-Auth']).toBe('Bearer {secret:accessToken}')
+      // A plain value is never touched by the mask.
+      expect(snap.headers['X-Plain']).toBe('plain-value')
+      expect(JSON.stringify(snap)).not.toContain(JWT)
+      expect(snap.secretsMasked).toEqual(['accessToken'])
+    })
+  })
+
+  // ENG-40: the top-level error of a failed pre-request script is printed by the
+  // CLI and written into every report, so it gets the same mask as scriptResults.
+  it('masks a secret thrown by a pre-request script in result.error', async () => {
+    const masker = maskerFor({ sa: SECRET })
+    const req: HttpRequest = {
+      method: 'GET',
+      url: `${server.url}/never`,
+      headers: { 'X-Sa': '{{sa}}' },
+      variables: { ...masker.markerVariables },
+      preRequestScript: [
+        `fp.environment.set('fresh', 'FRESH-written-secret')`,
+        `throw new Error('bad credential: ' + fp.environment.get('sa') + ' / ' + fp.environment.get('fresh'))`
+      ].join('\n')
+    }
+    const result = await execute(req, {
+      environmentId: null,
+      workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+      secrets: masker,
+      secretNames: ['sa', 'fresh']
+    })
+    expect(result.notSent).toBe(true)
+    expect(result.error).toBe(
+      'Pre-request script failed: bad credential: {secret:sa} / {secret:fresh}'
+    )
+    expect(result.scriptResults?.preRequest?.error?.message).toBe(
+      'bad credential: {secret:sa} / {secret:fresh}'
+    )
+  })
+
+  // ENG-22: a pre-request script that refreshes a referenced secret must send
+  // the new value on that same send, as a plain variable write already does.
+  describe('a pre-request write to a referenced secret', () => {
+    const OLD = 'OLD-token-1111'
+    const NEW = 'NEW-token-2222'
+
+    it('reaches the wire with the new value while the snapshot stays masked', async () => {
+      const endpoint = await server.forGet('/refresh').thenReply(200, `echo ${NEW}`)
+      const masker = maskerFor({ accessToken: OLD })
+      const req: HttpRequest = {
+        method: 'GET',
+        url: `${server.url}/refresh`,
+        headers: { Authorization: 'Bearer {{accessToken}}' },
+        variables: { ...masker.markerVariables },
+        preRequestScript: `fp.environment.set('accessToken', '${NEW}')`
+      }
+      const result = await execute(req, {
+        environmentId: null,
+        workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+        secrets: masker,
+        secretNames: ['accessToken']
+      })
+      expect(result.error).toBeUndefined()
+
+      const seen = await endpoint.getSeenRequests()
+      expect(seen[0].headers['authorization']).toBe(`Bearer ${NEW}`)
+
+      const snap = result.request!
+      expect(snap.headers['Authorization']).toBe('Bearer {secret:accessToken}')
+      expect(snap.secretsMasked).toEqual(['accessToken'])
+      expect(JSON.stringify(snap)).not.toContain(NEW)
+      expect(JSON.stringify(snap)).not.toContain(OLD)
+      // The new plaintext is covered by the value mask too.
+      expect(result.response!.body).toBe('echo {secret:accessToken}')
+      expect(result.environmentChanges?.set.accessToken).toBe(NEW)
+    })
+
+    it('reports a removed referenced secret as unresolved and never sends the old value', async () => {
+      const endpoint = await server.forGet('/removed').thenReply(200, 'ok')
+      const masker = maskerFor({ accessToken: OLD })
+      const req: HttpRequest = {
+        method: 'GET',
+        url: `${server.url}/removed`,
+        headers: { Authorization: 'Bearer {{accessToken}}' },
+        variables: { ...masker.markerVariables },
+        preRequestScript: `fp.environment.remove('accessToken')`
+      }
+      const result = await execute(req, {
+        environmentId: null,
+        workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+        secrets: masker,
+        secretNames: ['accessToken']
+      })
+      expect(result.error).toBeUndefined()
+
+      const seen = await endpoint.getSeenRequests()
+      expect(seen[0].headers['authorization']).toBe('Bearer {{accessToken}}')
+      expect(result.warnings).toContainEqual({ code: 'UNRESOLVED_VARIABLE', name: 'accessToken' })
+      expect(result.request!.headers['Authorization']).toBe('Bearer {{accessToken}}')
+      expect(result.request!.secretsMasked).toBeUndefined()
+    })
   })
 
   it('is byte-identical to no-secrets when no masker is passed', async () => {

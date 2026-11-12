@@ -2,7 +2,6 @@
 export const SEND_REQUEST_EVENT = 'app:sendRequest'
 export const SAVE_NOW_EVENT = 'app:saveNow'
 export const URL_BAR_FOCUS_EVENT = 'app:focusUrlBar'
-export const HISTORY_UPDATED_EVENT = 'app:historyUpdated'
 export const OPEN_SETTINGS_EVENT = 'app:openSettings'
 export const OPEN_ABOUT_EVENT = 'app:openAbout'
 export const OPEN_UPDATES_EVENT = 'app:openUpdates'

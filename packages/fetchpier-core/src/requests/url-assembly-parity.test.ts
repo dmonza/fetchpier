@@ -2,8 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { getLocal, type Mockttp } from 'mockttp'
 import { execute } from './execute'
 import { parseHttpFile } from './parser'
-import { splitUrlAndParams } from '@shared/lib/query-string'
+import { splitFormBody, splitUrlAndParams } from '@shared/lib/query-string'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../workspace/defaults'
+import { createSecretMasker, mintExecutionNonce } from '../secrets/markers'
 import type { HttpRequest } from '@shared/types'
 
 /**
@@ -146,5 +147,139 @@ describe('URL assembly — adapter parity (REQ-0081 CA-01/CA-02)', () => {
 
     const reqs = await endpoint.getSeenRequests()
     expect(reqs[0].path).toBe('/list?a=1')
+  })
+})
+
+/**
+ * The same adapter parity for an x-www-form-urlencoded body. The desktop hands the
+ * core structured `formFields` (split on load); the CLI parser hands it the raw
+ * body. The core splits a raw form body with the same decoder, so both put the
+ * same bytes on the wire.
+ */
+describe('form body — adapter parity', () => {
+  const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' }
+
+  const fileFor = (path: string, body: string): string =>
+    `POST ${server.url}${path}\nContent-Type: application/x-www-form-urlencoded\n\n${body}\n`
+
+  it('the CLI shape (raw body) and the desktop shape (fields) send the same bytes', async () => {
+    const endpoint = await server.forPost('/form-parity').thenReply(200, 'ok')
+    const body = 'grant_type=client_credentials&scope=openid+profile&pw={{pw}}'
+    const variables = { pw: 'a&b=c' }
+
+    const cliReq: HttpRequest = {
+      ...parseHttpFile(fileFor('/form-parity', body)).requests[0],
+      variables
+    }
+    expect(cliReq.formFields).toBeUndefined()
+    const desktopReq: HttpRequest = {
+      method: 'POST',
+      url: `${server.url}/form-parity`,
+      headers: FORM,
+      body: undefined,
+      bodyType: 'x-www-form-urlencoded',
+      formFields: splitFormBody(body),
+      variables
+    }
+
+    const cliRes = await execute(cliReq, opts())
+    const desktopRes = await execute(desktopReq, opts())
+
+    const expected = 'grant_type=client_credentials&scope=openid%20profile&pw=a%26b%3Dc'
+    const seen = await endpoint.getSeenRequests()
+    expect(await seen[0].body.getText()).toBe(expected)
+    expect(await seen[1].body.getText()).toBe(expected)
+    expect(cliRes.request?.body).toBe(expected)
+    expect(desktopRes.request?.body).toBe(expected)
+  })
+
+  it('a secret in a raw form body (CLI shape) is encoded on the wire and legible in the snapshot', async () => {
+    const endpoint = await server.forPost('/form-secret').thenReply(200, 'ok')
+    const masker = createSecretMasker({
+      nonce: mintExecutionNonce(),
+      plaintextByName: { pw: 'p+w&x' }
+    })
+    const req = parseHttpFile(fileFor('/form-secret', 'user=ana&pw={{pw}}')).requests[0]
+
+    const res = await execute(
+      { ...req, variables: { ...masker.markerVariables } },
+      { ...opts(), secrets: masker }
+    )
+
+    const seen = await endpoint.getSeenRequests()
+    expect(await seen[0].body.getText()).toBe('user=ana&pw=p%2Bw%26x')
+    expect(res.request?.body).toBe('user=ana&pw={secret:pw}')
+    expect(res.request?.secretsMasked).toContain('pw')
+  })
+
+  it('a raw body under another Content-Type is sent as written', async () => {
+    const endpoint = await server.forPost('/form-raw').thenReply(200, 'ok')
+    const req = parseHttpFile(
+      `POST ${server.url}/form-raw\nContent-Type: text/plain\n\na=1&b=x+y {{v}}\n`
+    ).requests[0]
+
+    await execute({ ...req, variables: { v: 'p&q' } }, opts())
+
+    const seen = await endpoint.getSeenRequests()
+    expect(await seen[0].body.getText()).toBe('a=1&b=x+y p&q')
+  })
+
+  describe('pre-request script and the form body', () => {
+    const desktopForm = (path: string, preRequestScript: string): HttpRequest => ({
+      method: 'POST',
+      url: `${server.url}${path}`,
+      headers: FORM,
+      body: undefined,
+      bodyType: 'x-www-form-urlencoded',
+      formFields: [
+        { id: 'f-0', key: 'a', value: '1', enabled: true },
+        { id: 'f-1', key: 'note', value: 'x y', enabled: true },
+        { id: 'f-2', key: 'off', value: 'z', enabled: false },
+        { id: 'f-3', key: 't', value: '{{t}}', enabled: true }
+      ],
+      variables: { t: 'T&U', sig: 'p+q' },
+      preRequestScript
+    })
+
+    it('reads the encoded form template of the enabled fields (desktop shape); the fields are sent unchanged', async () => {
+      const endpoint = await server.forPost('/form-read').thenReply(200, 'ok')
+
+      const res = await execute(
+        desktopForm('/form-read', 'fp.environment.set("seen", fp.request.body)'),
+        opts()
+      )
+
+      expect(res.environmentChanges?.set.seen).toBe('a=1&note=x%20y&t={{t}}')
+      const seen = await endpoint.getSeenRequests()
+      expect(await seen[0].body.getText()).toBe('a=1&note=x%20y&t=T%26U')
+    })
+
+    it('sends the body the script wrote, through the form path (desktop shape)', async () => {
+      const endpoint = await server.forPost('/form-write').thenReply(200, 'ok')
+
+      const res = await execute(
+        desktopForm('/form-write', 'fp.request.body = fp.request.body + "&sig={{sig}}"'),
+        opts()
+      )
+
+      const expected = 'a=1&note=x%20y&t=T%26U&sig=p%2Bq'
+      const seen = await endpoint.getSeenRequests()
+      expect(await seen[0].body.getText()).toBe(expected)
+      expect(res.request?.body).toBe(expected)
+    })
+
+    it('reads the raw body on the CLI shape', async () => {
+      const endpoint = await server.forPost('/form-cli-read').thenReply(200, 'ok')
+      const req = parseHttpFile(fileFor('/form-cli-read', 'a=1&scope=x+y')).requests[0]
+
+      const res = await execute(
+        { ...req, preRequestScript: 'fp.environment.set("seen", fp.request.body)' },
+        opts()
+      )
+
+      expect(res.environmentChanges?.set.seen).toBe('a=1&scope=x+y')
+      const seen = await endpoint.getSeenRequests()
+      expect(await seen[0].body.getText()).toBe('a=1&scope=x%20y')
+    })
   })
 })

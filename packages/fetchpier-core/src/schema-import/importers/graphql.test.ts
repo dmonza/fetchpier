@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { introspectionFromSchema, buildSchema } from 'graphql'
+import { introspectionFromSchema, buildSchema, parse, validate } from 'graphql'
 import { importGraphQL } from './graphql'
 
 const SDL = `
@@ -111,5 +111,47 @@ describe('importGraphQL — malformed and edge inputs', () => {
     expect(op.editorState.method).toBe('POST')
     const ct = op.editorState.headers.find((h) => h.key.toLowerCase() === 'content-type')
     expect(ct?.value).toBe('application/json')
+  })
+})
+
+describe('importGraphQL — selection sets', () => {
+  /** Every generated operation, parsed back and validated against the schema. */
+  function validationErrors(sdl: string): string[] {
+    const { schema } = importGraphQL(sdl)
+    const gql = buildSchema(sdl)
+    return schema.operations.flatMap((op) => {
+      const { query } = JSON.parse(op.editorState.body) as { query: string }
+      return validate(gql, parse(query)).map((e) => e.message)
+    })
+  }
+
+  it('produces a valid operation for a self-referencing type', () => {
+    const sdl = `
+      type User { id: ID! name: String friends: [User!]! }
+      type Query { user(id: ID!): User }
+    `
+    expect(validationErrors(sdl)).toEqual([])
+  })
+
+  it('produces a valid operation for a five-level object chain', () => {
+    const sdl = `
+      type E { v: String }
+      type D { e: E }
+      type C { d: D }
+      type B { c: C }
+      type A { b: B }
+      type Query { a: A }
+    `
+    expect(validationErrors(sdl)).toEqual([])
+  })
+
+  it('falls back to __typename when a type has only composite fields past the depth cap', () => {
+    const sdl = `
+      type Node { next: Node }
+      type Query { node: Node }
+    `
+    expect(validationErrors(sdl)).toEqual([])
+    const { schema } = importGraphQL(sdl)
+    expect(schema.operations[0].editorState.body).toContain('__typename')
   })
 })

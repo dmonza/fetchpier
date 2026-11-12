@@ -217,7 +217,8 @@ export interface KeyValuePair {
    * the URL bar, the serializer, the outgoing URL, the masked snapshot — emits
    * the key alone. Set only by `splitUrlAndParams` (the one place URL text is
    * interpreted), so the desktop load path, the URL-bar edit path and the CLI
-   * flat-URL path cannot disagree. Cleared when the user edits the row's
+   * flat-URL path cannot disagree (the Postman importer also sets it for a
+   * structured `query[]` entry with `value: null`). Cleared when the user edits the row's
    * **value** — the only surface that says a value exists — and deliberately
    * *not* when the key is edited, so renaming a flag does not add an `=`.
    * Only meaningful for query params.
@@ -1576,6 +1577,17 @@ export interface HistoryEntryListItem {
   durationMs?: number
   request: { method: string; url: string }
   response: { status: number; statusText: string }
+}
+
+/**
+ * Filter for `window.api.history.list`. `requestId` / `requestIds` keep only
+ * runs of those requests (an empty `requestIds` is no filter); both apply
+ * before `limit`, so a page holds up to `limit` matching runs, newest first.
+ */
+export interface HistoryListFilter {
+  requestId?: string
+  requestIds?: string[]
+  limit?: number
 }
 
 // ── Workspace state (per-user, workspace-local) ─────────────────────────────

@@ -382,6 +382,101 @@ describe('round-trip fidelity — cookie-jar override', () => {
 })
 
 /** Map a parsed request back to a minimal editor state for re-serialization. */
+describe('round-trip fidelity — a ### above the first request line (FMT-03)', () => {
+  // The editing surface: the first request into the editor state, then a save
+  // writes it followed by the verbatim tail.
+  function save(text: string): string {
+    const parsed = parseHttpFile(text)
+    const req = parsed.requests[0]
+    const state = editorState({
+      ...parseFirstAsState(req),
+      auth: req.auth ?? { type: 'none' },
+      preRequestScript: req.preRequestScript ?? '',
+      postResponseScript: req.postResponseScript ?? '',
+      comments: req.comments,
+      ...(req.body !== undefined
+        ? { bodyType: 'raw' as const, rawSubtype: req.rawSubtype ?? 'text', body: req.body }
+        : {})
+    })
+    return serializeRequest(state, parsed.requestId) + (parsed.tail ?? '')
+  }
+
+  const ID = '9e3a4f72-1234-4abc-9def-0123456789ab'
+
+  it('a leading ### title stays a comment of the only request', () => {
+    const text = '### Login\nGET https://api.example.com/x\n'
+    const parsed = parseHttpFile(text)
+    expect(parsed.requests).toHaveLength(1)
+    expect(parsed.requests[0].comments).toEqual(['### Login'])
+    expect(parsed.tail).toBeUndefined()
+
+    const saved = save(text)
+    expect(saved.match(/GET https:\/\/api\.example\.com\/x/g)).toHaveLength(1)
+    // load → save → load → save is stable.
+    expect(save(saved)).toBe(saved)
+  })
+
+  it('metadata, then ###, then the request keeps auth and the script and writes the request once', () => {
+    const text = [
+      `# @id ${ID}`,
+      '# @auth',
+      '# type: bearer',
+      '# token: abc',
+      '# @end-auth',
+      '# @pre-request-script',
+      '# fp.environment.set("a", 1)',
+      '# @end-script',
+      '### Login',
+      'POST https://api.example.com/login',
+      'Content-Type: application/json',
+      '',
+      '{ "a": 1 }',
+      ''
+    ].join('\n')
+    const r = parseHttpFile(text).requests[0]
+    expect(r.auth).toMatchObject({ type: 'bearer' })
+    expect(r.preRequestScript).toBe('fp.environment.set("a", 1)')
+    expect(parseHttpFile(text).tail).toBeUndefined()
+
+    const saved = save(text)
+    expect(saved.match(/POST https:\/\/api\.example\.com\/login/g)).toHaveLength(1)
+    const reloaded = parseHttpFile(saved)
+    expect(reloaded.requests).toHaveLength(1)
+    expect(reloaded.requestId).toBe(ID)
+    expect(reloaded.requests[0].auth).toMatchObject({ type: 'bearer' })
+    expect(reloaded.requests[0].preRequestScript).toBe('fp.environment.set("a", 1)')
+    expect(reloaded.requests[0].comments).toEqual(['### Login'])
+    expect(save(saved)).toBe(saved)
+  })
+
+  it('comments, then ###, then the request keep every comment', () => {
+    const text = [
+      '# first note',
+      '// second note',
+      '###',
+      'GET https://api.example.com/x',
+      ''
+    ].join('\n')
+    const r = parseHttpFile(text).requests[0]
+    expect(r.comments).toEqual(['# first note', '// second note', '###'])
+    const saved = save(text)
+    expect(saved.match(/GET https:\/\/api\.example\.com\/x/g)).toHaveLength(1)
+    expect(save(saved)).toBe(saved)
+  })
+
+  it('a leading ### title in a multi-request file: every request kept once, tail from the next ###', () => {
+    const tail = '### two\nGET https://a/2\n'
+    const text = '### one\nGET https://a/1\n\n' + tail
+    const parsed = parseHttpFile(text)
+    expect(parsed.requests.map((r) => r.url)).toEqual(['https://a/1', 'https://a/2'])
+    expect(parsed.tail).toBe(tail)
+    const saved = save(text)
+    expect(saved.match(/GET https:\/\/a\/1/g)).toHaveLength(1)
+    expect(saved.match(/GET https:\/\/a\/2/g)).toHaveLength(1)
+    expect(parseHttpFile(saved).requests.map((r) => r.url)).toEqual(['https://a/1', 'https://a/2'])
+  })
+})
+
 function parseFirstAsState(req: {
   method: string
   url: string

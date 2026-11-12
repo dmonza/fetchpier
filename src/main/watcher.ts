@@ -1,5 +1,6 @@
 import { watch, FSWatcher } from 'chokidar'
 import { promises as fs, realpathSync } from 'fs'
+import { isAbsolute, relative, sep } from 'path'
 import { BrowserWindow } from 'electron'
 import { workspace } from '@fetchpier/core'
 
@@ -60,6 +61,17 @@ async function readAndBroadcastTree(workspacePath: string): Promise<void> {
 }
 
 /**
+ * True when some segment of `p` below `root` starts with a dot. The root itself
+ * and anything outside it are never "below", so the dots of the workspace's own
+ * ancestors do not count.
+ */
+function isDotPathBelow(root: string, p: string): boolean {
+  const rel = relative(root, p)
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return false
+  return rel.split(/[\\/]/).some((segment) => segment.startsWith('.'))
+}
+
+/**
  * Create the watcher over `workspacePath`. Returns false when the request root
  * could not be ensured — the signal recovery uses to count a failed attempt.
  * The public `startWatcher` ignores it, preserving the long-standing rule that
@@ -116,8 +128,11 @@ async function establishWatcher(workspacePath: string): Promise<boolean> {
   watcher = watch(watchRoot, {
     // Dotfiles include `.runs/` (per-artifact activity log), the atomic-write
     // temp files (dot-prefixed on purpose), and any future hidden state. The
-    // single dot-rule covers them all.
-    ignored: /(^|[/\\])\../,
+    // single dot-rule covers them all. It tests only the part BELOW the watch
+    // root: chokidar passes absolute paths, so a dot-prefixed ancestor of the
+    // workspace (`.worktrees/x`, `~/.local/...`) would otherwise drop every event
+    // with no error.
+    ignored: (p: string) => isDotPathBelow(watchRoot, p),
     ignoreInitial: true,
     persistent: true,
     depth: 10,

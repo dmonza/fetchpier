@@ -23,6 +23,7 @@ import type {
   FsDeleteResult,
   HistoryEntry,
   HistoryEntryListItem,
+  HistoryListFilter,
   NameCheckInput,
   NameCheckResult,
   WorkspaceHttpSettings,
@@ -167,7 +168,7 @@ export interface WorkspaceTreeOps {
 /** Run history (`requests/.runs/*.http`). */
 export interface WorkspaceHistoryOps {
   save(entry: HistoryEntry): Promise<void>
-  list(filter?: { requestId?: string; limit?: number }): Promise<HistoryEntryListItem[]>
+  list(filter?: HistoryListFilter): Promise<HistoryEntryListItem[]>
   get(entryId: string): Promise<string>
   updateSourceFile(oldRelPath: string, newRelPath: string, isFolder: boolean): Promise<void>
   countForPath(relPath: string, isFolder: boolean): Promise<number>

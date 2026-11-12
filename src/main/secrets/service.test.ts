@@ -28,6 +28,7 @@ vi.mock('electron', () => ({
 import * as service from './service'
 import * as localValues from './local-values'
 import { lockAll } from './unlock-state'
+import { storeWorkspaceKey } from './keystore'
 import { secrets, workspace } from '@fetchpier/core'
 
 let ws: string
@@ -283,6 +284,85 @@ describe('secrets service', () => {
     expect(lv.variables.apiToken).not.toBe(beforeLocal)
     // The local override still reveals correctly under the new key.
     expect(await localMod.revealLocalValue(ws, 'dev', 'apiToken')).toBe('LOCAL-TOKEN')
+  })
+
+  // SEC-05: an environment the listing cannot read would keep its secrets under
+  // the old key while the manifest moves on, so rotation refuses up front.
+  it('rotateKey refuses when an environment config.json is unreadable, writing nothing', async () => {
+    const setup = await service.setupKey(ws)
+    await service.setSecret(ws, 'dev', 'apiToken', 'PLAINTOKEN')
+    const stagingDir = join(ws, 'environments', 'staging')
+    await fs.mkdir(stagingDir, { recursive: true })
+    const conflicted = '<<<<<<< HEAD\n{"id":"staging"}\n=======\n{"id":"staging"}\n>>>>>>> branch\n'
+    await fs.writeFile(join(stagingDir, 'config.json'), conflicted)
+    const devBefore = await fs.readFile(join(ws, 'environments', 'dev', 'config.json'), 'utf-8')
+
+    await expect(service.rotateKey(ws)).rejects.toMatchObject({
+      code: 'WORKSPACE_INVALID',
+      message: expect.stringContaining('staging')
+    })
+
+    expect((await workspace.openWorkspace(ws).secrets.readManifest())?.encryption.keyId).toBe(
+      setup.keyId
+    )
+    expect(await fs.readFile(join(ws, 'environments', 'dev', 'config.json'), 'utf-8')).toBe(
+      devBefore
+    )
+    expect(await fs.readFile(join(stagingDir, 'config.json'), 'utf-8')).toBe(conflicted)
+  })
+
+  // SEC-08: after a rotation pulled from a teammate, an environment never opened
+  // since still has its local file under the earlier (retained) key.
+  it('rotateKey succeeds when a local file is still under an earlier retained key', async () => {
+    const k1 = await secrets.generateWorkspaceKey()
+    const m1 = await secrets.buildManifest(k1)
+    await workspace.openWorkspace(ws).secrets.writeManifest(m1)
+    await storeWorkspaceKey(m1.encryption.keyId, k1, 'old')
+    await secrets.writeLocalValues(ws, 'dev', {
+      version: 1,
+      keyId: m1.encryption.keyId,
+      variables: { apiToken: await secrets.encryptValue(k1, 'apiToken', 'LOCAL-TOKEN') }
+    })
+    // The pulled rotation: manifest + shared config now under K2, K2 entered here.
+    const k2 = await secrets.generateWorkspaceKey()
+    const m2 = await secrets.buildManifest(k2)
+    await workspace.openWorkspace(ws).secrets.writeManifest(m2)
+    await storeWorkspaceKey(m2.encryption.keyId, k2, 'new')
+    await fs.writeFile(
+      join(ws, 'environments', 'dev', 'config.json'),
+      JSON.stringify({
+        id: 'dev',
+        name: 'dev',
+        variables: { apiToken: await secrets.encryptValue(k2, 'apiToken', 'SHARED') }
+      })
+    )
+
+    const rotated = await service.rotateKey(ws)
+
+    const lv = await readLocal()
+    expect((lv as { keyId?: string }).keyId).toBe(rotated.keyId)
+    expect(await localValues.revealLocalValue(ws, 'dev', 'apiToken')).toBe('LOCAL-TOKEN')
+    expect(await service.revealValue(ws, 'dev', 'apiToken')).toBe('SHARED')
+  })
+
+  // SEC-08: a local value that really is corrupt names its variable, not "(local)".
+  it('rotateKey names the real variable when a local value cannot be decrypted', async () => {
+    const setup = await service.setupKey(ws)
+    await secrets.writeLocalValues(ws, 'dev', {
+      version: 1,
+      keyId: setup.keyId,
+      variables: {
+        apiToken: 'enc:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+      }
+    })
+
+    await expect(service.rotateKey(ws)).rejects.toMatchObject({
+      code: 'SECRETS_VALUE_CORRUPT',
+      message: expect.stringContaining('"apiToken"')
+    })
+    expect((await workspace.openWorkspace(ws).secrets.readManifest())?.encryption.keyId).toBe(
+      setup.keyId
+    )
   })
 
   // ── REQ-0077: direct secret deletion ──────────────────────────────────────

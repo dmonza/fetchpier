@@ -855,6 +855,7 @@
   "workspaceSettings": {
     "title": "Configuración del workspace",
     "subtitle": "Defaults aplicados a cada request de este workspace.",
+    "saveFailed": "No se guardó la configuración del workspace. Verificá que .fetchpier/settings.json sea JSON válido y volvé a intentar.",
     "tabs": {
       "http": "HTTP",
       "security": "Seguridad",

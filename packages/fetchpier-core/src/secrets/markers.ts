@@ -64,6 +64,14 @@ export interface SecretMasker {
   logRender(text: string): string
   /** Names whose marker appears in any of the supplied resolved texts. */
   collectMaskedNames(texts: Array<string | undefined>): string[]
+  /**
+   * A masker for the rest of this send with a pre-request script's writes
+   * applied: a name in `set` renders its new plaintext on the wire, a name in
+   * `removed` loses its marker (the reference is then unresolved, like a plain
+   * variable's). Same nonce, same log mask; names this masker does not hold are
+   * ignored. The receiver is not changed.
+   */
+  withOverrides(set: Record<string, string>, removed: readonly string[]): SecretMasker
 }
 
 function escapeRegExp(s: string): string {
@@ -98,11 +106,21 @@ export function createSecretMasker(input: SecretMaskerInput): SecretMasker {
     return found
   }
 
+  const withOverrides = (set: Record<string, string>, removed: readonly string[]): SecretMasker => {
+    const next: Record<string, string> = { ...plaintextByName }
+    for (const name of names) {
+      if (removed.includes(name)) delete next[name]
+      else if (Object.prototype.hasOwnProperty.call(set, name)) next[name] = set[name]
+    }
+    return createSecretMasker({ nonce, plaintextByName: next })
+  }
+
   return {
     markerVariables,
     scriptEnvironment: { ...plaintextByName },
     wireRender,
     logRender,
-    collectMaskedNames
+    collectMaskedNames,
+    withOverrides
   }
 }

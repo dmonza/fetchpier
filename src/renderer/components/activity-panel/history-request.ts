@@ -5,7 +5,7 @@ import type {
   RawSubtype,
   RequestEditorState
 } from '../../../shared/types'
-import { splitUrlAndParams } from '@shared/lib/query-string'
+import { splitFormBody, splitUrlAndParams } from '@shared/lib/query-string'
 
 /**
  * Editor states rebuilt from an activity-log entry, for the history surfaces:
@@ -42,17 +42,8 @@ export function historyViewRequest(entry: HistoryEntry): RequestEditorState {
         enabled: f.enabled ?? true
       }))
     } else if (body) {
-      let fieldId = 0
-      formFields = body
-        .split('&')
-        .filter(Boolean)
-        .map((pair) => {
-          const eqIdx = pair.indexOf('=')
-          const key =
-            eqIdx === -1 ? decodeURIComponent(pair) : decodeURIComponent(pair.slice(0, eqIdx))
-          const value = eqIdx === -1 ? '' : decodeURIComponent(pair.slice(eqIdx + 1))
-          return { id: `f-${fieldId++}`, key, value, enabled: true }
-        })
+      // The editor's own form decoder: a malformed escape keeps its raw text.
+      formFields = splitFormBody(body)
     }
     resolvedBody = ''
   } else if (body) {

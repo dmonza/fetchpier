@@ -52,10 +52,20 @@ export function isRequestLine(line: string): boolean {
  * Indices of the `###` lines that are confirmed request separators: a `###`
  * line whose next content line — after its same-line label and any following
  * blank / comment lines — is a request line. Lines are LF-split file lines.
+ *
+ * A `###` line above the first request line is never a separator: until a
+ * content line (the line the parser reads as the first request line) has been
+ * seen, a `###` is a comment of the first request's metadata, so the block
+ * above it is not split off and dropped (FMT-03).
  */
 export function findRequestSeparators(lines: string[]): number[] {
   const out: number[] = []
+  let seenRequestLine = false
   for (let i = 0; i < lines.length; i += 1) {
+    if (!seenRequestLine) {
+      if (lines[i].trim() !== '' && !isComment(lines[i])) seenRequestLine = true
+      continue
+    }
     if (!SEPARATOR_LINE.test(lines[i])) continue
     // Look ahead past blank and comment lines for the next content line.
     let j = i + 1

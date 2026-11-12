@@ -83,6 +83,22 @@ describe('Open — read-only body hydration (moved unchanged)', () => {
     ])
   })
 
+  it('opens a form body whose literal holds a bare `%` (raw text kept), reading `+` as a space', () => {
+    const r = historyViewRequest(
+      entry('{{baseUrl}}/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'discount=10%&scope=read+write&id={{id}}'
+      })
+    )
+    expect(r.bodyType).toBe('x-www-form-urlencoded')
+    expect(r.formFields.map((f) => [f.key, f.value])).toEqual([
+      ['discount', '10%'],
+      ['scope', 'read write'],
+      ['id', '{{id}}']
+    ])
+  })
+
   it('reads a JSON body as raw json', () => {
     const r = historyViewRequest(
       entry('{{baseUrl}}/users', {

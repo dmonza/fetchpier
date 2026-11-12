@@ -6,6 +6,7 @@ import { getLocal, type Mockttp } from 'mockttp'
 import { execute } from './execute'
 import { list } from './cookie-jar'
 import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../workspace/defaults'
+import { createSecretMasker, mintExecutionNonce } from '../secrets/markers'
 import type { HttpRequest } from '@shared/types'
 
 /**
@@ -360,5 +361,51 @@ describe('COOKIE-011 — a two-slash path does not change whose cookies apply', 
     await execute(get(`${hostB}//users`), opts())
 
     expect((await hit.getSeenRequests())[0].headers.cookie).toBe('own=yes')
+  })
+})
+
+// ENG-27: every hop URL a cookie snapshot carries was the wire URL, so a secret
+// in the query reached the Cookies tab in plaintext.
+describe('COOKIE-012 — cookie snapshots never carry a secret from the wire URL', () => {
+  const KEY = 'PLAINTEXT-KEY-xyz'
+  const send = (
+    url: string,
+    over: Partial<Parameters<typeof execute>[1]> = {}
+  ): ReturnType<typeof execute> => {
+    const masker = createSecretMasker({
+      nonce: mintExecutionNonce(),
+      plaintextByName: { apiKey: KEY }
+    })
+    const req = get(url, {
+      auth: { type: 'api-key', key: 'api_key', value: '{{apiKey}}', location: 'query' },
+      variables: { ...masker.markerVariables }
+    })
+    return execute(req, { ...opts(), secrets: masker, ...over })
+  }
+
+  it('masks every sent and received hop URL across a redirect with the jar on', async () => {
+    await server
+      .forGet('/login')
+      .thenReply(302, undefined, { location: '/home', 'set-cookie': 'sid=abc' })
+    await server.forGet('/home').thenReply(200, 'ok', { 'set-cookie': 'pref=1' })
+
+    const res = await send(`${hostA}/login`)
+
+    expect(res.response?.status).toBe(200)
+    expect(res.cookies?.sent.length).toBeGreaterThan(0)
+    expect(res.cookies?.received.map((c) => c.url)).toEqual([
+      `${hostA}/login?api_key={secret:apiKey}`,
+      `${hostA}/home`
+    ])
+    expect(JSON.stringify(res.cookies)).not.toContain(KEY)
+  })
+
+  it('masks the received hop URL when the jar does not run', async () => {
+    await server.forGet('/c').thenReply(200, 'ok', { 'set-cookie': 'sid=1' })
+
+    const res = await send(`${hostA}/c`, { environmentId: null })
+
+    expect(res.cookies?.received.map((c) => c.url)).toEqual([`${hostA}/c?api_key={secret:apiKey}`])
+    expect(JSON.stringify(res.cookies)).not.toContain(KEY)
   })
 })

@@ -143,7 +143,9 @@ function serializePart(part: MultipartPart): string[] {
   attrs.push(`name=${serializeAttributeValue(part.name)}`)
   attrs.push(`type=${part.kind}`)
   if (part.kind === 'file') {
-    attrs.push(`file=${part.file.ref}`)
+    // Quoted when needed, like every other attribute: a staged name may hold
+    // spaces, and an unquoted value ends at the first one on reload (FMT-04).
+    attrs.push(`file=${serializeAttributeValue(part.file.ref)}`)
     if (part.filename !== undefined) {
       attrs.push(`filename=${serializeAttributeValue(part.filename)}`)
     }

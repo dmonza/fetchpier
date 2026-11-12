@@ -105,6 +105,36 @@ export function splitUrlAndParams(rawUrl: string): {
   return { baseUrl, params, warnings }
 }
 
+/** Decodes one literal form segment: `+` is a space, then percent-decoding. */
+function decodeFormLiteral(literal: string): string {
+  return decodeURIComponent(literal.replace(/\+/g, ' '))
+}
+
+/**
+ * Splits an `application/x-www-form-urlencoded` body into enabled fields: on `&`
+ * (empty pairs dropped), then on the first `=`. The one form decoder, shared by
+ * the desktop load path, the history Open builder and the core's fallback for a
+ * raw form body (the CLI shape) — the form-body twin of {@link splitUrlAndParams}.
+ *
+ * Token-aware, form semantics: only literal segments are decoded (`+` → space,
+ * then percent-decode); `{{variable}}` tokens pass through verbatim. A literal
+ * with a malformed escape keeps its author bytes (containment only — the
+ * `malformed` flag and advisory stay exclusive to query parameters, REQ-0113).
+ * Never throws.
+ */
+export function splitFormBody(body: string): KeyValuePair[] {
+  let fieldId = 0
+  return body
+    .split('&')
+    .filter(Boolean)
+    .map((pair) => {
+      const eqIdx = pair.indexOf('=')
+      const key = mapTokenLiterals(eqIdx === -1 ? pair : pair.slice(0, eqIdx), decodeFormLiteral)
+      const value = eqIdx === -1 ? '' : mapTokenLiterals(pair.slice(eqIdx + 1), decodeFormLiteral)
+      return { id: `f-${fieldId++}`, key, value, enabled: true }
+    })
+}
+
 /**
  * Percent-encodes one resolved query component (a key or a value).
  *

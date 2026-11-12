@@ -1,11 +1,42 @@
-import { ipcMain } from 'electron'
-import type { HistoryEntry, HistoryEntryListItem } from '../../shared/types'
+import { BrowserWindow, ipcMain } from 'electron'
+import type { HistoryEntry, HistoryEntryListItem, HistoryListFilter } from '../../shared/types'
 import { requireActiveWorkspaceHandle } from '../state/active-workspace'
+
+/**
+ * Tell every window the runs on disk changed, so each HistoryList (the main
+ * window's and a popped-out Activity panel's) reloads. Mirrors `cookies:changed`.
+ */
+function broadcastChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('history:changed')
+  }
+}
+
+function validateListFilter(filter: unknown): HistoryListFilter | undefined {
+  if (filter === undefined || filter === null) return undefined
+  const invalid = (): never => {
+    throw new Error('Invalid history filter')
+  }
+  if (typeof filter !== 'object' || Array.isArray(filter)) invalid()
+  const { requestId, requestIds, limit } = filter as Record<string, unknown>
+  if (requestId !== undefined && typeof requestId !== 'string') invalid()
+  if (
+    requestIds !== undefined &&
+    (!Array.isArray(requestIds) || requestIds.some((id) => typeof id !== 'string'))
+  ) {
+    invalid()
+  }
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0)) {
+    invalid()
+  }
+  return filter as HistoryListFilter
+}
 
 export function registerHistoryHandlers(): void {
   /** Save a history entry to disk. */
   ipcMain.handle('history:save', async (_event, entry: HistoryEntry): Promise<void> => {
     await requireActiveWorkspaceHandle().history.save(entry)
+    broadcastChanged()
   })
 
   /**
@@ -17,11 +48,8 @@ export function registerHistoryHandlers(): void {
    */
   ipcMain.handle(
     'history:list',
-    async (
-      _event,
-      filter?: { requestId?: string; limit?: number }
-    ): Promise<HistoryEntryListItem[]> => {
-      return requireActiveWorkspaceHandle().history.list(filter)
+    async (_event, filter?: unknown): Promise<HistoryEntryListItem[]> => {
+      return requireActiveWorkspaceHandle().history.list(validateListFilter(filter))
     }
   )
 
@@ -44,6 +72,7 @@ export function registerHistoryHandlers(): void {
         newRelPath,
         isFolder
       )
+      broadcastChanged()
     }
   )
 
@@ -60,16 +89,19 @@ export function registerHistoryHandlers(): void {
     'history:deleteForPath',
     async (_event, relPath: string, isFolder: boolean): Promise<void> => {
       await requireActiveWorkspaceHandle().history.deleteForPath(relPath, isFolder)
+      broadcastChanged()
     }
   )
 
   /** Delete a single history entry by id. */
   ipcMain.handle('history:delete', async (_event, entryId: string): Promise<void> => {
     await requireActiveWorkspaceHandle().history.remove(entryId)
+    broadcastChanged()
   })
 
   /** Delete all history files for the workspace. */
   ipcMain.handle('history:clear', async (): Promise<void> => {
     await requireActiveWorkspaceHandle().history.clear()
+    broadcastChanged()
   })
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parseHttpFile } from './parser'
+import { sanitizeOriginalName } from './binary-store'
 import { serializeRequest } from '@shared/lib/http-serializer'
 import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import type { RequestEditorState } from '@shared/types'
@@ -84,6 +85,66 @@ X-Tag: one
       invalidBinaryRef: r.invalidBinaryRef
     }
     expect(serializeRequest(state, parsed.requestId)).toBe(text)
+  })
+
+  describe('a ref whose staged name has spaces (FMT-05)', () => {
+    const name = sanitizeOriginalName('My Report 2026.pdf')
+    const spacedRef = `${VALID_HASH}__${name}`
+
+    it('survives serialize → parse and a second save byte-identical', () => {
+      const original = state({
+        method: 'POST',
+        url: 'https://example.com/upload',
+        bodyType: 'binary',
+        binaryFile: {
+          ref: spacedRef,
+          originalName: name,
+          sizeBytes: 0,
+          mimeType: 'application/pdf'
+        }
+      })
+      const text = serializeRequest(original)
+      const parsed = parseHttpFile(text)
+      const r = parsed.requests[0]
+      expect(parsed.warnings).toBeUndefined()
+      expect(r.bodyType).toBe('binary')
+      expect(r.binaryFile?.ref).toBe(spacedRef)
+      expect(r.binaryFile?.originalName).toBe('My Report 2026.pdf')
+      expect(r.binaryFile?.mimeType).toBe('application/pdf')
+      expect(r.comments).toBeUndefined()
+      expect(serializeRequest(state({ ...original, binaryFile: r.binaryFile }))).toBe(text)
+    })
+
+    it('is read by the legacy first-body-line shim too', () => {
+      const text = `POST https://example.com/upload\n\n# @binary-file: ${spacedRef}\n`
+      const r = parseHttpFile(text).requests[0]
+      expect(r.bodyType).toBe('binary')
+      expect(r.binaryFile?.ref).toBe(spacedRef)
+      expect(r.body).toBeUndefined()
+    })
+
+    it('drops trailing whitespace after the ref', () => {
+      const text = `# @binary-file: ${spacedRef}  \t\nPOST https://example.com/upload\n`
+      expect(parseHttpFile(text).requests[0].binaryFile?.ref).toBe(spacedRef)
+    })
+
+    it('a malformed value with spaces is still an invalid ref, kept by a save', () => {
+      const text = '# @binary-file: not a valid ref\nPOST https://example.com/x\n'
+      const parsed = parseHttpFile(text)
+      const r = parsed.requests[0]
+      expect(r.binaryFile).toBeUndefined()
+      expect(r.invalidBinaryRef).toBe('not a valid ref')
+      expect(parsed.warnings?.[0]).toContain('invalid # @binary-file')
+      const saved = serializeRequest(
+        state({
+          method: r.method,
+          url: r.url,
+          bodyType: 'binary',
+          invalidBinaryRef: r.invalidBinaryRef
+        })
+      )
+      expect(saved).toBe(text)
+    })
   })
 
   it('warns and prefers the binary ref when a body coexists with the marker', () => {

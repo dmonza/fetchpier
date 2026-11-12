@@ -7,7 +7,7 @@ import { useWorkspaceStore } from '../../stores/workspace'
 import { useRequestStore } from '../../stores/request'
 import { useEnvironmentStore } from '../../stores/environment'
 import { useThemeStore } from '../../stores/theme'
-import { OPEN_SETTINGS_EVENT, HISTORY_UPDATED_EVENT } from '../../lib/events'
+import { OPEN_SETTINGS_EVENT } from '../../lib/events'
 import type { WorkspaceTree } from '../../../shared/types'
 
 interface CommandPaletteProps {
@@ -137,8 +137,8 @@ function PaletteContent({ onClose }: { onClose: () => void }): React.JSX.Element
         icon: <Trash2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
         run: async () => {
           try {
+            // Main broadcasts `history:changed`, so every open history list reloads.
             await window.api.history.clear()
-            window.dispatchEvent(new CustomEvent(HISTORY_UPDATED_EVENT))
           } catch (err) {
             console.error(err)
           }

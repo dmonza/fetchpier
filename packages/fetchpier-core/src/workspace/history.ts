@@ -17,7 +17,7 @@ import {
   serializeActivityLog,
   type ActivityLogFile
 } from '../activity-log'
-import type { HistoryEntry, HistoryEntryListItem } from '@shared/types'
+import type { HistoryEntry, HistoryEntryListItem, HistoryListFilter } from '@shared/types'
 import { resolveInsideWorkspace } from './safe-path'
 import { historyEntryToActivityLog } from './history-format'
 import { atomicWriteFile } from './atomic-write'
@@ -97,10 +97,14 @@ export async function save(workspacePath: string, entry: HistoryEntry): Promise<
  * status line (no bodies, no script blocks). Files that fail to parse are
  * silently skipped. Non-`.http` files (e.g. stale REQ-0067-era `.json`) are
  * ignored.
+ *
+ * `requestId` / `requestIds` keep only runs of those requests (an empty
+ * `requestIds` is no filter). Both apply before `limit`, so a page always
+ * holds up to `limit` matching runs.
  */
 export async function list(
   workspacePath: string,
-  filter?: { requestId?: string; limit?: number }
+  filter?: HistoryListFilter
 ): Promise<HistoryEntryListItem[]> {
   const dir = historyDir(workspacePath)
   try {
@@ -111,6 +115,8 @@ export async function list(
 
   const files = await listHttpFiles(dir)
   const wantRequestId = filter?.requestId
+  const wantRequestIds =
+    filter?.requestIds && filter.requestIds.length > 0 ? new Set(filter.requestIds) : null
   const limit = filter?.limit ?? Infinity
 
   const out: HistoryEntryListItem[] = []
@@ -127,6 +133,7 @@ export async function list(
     const id = preview.directives['run-id'] ?? ''
     const requestId = preview.directives['request-id']
     if (wantRequestId && requestId !== wantRequestId) continue
+    if (wantRequestIds && (requestId === undefined || !wantRequestIds.has(requestId))) continue
     if (!preview.requestLine || !preview.responseStatus) continue
     const item: HistoryEntryListItem = {
       id,

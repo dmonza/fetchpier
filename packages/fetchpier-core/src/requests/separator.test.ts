@@ -56,4 +56,25 @@ describe('findRequestSeparators', () => {
     const lines = ['GET https://a/1', '### b', 'GET https://a/2', '### c', 'GET https://a/3']
     expect(findRequestSeparators(lines)).toEqual([1, 3])
   })
+
+  it('does not treat a ### above the first request line as a separator (FMT-03)', () => {
+    expect(findRequestSeparators(['### Login', 'GET https://a/1'])).toEqual([])
+    // Metadata and comments before it do not count as a request.
+    const lines = [
+      '# @id 9e3a4f72-1234-4abc-9def-0123456789ab',
+      '# @auth',
+      '# type: bearer',
+      '# @end-auth',
+      '// a note',
+      '',
+      '###',
+      'GET https://a/1'
+    ]
+    expect(findRequestSeparators(lines)).toEqual([])
+  })
+
+  it('still splits at the first ### after a leading one (FMT-03)', () => {
+    const lines = ['### one', 'GET https://a/1', '', '### two', 'GET https://a/2']
+    expect(findRequestSeparators(lines)).toEqual([3])
+  })
 })

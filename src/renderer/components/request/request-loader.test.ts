@@ -204,6 +204,39 @@ describe('mapHttpRequestToEditorState', () => {
     ])
   })
 
+  it('reads `+` in a form body as a space and saves it back as `%20` (a real plus stays a plus)', () => {
+    const loaded = mapHttpRequestToEditorState(
+      makeRequest({
+        method: 'POST',
+        url: 'https://example.com/token',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'grant_type=client_credentials&scope=openid+profile&sig=a%2Bb'
+      })
+    )
+    expect(loaded.formFields.map((f) => [f.key, f.value])).toEqual([
+      ['grant_type', 'client_credentials'],
+      ['scope', 'openid profile'],
+      ['sig', 'a+b']
+    ])
+    const saved = serializeRequest({ ...DEFAULT_REQUEST_STATE, ...loaded })
+    expect(saved).toContain('grant_type=client_credentials&scope=openid%20profile&sig=a%2Bb')
+  })
+
+  it('keeps the author bytes of a form literal with a malformed escape', () => {
+    const result = mapHttpRequestToEditorState(
+      makeRequest({
+        method: 'POST',
+        url: 'https://example.com/x',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'discount=10%&scope=read+write'
+      })
+    )
+    expect(result.formFields.map((f) => [f.key, f.value])).toEqual([
+      ['discount', '10%'],
+      ['scope', 'read write']
+    ])
+  })
+
   it('CA-07: form body round-trips byte-identically (save -> load -> save)', () => {
     const formFields = [
       { id: 'f-0', key: 'grant_type', value: 'client_credentials', enabled: true },

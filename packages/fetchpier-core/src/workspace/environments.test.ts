@@ -11,7 +11,7 @@ import {
   saveEnvironment,
   writeEnvFile
 } from './environments'
-import { loadHttpSettings, loadHttpSettingsStrict } from './settings-store'
+import { loadHttpSettings, loadHttpSettingsStrict, updateHttpSettings } from './settings-store'
 import type { Environment } from '@shared/types'
 
 const dirs: string[] = []
@@ -333,4 +333,48 @@ describe('loadHttpSettingsStrict (CLI hardening)', () => {
     // The desktop's lenient loader still falls back to defaults.
     expect((await loadHttpSettings(ws)).verifySsl).toBe(true)
   })
+})
+
+// WSP-01: the write reads strictly — a parse failure must never become data loss.
+describe('updateHttpSettings (strict write)', () => {
+  it('a missing file is created with the patch over defaults', async () => {
+    const ws = newWorkspace()
+    const next = await updateHttpSettings(ws, { verifySsl: false })
+    expect(next.verifySsl).toBe(false)
+    const onDisk = JSON.parse(await fs.readFile(join(ws, '.fetchpier', 'settings.json'), 'utf-8'))
+    expect(onDisk).toMatchObject({ version: 1, http: { verifySsl: false } })
+  })
+
+  it('keeps unknown keys and the rest of the http block of a valid file', async () => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, '.fetchpier'), { recursive: true })
+    await fs.writeFile(
+      join(ws, '.fetchpier', 'settings.json'),
+      JSON.stringify({ version: 1, teamNote: 'keep', http: { followRedirects: false } })
+    )
+    await updateHttpSettings(ws, { verifySsl: false })
+    const onDisk = JSON.parse(await fs.readFile(join(ws, '.fetchpier', 'settings.json'), 'utf-8'))
+    expect(onDisk).toMatchObject({
+      teamNote: 'keep',
+      http: { followRedirects: false, verifySsl: false }
+    })
+  })
+
+  it.each([
+    ['invalid JSON (a merge conflict)', '{\n  "http": {\n<<<<<<< HEAD\n    "verifySsl": false\n'],
+    ['a non-object', '[1, 2]']
+  ])(
+    'an existing file with %s is WORKSPACE_INVALID and is left intact',
+    async (_label, content) => {
+      const ws = newWorkspace()
+      const file = join(ws, '.fetchpier', 'settings.json')
+      await fs.mkdir(join(ws, '.fetchpier'), { recursive: true })
+      await fs.writeFile(file, content)
+      await expect(updateHttpSettings(ws, { followRedirects: false })).rejects.toMatchObject({
+        code: 'WORKSPACE_INVALID',
+        message: expect.stringContaining(file)
+      })
+      expect(await fs.readFile(file, 'utf-8')).toBe(content)
+    }
+  )
 })

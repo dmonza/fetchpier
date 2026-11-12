@@ -24,8 +24,10 @@ import {
 import { resolveRequestVariables, type ResolvedRequest } from './variables'
 import {
   splitUrlAndParams,
+  splitFormBody,
   assembleQuery,
-  encodeQueryComponentPreservingMasks
+  encodeQueryComponentPreservingMasks,
+  encodeTemplateComponent
 } from '@shared/lib/query-string'
 import { resolveSettings } from './settings-resolver'
 import { sendRequestWithRaw, type ExchangeFacts, type ProxyOption } from './client'
@@ -36,7 +38,7 @@ import { snapshotFromSetCookie } from './cookie-store'
 import { encodeMultipart } from './multipart-encoder'
 import { readBinary } from './binary-store'
 import type { ResolvedTlsMaterial } from '../tls/resolve'
-import type { SecretMasker } from '../secrets/markers'
+import { secretLogMask, type SecretMasker } from '../secrets/markers'
 import { CoreError } from '../shared/context'
 import { describeError } from '../shared/describe-error'
 
@@ -154,18 +156,49 @@ function mapResolvedStrings(r: ResolvedRequest, fn: (s: string) => string): Reso
   }
 }
 
-/** Build the wire body for a resolved request (form-encode when applicable). */
-function buildBody(r: ResolvedRequest, hasBinary: boolean): string | undefined {
+/**
+ * Build the wire body for a resolved request (form-encode when applicable).
+ * `encode` is the component encoder; the masked snapshot passes the one that
+ * keeps `{secret:<name>}` legible, as the URL assembly does.
+ */
+function buildBody(
+  r: ResolvedRequest,
+  hasBinary: boolean,
+  encode: (component: string) => string = encodeURIComponent
+): string | undefined {
   let body = r.body
   if (!hasBinary && r.formFields && r.formFields.length > 0) {
     const enabled = r.formFields.filter((f) => f.enabled && f.key)
     if (enabled.length > 0) {
-      body = enabled
-        .map((f) => `${encodeURIComponent(f.key)}=${encodeURIComponent(f.value)}`)
-        .join('&')
+      body = enabled.map((f) => `${encode(f.key)}=${encode(f.value)}`).join('&')
     }
   }
   return body
+}
+
+/** Binary and multipart bodies never take the form path. */
+function isStructuredBody(r: HttpRequest): boolean {
+  return r.bodyType === 'binary' || r.bodyType === 'multipart-form'
+}
+
+/** True when the request's (enabled) `Content-Type` is form-urlencoded. */
+function hasFormContentType(r: HttpRequest): boolean {
+  const headers =
+    r.headerList ?? Object.entries(r.headers).map(([name, value]) => ({ name, value }))
+  const contentType = headers.find((h) => h.name.toLowerCase() === 'content-type')?.value ?? ''
+  return contentType.toLowerCase().includes('application/x-www-form-urlencoded')
+}
+
+/**
+ * The form body a pre-request script reads when the request carries structured
+ * `formFields` (the desktop shape): the enabled fields, literal segments encoded
+ * and `{{tokens}}` verbatim — the text the `.http` file stores.
+ */
+function formBodyTemplate(fields: KeyValuePair[]): string {
+  return fields
+    .filter((f) => f.enabled && f.key)
+    .map((f) => `${encodeTemplateComponent(f.key)}=${encodeTemplateComponent(f.value)}`)
+    .join('&')
 }
 
 /**
@@ -289,13 +322,17 @@ export async function execute(
     ...(options.secretNames ?? []),
     ...(secrets ? Object.keys(secrets.scriptEnvironment) : [])
   ])
-  const secretValueMask = (changes: EnvironmentChanges | undefined): ((s: string) => string) => {
+  // The values are the ones the masker was built with: a secret a pre-request
+  // script removed keeps its old plaintext under the mask.
+  const secretValues = (changes: EnvironmentChanges | undefined): Record<string, string> => {
     const values: Record<string, string> = { ...(secrets?.scriptEnvironment ?? {}) }
     for (const [name, value] of Object.entries(changes?.set ?? {})) {
       if (secretNameSet.has(name)) values[name] = value
     }
-    return createValueMask(values)
+    return values
   }
+  const secretValueMask = (changes: EnvironmentChanges | undefined): ((s: string) => string) =>
+    createValueMask(secretValues(changes))
   const maskedScripts = (
     bundle: ScriptResultsBundle,
     changes: EnvironmentChanges | undefined
@@ -318,11 +355,21 @@ export async function execute(
   let scriptVars: Record<string, unknown> = {}
 
   let liveRequest: HttpRequest = { ...request }
+  // The masker the rest of the send renders with: `secrets`, with whatever the
+  // pre-request script wrote to a referenced secret applied (set → new plaintext
+  // on the wire, removed → no marker, so the reference is unresolved).
+  let activeSecrets = secrets
 
   // 1. Pre-request script
   if (request.preRequestScript && request.preRequestScript.trim()) {
+    // A structured form body (the desktop shape) reaches the script as its
+    // encoded template, so `fp.request.body` reads what the CLI shape reads.
+    const formTemplate =
+      liveRequest.formFields?.length && !isStructuredBody(liveRequest)
+        ? formBodyTemplate(liveRequest.formFields)
+        : undefined
     const pre = executePreRequest(request.preRequestScript, {
-      request: liveRequest,
+      request: formTemplate !== undefined ? { ...liveRequest, body: formTemplate } : liveRequest,
       environment: scriptEnv,
       variables: scriptVars
     })
@@ -331,10 +378,13 @@ export async function execute(
 
     if (!pre.result.success) {
       envChanges = mergeEnvChanges(envChanges, pre.result.environmentChanges)
+      // The top-level error is printed and reported too: build it from the
+      // masked bundle, never from the raw sandbox message.
+      const failedScripts = maskedScripts(scriptResults, envChanges)
       return {
-        scriptResults: maskedScripts(scriptResults, envChanges),
+        scriptResults: failedScripts,
         environmentChanges: envChanges,
-        error: `Pre-request script failed: ${pre.result.error?.message ?? 'unknown error'}`,
+        error: `Pre-request script failed: ${failedScripts?.preRequest?.error?.message ?? 'unknown error'}`,
         notSent: true
       }
     }
@@ -343,18 +393,31 @@ export async function execute(
     // by the sandbox arrive as `modifiedRequest.multipartParts` and replace
     // the in-flight list wholesale (positional replace; see fp-sandbox.ts).
     // Re-apply secret markers over the (plaintext) script environment so
-    // interpolation masks secrets regardless of what the script read.
+    // interpolation masks secrets regardless of what the script read. A write
+    // to a referenced secret is used on this send, as a plain variable's is.
+    if (secrets && pre.result.environmentChanges) {
+      activeSecrets = secrets.withOverrides(
+        pre.result.environmentChanges.set,
+        pre.result.environmentChanges.removed
+      )
+    }
     const preMultipartParts = pre.result.modifiedRequest?.multipartParts
+    // An untouched form template keeps the fields; a body the script changed
+    // replaces them and goes out through the raw-form path below.
+    const keepFormFields = formTemplate === undefined || pre.request.body === formTemplate
     liveRequest = {
       ...liveRequest,
       method: pre.request.method,
       url: pre.request.url,
       headers: pre.request.headers,
       headerList: pre.request.headerList,
-      body: pre.request.body,
+      body: keepFormFields && formTemplate !== undefined ? liveRequest.body : pre.request.body,
+      formFields: keepFormFields ? liveRequest.formFields : undefined,
       multipartParts:
         preMultipartParts !== undefined ? preMultipartParts : liveRequest.multipartParts,
-      variables: secrets ? { ...pre.environment, ...secrets.markerVariables } : pre.environment
+      variables: activeSecrets
+        ? { ...pre.environment, ...activeSecrets.markerVariables }
+        : pre.environment
     }
     envChanges = mergeEnvChanges(envChanges, pre.result.environmentChanges)
   } else if (secrets) {
@@ -378,6 +441,18 @@ export async function execute(
     queryParams = split.params
     queryWarnings = split.warnings
   }
+  // The same for a form body: the desktop passes structured `formFields`; the CLI
+  // parser (or a script that rewrote the body) hands a raw form-urlencoded body,
+  // so it is split with the loader's decoder and then built like the fields are.
+  let formFields = liveRequest.formFields
+  if (
+    !formFields?.length &&
+    liveRequest.body !== undefined &&
+    !isStructuredBody(liveRequest) &&
+    hasFormContentType(liveRequest)
+  ) {
+    formFields = splitFormBody(liveRequest.body)
+  }
 
   // Resolve {{variables}} — including, separately, the auth config's OWN fields
   // (REQ-0111). Auth must be resolved before it is materialized, because
@@ -390,7 +465,7 @@ export async function execute(
   const variables = liveRequest.variables ?? {}
   const resolvedAuth = resolveAuthConfig(liveRequest.auth, variables)
   const resolvedBase = resolveRequestVariables(
-    { ...liveRequest, url: baseUrl, params: queryParams },
+    { ...liveRequest, url: baseUrl, params: queryParams, formFields },
     variables
   )
   // Auth's unresolved names join the request's own set, so an unknown reference
@@ -402,8 +477,31 @@ export async function execute(
       ...resolvedAuth.unresolved.filter((n) => !resolvedBase.unresolvedVariables.includes(n))
     ]
   }
-  const wireResolved = secrets ? mapResolvedStrings(resolved, secrets.wireRender) : resolved
-  const logResolved = secrets ? mapResolvedStrings(resolved, secrets.logRender) : resolved
+  const wireResolved = activeSecrets
+    ? mapResolvedStrings(resolved, activeSecrets.wireRender)
+    : resolved
+  // The log side also gets the value mask: a secret a pre-request script copied
+  // verbatim (or wrote under a secret name and then used) carries no marker. It
+  // runs before the URL and the credential are encoded, so an encoded copy is
+  // caught too. `valueMaskedNames` joins the snapshot's `secretsMasked`.
+  const requestValues = secretValues(envChanges)
+  const requestValueMask = createValueMask(requestValues)
+  const valueMaskedNames = new Set<string>()
+  const countOf = (text: string, part: string): number => text.split(part).length - 1
+  const logText = (text: string): string => {
+    const rendered = activeSecrets ? activeSecrets.logRender(text) : text
+    const masked = requestValueMask(rendered)
+    if (masked !== rendered) {
+      for (const name of Object.keys(requestValues)) {
+        const mask = secretLogMask(name)
+        if (countOf(masked, mask) > countOf(rendered, mask)) valueMaskedNames.add(name)
+      }
+    }
+    return masked
+  }
+  const maskLog =
+    activeSecrets !== undefined || Object.values(requestValues).some((v) => v.length > 0)
+  const logResolved = maskLog ? mapResolvedStrings(resolved, logText) : resolved
 
   // Warn-and-proceed: the references stay literal and the request still goes out.
   // Carried on the result so an adapter can show them — a log line is not a
@@ -422,12 +520,12 @@ export async function execute(
   // log side keeps its mask legible through the encoder, matching the URL rule.
   const wireWithAuthRaw = applyAuth(
     wireResolved,
-    secrets ? mapAuthStrings(resolvedAuth.auth, secrets.wireRender) : resolvedAuth.auth
+    activeSecrets ? mapAuthStrings(resolvedAuth.auth, activeSecrets.wireRender) : resolvedAuth.auth
   )
   const logWithAuthRaw = applyAuth(
     logResolved,
-    secrets ? mapAuthStrings(resolvedAuth.auth, secrets.logRender) : resolvedAuth.auth,
-    secrets ? MASK_PRESERVING_MATERIALIZATION : {}
+    maskLog ? mapAuthStrings(resolvedAuth.auth, logText) : resolvedAuth.auth,
+    maskLog ? MASK_PRESERVING_MATERIALIZATION : {}
   )
   // Implicit defaults, decided once on the wire side and applied to both sides so
   // the snapshot reports exactly what was sent.
@@ -497,15 +595,33 @@ export async function execute(
     logWithAuth.url,
     logWithAuth.params ?? [],
     resolvedSettings.encodeUrl,
-    secrets ? encodeQueryComponentPreservingMasks : undefined
+    maskLog ? encodeQueryComponentPreservingMasks : undefined
   )
+  // Cookie snapshots name each hop's URL as it went on the wire, secrets and
+  // all. The first hop is reported as the snapshot URL; a later hop (a redirect
+  // target) gets the value mask.
+  const maskCookies = (
+    cookies: { sent: CookieSnapshot[]; received: CookieSnapshot[] },
+    changes: EnvironmentChanges | undefined
+  ): { sent: CookieSnapshot[]; received: CookieSnapshot[] } => {
+    if (!maskLog) return cookies
+    const mask = secretValueMask(changes)
+    const hopUrl = (url: string): string => (url === wireUrl ? logUrl : mask(url))
+    const each = (list: CookieSnapshot[]): CookieSnapshot[] =>
+      list.map((c) => ({ ...c, url: hopUrl(c.url) }))
+    return { sent: each(cookies.sent), received: each(cookies.received) }
+  }
 
   // Binary bodies bypass form-field encoding entirely (binary uploads are a
   // single-file raw body, not a multi-part composition). `finalBody` is what
   // goes on the wire (secrets resolved); `logBody` is the masked counterpart
   // for the snapshot. Identical when there are no secrets.
   const finalBody = buildBody(wireResolved, binaryBody !== undefined)
-  const logBody = buildBody(logResolved, binaryBody !== undefined)
+  const logBody = buildBody(
+    logResolved,
+    binaryBody !== undefined,
+    maskLog ? encodeQueryComponentPreservingMasks : undefined
+  )
 
   // Multipart encoding (REQ-0066). Disabled parts are excluded by the
   // encoder. The encoder reads each file part's bytes from
@@ -598,7 +714,9 @@ export async function execute(
   // many hops hit it (an unreadable CA is read again for every origin).
   // TLS cert refs resolve against plaintext (a secret could name a cert path);
   // the result only reads a file, it is never logged.
-  const tlsVariables = secrets ? { ...variables, ...secrets.scriptEnvironment } : variables
+  const tlsVariables = activeSecrets
+    ? { ...variables, ...activeSecrets.scriptEnvironment }
+    : variables
   const tlsReasons = new Set<string>()
   const warnTls = (reason: string): void => {
     if (tlsReasons.has(reason)) return
@@ -681,7 +799,10 @@ export async function execute(
         // Reported as well as persisted: telling the user a cookie was refused
         // while hiding the ones that were accepted on the same chain would be a
         // half-truth, and this is exactly the send they are trying to explain.
-        failedCookies = { sent: cookieSession.sent, received: cookieSession.offered }
+        failedCookies = maskCookies(
+          { sent: cookieSession.sent, received: cookieSession.offered },
+          envChanges
+        )
       } catch (flushErr) {
         pushTransportWarning({
           code: 'COOKIE_JAR_UNAVAILABLE',
@@ -760,7 +881,7 @@ export async function execute(
 
   const cookiesSummary =
     sentCookies.length > 0 || receivedCookies.length > 0
-      ? { sent: sentCookies, received: receivedCookies }
+      ? maskCookies({ sent: sentCookies, received: receivedCookies }, envChanges)
       : undefined
 
   // Snapshot of the request as it went on the wire — but built from the masked
@@ -775,8 +896,8 @@ export async function execute(
   // `logResolved`, already replaced by `{secret:<name>}`). The auth config is
   // scanned separately: its markers live on `resolvedAuth`, not on `resolved`,
   // because the credential is materialized after the render split.
-  const secretsMasked = secrets
-    ? secrets.collectMaskedNames([
+  const markerMaskedNames = activeSecrets
+    ? activeSecrets.collectMaskedNames([
         ...authFieldTexts(resolvedAuth.auth),
         resolved.url,
         ...(resolved.params?.flatMap((p) => [p.key, p.value]) ?? []),
@@ -792,6 +913,10 @@ export async function execute(
         ]) ?? [])
       ])
     : []
+  const secretsMasked = [
+    ...markerMaskedNames,
+    ...[...valueMaskedNames].filter((n) => !markerMaskedNames.includes(n))
+  ]
 
   const snapshot: ResolvedRequestSnapshot = {
     method: logResolved.method,
@@ -854,8 +979,8 @@ export async function execute(
           // Only its header / parameter *name* is read, so the wire render is fine.
           ...(resolvedAuth.auth
             ? {
-                auth: secrets
-                  ? mapAuthStrings(resolvedAuth.auth, secrets.wireRender)
+                auth: activeSecrets
+                  ? mapAuthStrings(resolvedAuth.auth, activeSecrets.wireRender)
                   : resolvedAuth.auth
               }
             : {})
