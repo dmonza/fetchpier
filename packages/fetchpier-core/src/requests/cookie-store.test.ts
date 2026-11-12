@@ -7,6 +7,8 @@ import {
   drainLibJar,
   fromLibCookie,
   identityKey,
+  snapshotFromRecord,
+  snapshotFromSetCookie,
   toLibCookie
 } from './cookie-store'
 
@@ -142,6 +144,54 @@ describe('buildLibJar / drainLibJar', () => {
     // host. If this regresses, the whole suite goes red for the wrong reason.
     const { jar } = await buildLibJar([])
     await expect(jar.setCookie('x=1', 'http://localhost:9200/')).resolves.toBeDefined()
+  })
+})
+
+describe('snapshot expiry from Max-Age (ENG-32)', () => {
+  // RFC 6265 §5.2.2: an expiry past the last representable date may be replaced
+  // by that date. A spec-legal but huge Max-Age must never make formatting a
+  // snapshot throw — it runs inside the transport's interceptor and execute's
+  // post-response block. A delta ≤ 0 (the logout cookie, `Max-Age=0`) is
+  // already expired: it reports the moment it was received, a date the
+  // Cookies tab can show, not the year -271821.
+  const LATEST = new Date(8.64e15).toISOString()
+  const at = new Date('2026-01-02T00:00:00.000Z')
+  const RECEIVED = at.toISOString()
+  const fromHeader = (maxAge: string): string | null | undefined =>
+    snapshotFromSetCookie(`big=1; Max-Age=${maxAge}; Path=/`, 'http://example.test/', at)?.expires
+
+  it.each([
+    ['the largest safe integer', '9007199254740991', LATEST],
+    ['a value just past the representable range', '8700000000000', LATEST],
+    ['the most negative safe integer', '-9007199254740991', RECEIVED],
+    ['a negative value', '-1', RECEIVED],
+    ['zero', '0', RECEIVED]
+  ])('clamps %s', (_label, maxAge, expected) => {
+    expect(fromHeader(maxAge)).toBe(expected)
+  })
+
+  it('resolves an ordinary Max-Age from the moment of receipt', () => {
+    expect(fromHeader('60')).toBe('2026-01-02T00:01:00.000Z')
+  })
+
+  it('clamps a stored record with an out-of-range Max-Age the same way', () => {
+    expect(snapshotFromRecord(record({ maxAge: 9007199254740991 }), 'http://x.test/').expires).toBe(
+      LATEST
+    )
+    expect(
+      snapshotFromRecord(record({ maxAge: -9007199254740991 }), 'http://x.test/').expires
+    ).toBe(RECEIVED)
+    expect(snapshotFromRecord(record({ maxAge: 60 }), 'http://x.test/').expires).toBe(
+      '2026-01-02T00:01:00.000Z'
+    )
+  })
+
+  it('falls back to the stored expiry when the record has no usable receipt time', () => {
+    const snap = snapshotFromRecord(
+      record({ maxAge: 60, updatedAt: 'not a date', expires: '2030-01-01T00:00:00.000Z' }),
+      'http://x.test/'
+    )
+    expect(snap.expires).toBe('2030-01-01T00:00:00.000Z')
   })
 })
 

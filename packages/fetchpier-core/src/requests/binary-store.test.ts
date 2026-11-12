@@ -159,6 +159,45 @@ describe('binary-store', () => {
       expect(stat2.mtimeMs).toBe(stat1.mtimeMs)
     })
 
+    // ENG-38: on a case-insensitive filesystem the second name "exists" as the
+    // first file, so the ref must be the name actually on disk, or it resolves
+    // to nothing on a case-sensitive checkout. Decided by listing, so every
+    // platform gives the same answer.
+    describe('a case-variant name of the same bytes (ENG-38)', () => {
+      const stageAs = async (sub: string, name: string, content: string) => {
+        await fs.mkdir(join(dir, sub), { recursive: true })
+        const src = join(dir, sub, name)
+        await fs.writeFile(src, content)
+        return stageBinary(dir, src)
+      }
+      const staged = (): Promise<string[]> => fs.readdir(join(dir, 'requests', '.files'))
+
+      it('returns the name already on disk', async () => {
+        const first = await stageAs('a', 'Logo.PNG', 'same bytes')
+        const second = await stageAs('b', 'logo.png', 'same bytes')
+        expect(second.ref).toBe(first.ref)
+        expect(second.originalName).toBe('Logo.PNG')
+        expect(second.absolutePath).toBe(first.absolutePath)
+        expect(second.mimeType).toBe('image/png')
+        expect(await staged()).toEqual([first.ref])
+      })
+
+      it('stages different bytes under a case-variant name as their own file', async () => {
+        const first = await stageAs('a', 'Logo.PNG', 'one')
+        const second = await stageAs('b', 'logo.png', 'two')
+        expect(second.ref).not.toBe(first.ref)
+        expect(second.originalName).toBe('logo.png')
+        expect((await staged()).sort()).toEqual([first.ref, second.ref].sort())
+      })
+
+      it('keeps a name that differs by more than case distinct', async () => {
+        const first = await stageAs('a', 'logo.png', 'same bytes')
+        const second = await stageAs('b', 'logo2.png', 'same bytes')
+        expect(second.ref).not.toBe(first.ref)
+        expect((await staged()).length).toBe(2)
+      })
+    })
+
     it('sanitizes the source filename when staging', async () => {
       const src = join(dir, 'odd name.txt')
       await fs.writeFile(src, 'x')

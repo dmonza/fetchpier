@@ -66,6 +66,9 @@ const evaluated = (
   ...over
 })
 
+const infoHeading = (el: HTMLElement): string | null =>
+  el.querySelector('[data-severity-group="info"] h3')!.textContent
+
 describe('securityBadge', () => {
   it.each([
     ['no evaluation', undefined, null],
@@ -135,12 +138,25 @@ describe('SecurityTab states', () => {
     })
     expect(el.textContent).toContain('response.security.tlsUnavailable')
     expect(el.querySelector('[data-finding="headers.nosniff-missing"]')).not.toBeNull()
+    expect(infoHeading(el)).toBe('findings.severityGroup.info:{"count":1}')
+    expect(el.querySelector('[data-severity-group="low"] h3')!.textContent).toBe(
+      'findings.severityGroup.low:{"count":1}'
+    )
   })
 
   it('TLS details unavailable with no findings: the row and the no-findings copy', () => {
     const el = render({ findings: evaluated([], { tls: 'unavailable', rulesApplied: 9 }) })
     expect(el.textContent).toContain('response.security.tlsUnavailable')
     expect(el.textContent).toContain('response.security.noFindings:{"n":9}')
+    expect(infoHeading(el)).toBe('findings.severityGroup.info:{"count":1}')
+  })
+
+  it('TLS details unavailable beside an info finding: the Info heading counts both rows', () => {
+    const el = render({
+      findings: evaluated([finding('headers.version-disclosure', 'info')], { tls: 'unavailable' })
+    })
+    expect(el.querySelectorAll('[data-severity-group="info"] li')).toHaveLength(2)
+    expect(infoHeading(el)).toBe('findings.severityGroup.info:{"count":2}')
   })
 
   it('evaluation failed', () => {

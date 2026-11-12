@@ -441,6 +441,48 @@ describe('whitelisted globals remain functional', () => {
   }
 })
 
+describe('environment / variables stores answer only their own names', () => {
+  const PROTO_NAMES = ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']
+
+  it('get() of an unset prototype-member name is undefined in both stores', () => {
+    const outcome = run(`
+      const out = {};
+      for (const n of ${JSON.stringify(PROTO_NAMES)}) {
+        out['env:' + n] = typeof fp.environment.get(n);
+        out['vars:' + n] = typeof fp.variables.get(n);
+      }
+      fp.variables.set('out', out);
+    `)
+    expect(outcome.result.success).toBe(true)
+    const expected: Record<string, string> = {}
+    for (const n of PROTO_NAMES) {
+      expected[`env:${n}`] = 'undefined'
+      expected[`vars:${n}`] = 'undefined'
+    }
+    expect(outcome.variables.out).toEqual(expected)
+  })
+
+  it('a variable that really has such a name is still returned', () => {
+    const outcome = runFpScript({
+      phase: 'pre-request',
+      script: `
+        fp.environment.set('valueOf', 'set-by-script');
+        fp.variables.set('constructor', 'var-value');
+        fp.variables.set('out', [
+          fp.environment.get('toString'),
+          fp.environment.get('valueOf'),
+          fp.variables.get('constructor')
+        ]);
+      `,
+      request: baseRequest(),
+      environment: { toString: 'from-env' },
+      variables: {}
+    })
+    expect(outcome.result.success).toBe(true)
+    expect(outcome.variables.out).toEqual(['from-env', 'set-by-script', 'var-value'])
+  })
+})
+
 // ── 9. Meta-test — recursive `.constructor` walk ───────────────────────────
 // Future-proofing: any new host method exposed on `fp` (or any host getter
 // that produces a fresh object) MUST go through the same prototype-scrub. This
@@ -495,6 +537,18 @@ describe('recursive constructor walk over fp and console', () => {
 
         tryEscape(value, path);
 
+        // Accessor functions are reachable through the property descriptor
+        // even though reading the property only yields the getter's result.
+        let names;
+        try { names = Object.getOwnPropertyNames(value); } catch (e) { return; }
+        for (const k of names) {
+          let d;
+          try { d = Object.getOwnPropertyDescriptor(value, k); } catch (e) { continue; }
+          if (!d) continue;
+          if (d.get) walk(d.get, path + '.<get ' + k + '>', depth + 1);
+          if (d.set) walk(d.set, path + '.<set ' + k + '>', depth + 1);
+        }
+
         let keys;
         try { keys = Object.keys(value); } catch (e) { return; }
         for (const k of keys) {
@@ -506,6 +560,11 @@ describe('recursive constructor walk over fp and console', () => {
 
       walk(fp, "fp", 0);
       walk(console, "console", 0);
+      // Values the stores hand back for names that are prototype members.
+      for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+        walk(fp.environment.get(name), "fp.environment.get('" + name + "')", 0);
+        walk(fp.variables.get(name), "fp.variables.get('" + name + "')", 0);
+      }
 
       fp.variables.set("leaks", LEAKS);
     `)
@@ -543,6 +602,18 @@ describe('recursive constructor walk over fp and console', () => {
         SEEN.add(value);
         if (depth > 6) return;
         tryEscape(value, path);
+        // Accessor functions and descriptor values (the parts proxy answers
+        // descriptors too) are reachable without reading the property.
+        let names;
+        try { names = Object.getOwnPropertyNames(value); } catch (e) { return; }
+        for (const k of names) {
+          let d;
+          try { d = Object.getOwnPropertyDescriptor(value, k); } catch (e) { continue; }
+          if (!d) continue;
+          if (d.get) walk(d.get, path + '.<get ' + k + '>', depth + 1);
+          if (d.set) walk(d.set, path + '.<set ' + k + '>', depth + 1);
+          if ('value' in d) walk(d.value, path + '.<desc ' + k + '>', depth + 1);
+        }
         let keys;
         try { keys = Object.keys(value); } catch (e) { return; }
         for (const k of keys) {
@@ -552,6 +623,7 @@ describe('recursive constructor walk over fp and console', () => {
         }
       }
       walk(fp.request.body, "fp.request.body", 0);
+      walk(fp.request.body.parts, "fp.request.body.parts", 0);
       walk(fp.request.body.parts[0], "fp.request.body.parts[0]", 0);
       walk(fp.request.body.parts[1], "fp.request.body.parts[1]", 0);
       walk(fp.request.body.parts.push, "fp.request.body.parts.push", 0);

@@ -129,6 +129,52 @@ describe('URL assembly — adapter parity (REQ-0081 CA-01/CA-02)', () => {
     expect(desktopRes.request?.url).not.toContain('wsdl=')
   })
 
+  // FMT-01: a fragment is never sent (RFC 9112 origin-form has none), from either
+  // adapter, with encoding on or off, and an api-key query still reaches the wire.
+  describe('a URL fragment (FMT-01)', () => {
+    const apiKey = { type: 'api-key' as const, key: 'k', value: 's', location: 'query' as const }
+
+    it.each([
+      ['encoding on', 'frag-on', true, undefined, '?page=2&q=a%2Fb'],
+      ['encoding off', 'frag-off', false, undefined, '?page=2&q=a/b'],
+      ['an api-key query', 'frag-key', true, apiKey, '?k=s&page=2&q=a%2Fb']
+    ])(
+      'is left out of the target and the snapshot (%s)',
+      async (_label, route, encodeUrl, auth, query) => {
+        const endpoint = await server.forGet(`/${route}`).thenReply(200, 'ok')
+        const fullUrl = `${server.url}/${route}?page=2&q=a%2Fb#top`
+
+        const cliReq: HttpRequest = { ...parseHttpFile(`GET ${fullUrl}\n`).requests[0], auth }
+        const { baseUrl, params } = splitUrlAndParams(fullUrl)
+        const desktopReq: HttpRequest = { method: 'GET', url: baseUrl, params, headers: {}, auth }
+
+        const cliRes = await execute(cliReq, opts(encodeUrl))
+        const desktopRes = await execute(desktopReq, opts(encodeUrl))
+
+        expect(cliRes.request?.url).toBe(`${server.url}/${route}${query}`)
+        expect(desktopRes.request?.url).toBe(`${server.url}/${route}${query}`)
+        const seen = (await endpoint.getSeenRequests()).map((r) => r.path)
+        expect(seen).toEqual([`/${route}${query}`, `/${route}${query}`])
+      }
+    )
+
+    it('a `#` a variable puts in a raw (encoding off) value is cut from the target', async () => {
+      const endpoint = await server.forGet('/raw').thenReply(200, 'ok')
+      await execute(
+        {
+          method: 'GET',
+          url: `${server.url}/raw`,
+          params: [{ id: 'p0', key: 'page', value: '{{p}}', enabled: true }],
+          headers: {},
+          variables: { p: '2#top' }
+        },
+        opts(false)
+      )
+      const reqs = await endpoint.getSeenRequests()
+      expect(reqs[0].path).toBe('/raw?page=2')
+    })
+  })
+
   it('CA-08: a disabled query parameter is dropped from the outgoing URL', async () => {
     const endpoint = await server.forGet('/list').thenReply(200, 'ok')
 

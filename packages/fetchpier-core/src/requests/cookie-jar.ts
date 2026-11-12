@@ -95,17 +95,52 @@ function normalizeRecord(raw: Cookie): Cookie {
   }
 }
 
+/**
+ * The jar file exists but cannot be read: a syntax error (a hand edit), a
+ * permission or lock error, or a shape that is not a jar. Thrown by every
+ * operation that reads the file, before anything is written, so the file is
+ * never replaced by a jar built from an empty baseline. The message leads with
+ * the code, which survives IPC where the property does not; a send reports it
+ * as `COOKIE_JAR_UNAVAILABLE` (phase `read`) and goes out without the jar.
+ */
+export class CookieJarReadError extends Error {
+  readonly code = 'COOKIE_JAR_UNREADABLE'
+  constructor(
+    readonly filePath: string,
+    reason: string
+  ) {
+    super(`COOKIE_JAR_UNREADABLE: cannot read the cookie jar ${filePath}: ${reason}`)
+    this.name = 'CookieJarReadError'
+    Object.setPrototypeOf(this, CookieJarReadError.prototype)
+  }
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * A missing file, or one with nothing but whitespace (it holds no cookie that
+ * could be lost), is an empty jar. Any other failure throws
+ * `CookieJarReadError`. An entry that is not an object (a `null` left by a hand
+ * edit) carries no cookie and is skipped, keeping the rest of the jar.
+ */
 async function readJar(workspacePath: string, environmentId: string): Promise<CookieJar> {
   const filePath = await cookieFilePath(workspacePath, environmentId)
+  let parsed: unknown
   try {
     const raw = await fs.readFile(filePath, 'utf-8')
-    const parsed = JSON.parse(raw) as CookieJar
-    return {
-      environmentId: parsed.environmentId ?? environmentId,
-      cookies: Array.isArray(parsed.cookies) ? parsed.cookies.map(normalizeRecord) : []
-    }
-  } catch {
-    return { environmentId, cookies: [] }
+    if (raw.trim() === '') return { environmentId, cookies: [] }
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { environmentId, cookies: [] }
+    throw new CookieJarReadError(filePath, err instanceof Error ? err.message : String(err))
+  }
+  if (!isObject(parsed) || !Array.isArray(parsed.cookies)) {
+    throw new CookieJarReadError(filePath, 'the file is not a cookie jar (no "cookies" array)')
+  }
+  return {
+    environmentId: typeof parsed.environmentId === 'string' ? parsed.environmentId : environmentId,
+    cookies: parsed.cookies.filter(isObject).map((c) => normalizeRecord(c as unknown as Cookie))
   }
 }
 

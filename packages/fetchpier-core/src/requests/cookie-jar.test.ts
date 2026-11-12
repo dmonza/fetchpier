@@ -16,6 +16,7 @@ import {
   saveJar as _saveJar,
   update as _update,
   upsert as _upsert,
+  CookieJarReadError,
   type CookieCaptureResult,
   type CookieSession
 } from './cookie-jar'
@@ -578,24 +579,87 @@ describe('saveJar / loadJar / deleteJar', () => {
     await expect(fs.access(filePath)).rejects.toBeTruthy()
   })
 
-  it('loadJar tolerates malformed JSON on disk and returns an empty jar', async () => {
-    const dir = join(workspaceDir, 'environments', 'dev', '.state')
-    await fs.mkdir(dir, { recursive: true })
-    await fs.writeFile(join(dir, 'cookies.json'), '{ invalid json', 'utf-8')
-    const jar = await loadJar('dev')
-    expect(jar.cookies).toEqual([])
+  it('loadJar reads a jar file that does not exist as an empty jar', async () => {
+    expect((await loadJar('dev')).cookies).toEqual([])
   })
 
-  it('loadJar tolerates a JSON object whose cookies field is not an array', async () => {
-    const dir = join(workspaceDir, 'environments', 'dev', '.state')
-    await fs.mkdir(dir, { recursive: true })
-    await fs.writeFile(
-      join(dir, 'cookies.json'),
-      JSON.stringify({ environmentId: 'dev', cookies: 'not-an-array' }),
-      'utf-8'
-    )
-    const jar = await loadJar('dev')
-    expect(jar.cookies).toEqual([])
+  // ENG-37: only a missing file means "no jar". Anything else that makes the
+  // file unreadable fails visibly, so no later write replaces it with only the
+  // new cookies (`.state/` is gitignored — the loss would be permanent).
+  describe('an unreadable jar file fails visibly and is never overwritten (ENG-37)', () => {
+    const dir = (): string => join(workspaceDir, 'environments', 'dev', '.state')
+    const file = (): string => join(dir(), 'cookies.json')
+    const seed = async (content: string): Promise<void> => {
+      await fs.mkdir(dir(), { recursive: true })
+      await fs.writeFile(file(), content, 'utf-8')
+    }
+    // A hand edit that left a trailing comma after the last field.
+    const TRAILING_COMMA =
+      '{ "environmentId": "dev", "cookies": [ { "id": "s", "name": "session", "value": "v", ' +
+      '"domain": "example.com", "path": "/", } ] }'
+
+    it.each([
+      ['invalid JSON', TRAILING_COMMA],
+      ['a cookies field that is not an array', JSON.stringify({ cookies: 'not-an-array' })],
+      ['a top-level value that is not an object', 'null']
+    ])('loadJar rejects %s with the typed read error', async (_l, content) => {
+      await seed(content)
+      const err = await loadJar('dev').catch((e) => e)
+      expect(err).toBeInstanceOf(CookieJarReadError)
+      expect(err.code).toBe('COOKIE_JAR_UNREADABLE')
+      expect(err.message).toContain('COOKIE_JAR_UNREADABLE')
+      expect(err.message).toContain(file())
+    })
+
+    // An empty or whitespace-only file holds no cookie that could be lost: it is
+    // an empty jar, not a broken one (ENG-37 review).
+    it.each([
+      ['an empty file', ''],
+      ['a whitespace-only file', ' \n\t\n']
+    ])('loadJar reads %s as an empty jar, and a capture replaces it', async (_l, content) => {
+      await seed(content)
+      expect((await loadJar('dev')).cookies).toEqual([])
+      await captureFromResponse('dev', 'https://example.com/', ['sid=1; Path=/'])
+      expect((await loadJar('dev')).cookies.map((c) => c.name)).toEqual(['sid'])
+    })
+
+    it('rejects a read error other than a missing file', async () => {
+      // A directory where the file should be: EISDIR, the portable stand-in
+      // for a permission or lock error.
+      await fs.mkdir(file(), { recursive: true })
+      await expect(loadJar('dev')).rejects.toBeInstanceOf(CookieJarReadError)
+    })
+
+    it('a cookie session cannot open, so a capture never rewrites the file', async () => {
+      await seed(TRAILING_COMMA)
+      await expect(openCookieSession('dev')).rejects.toBeInstanceOf(CookieJarReadError)
+      await expect(
+        captureFromResponse('dev', 'https://other.test/', ['newc=1; Path=/'])
+      ).rejects.toBeInstanceOf(CookieJarReadError)
+      expect(await fs.readFile(file(), 'utf-8')).toBe(TRAILING_COMMA)
+    })
+
+    it('panel create, edit and delete reject and leave the file untouched', async () => {
+      await seed(TRAILING_COMMA)
+      const { id: _i, createdAt: _c, updatedAt: _u, ...authored } = baseCookie({ name: 'n' })
+      await expect(upsert('dev', authored)).rejects.toBeInstanceOf(CookieJarReadError)
+      await expect(update('dev', 's', { value: 'x' })).rejects.toBeInstanceOf(CookieJarReadError)
+      await expect(remove('dev', 's')).rejects.toBeInstanceOf(CookieJarReadError)
+      expect(await fs.readFile(file(), 'utf-8')).toBe(TRAILING_COMMA)
+    })
+
+    it('clear still removes the file, as the explicit way to start over', async () => {
+      await seed(TRAILING_COMMA)
+      await clear('dev')
+      await expect(fs.access(file())).rejects.toBeTruthy()
+    })
+
+    it('skips a null or non-object entry and keeps the rest', async () => {
+      await seed(
+        JSON.stringify({ environmentId: 'dev', cookies: [null, 7, baseCookie({ name: 'kept' })] })
+      )
+      expect((await loadJar('dev')).cookies.map((c) => c.name)).toEqual(['kept'])
+    })
   })
 
   it('deleteJar is an alias for clear', async () => {

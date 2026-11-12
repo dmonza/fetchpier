@@ -141,3 +141,33 @@ describe('CookieForm — the expiry is shown in local time and stored in UTC', (
     )
   })
 })
+
+// ENG-37: the jar refuses to write over a file it cannot read; the form says so
+// in the user's language instead of the raw transport message.
+describe('CookieForm — an unreadable jar', () => {
+  const unreadable = new Error(
+    "Error invoking remote method 'cookies:update': Error: COOKIE_JAR_UNREADABLE: cannot read the cookie jar /ws/cookies.json: Unexpected token"
+  )
+
+  it('shows the translated jar error and stays open', async () => {
+    h.update.mockRejectedValueOnce(unreadable)
+    const onClose = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root!.render(<CookieForm cookie={makeCookie()} environmentId="env1" onClose={onClose} />)
+    })
+    await save()
+    expect(document.body.textContent).toContain('cookies.errors.jarUnreadable')
+    expect(document.body.textContent).not.toContain('Unexpected token')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps showing any other failure as its message', async () => {
+    h.update.mockRejectedValueOnce(new Error('Cookie not found: c1'))
+    await mount(makeCookie())
+    await save()
+    expect(document.body.textContent).toContain('Cookie not found: c1')
+  })
+})

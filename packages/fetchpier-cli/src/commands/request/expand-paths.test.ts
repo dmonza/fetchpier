@@ -65,6 +65,33 @@ describe('expandPaths — default target', () => {
   })
 })
 
+describe('expandPaths — dot-named entries are skipped in the walk, as the desktop tree hides them', () => {
+  beforeEach(() => {
+    mkdirSync(join(ws, 'requests', '.files'))
+    writeFileSync(join(ws, 'requests', '.files', '3fa0__collection.http'), 'GET http://x/f\n')
+    mkdirSync(join(ws, 'requests', 'auth', '.archive'))
+    writeFileSync(join(ws, 'requests', 'auth', '.archive', 'old.http'), 'GET http://x/o\n')
+    writeFileSync(join(ws, 'requests', '.draft.http'), 'GET http://x/d\n')
+  })
+
+  it('skips staged attachments, hidden folders and hidden files when no path is given', async () => {
+    expect(await expandPaths([], root, ws)).toEqual(ALL())
+  })
+
+  it('skips them when walking an explicit folder', async () => {
+    expect(await expandPaths(['requests/auth'], ws, ws)).toEqual([
+      join(ws, 'requests', 'auth', 'login.http')
+    ])
+  })
+
+  it('still accepts a dot-named file or folder the user names explicitly', async () => {
+    expect(await expandPaths(['requests/.draft.http', 'requests/auth/.archive'], ws, ws)).toEqual([
+      join(ws, 'requests', '.draft.http'),
+      join(ws, 'requests', 'auth', '.archive', 'old.http')
+    ])
+  })
+})
+
 describe('expandPaths — explicit paths', () => {
   it('resolves a relative path against the current directory', async () => {
     expect(await expandPaths(['login.http'], join(ws, 'requests', 'auth'), ws)).toEqual([

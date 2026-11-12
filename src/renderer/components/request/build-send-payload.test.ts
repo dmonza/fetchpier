@@ -73,6 +73,22 @@ describe('buildHttpRequestPayload (REQ-0081)', () => {
     ])
   })
 
+  // FMT-16: the scheme owns its exact (trimmed) name; query names are case-sensitive.
+  it('drops only the param named exactly as the api-key query scheme', () => {
+    const payload = buildHttpRequestPayload(
+      baseState({
+        params: [
+          { id: 'p0', key: ' api_key ', value: 'manual', enabled: true },
+          { id: 'p1', key: 'API_KEY', value: 'other', enabled: true },
+          { id: 'p2', key: 'page', value: '1', enabled: true }
+        ],
+        auth: { type: 'api-key', key: 'api_key', value: 'secret', location: 'query' }
+      }),
+      {}
+    )
+    expect(payload.params?.map((p) => p.key)).toEqual(['API_KEY', 'page'])
+  })
+
   // Per-request overrides travel as the editor holds them: the engine resolves
   // them against the workspace and reports what it applied. Dropping them made
   // every Settings-tab override a no-op on desktop sends.

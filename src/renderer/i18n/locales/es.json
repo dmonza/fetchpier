@@ -1279,7 +1279,8 @@
     "errors": {
       "nameRequired": "El nombre es obligatorio",
       "nameInvalid": "El nombre contiene caracteres inválidos",
-      "domainRequired": "El dominio es obligatorio"
+      "domainRequired": "El dominio es obligatorio",
+      "jarUnreadable": "No se pudo leer el archivo de cookies de este entorno (puede contener JSON inválido), así que no se cambió nada. Corregí el archivo o usá Limpiar todo para empezar de nuevo."
     }
   },
   "common": {

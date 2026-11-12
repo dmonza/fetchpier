@@ -533,3 +533,49 @@ describe('round-trip fidelity — value-less query params (REQ-0124)', () => {
     ])
   })
 })
+
+describe('round-trip fidelity — a URL fragment (FMT-01)', () => {
+  it.each([
+    ['after the query', [kv('page', '2')], 'GET https://api.example.com/items?page=2#top'],
+    ['with no query', [], 'GET https://api.example.com/items#top']
+  ])('stays in the file %s, out of the params, idempotently', (_label, params, line) => {
+    const text = serializeRequest(editorState({ url: 'https://api.example.com/items#top', params }))
+    expect(text).toContain(line)
+
+    const split = splitUrlAndParams(parseHttpFile(text).requests[0].url)
+    expect(split.baseUrl).toBe('https://api.example.com/items#top')
+    expect(split.params.map((p) => [p.key, p.value])).toEqual(params.map((p) => [p.key, p.value]))
+    expect(serializeRequest(editorState({ url: split.baseUrl, params: split.params }))).toBe(text)
+  })
+})
+
+describe('round-trip fidelity — U+2028 / U+2029 (FMT-18)', () => {
+  it.each([
+    ['U+2028', ' '],
+    ['U+2029', ' ']
+  ])('a script line holding a %s survives three save → load cycles', (_label, ch) => {
+    const script = `const s = "a${ch}b"\nfp.environment.set("s", s)`
+    let state = editorState({ preRequestScript: script, postResponseScript: script })
+    const first = serializeRequest(state)
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const r = parseHttpFile(serializeRequest(state)).requests[0]
+      expect(r.preRequestScript).toBe(script)
+      expect(r.postResponseScript).toBe(script)
+      state = editorState({
+        preRequestScript: r.preRequestScript,
+        postResponseScript: r.postResponseScript
+      })
+    }
+    expect(serializeRequest(state)).toBe(first)
+  })
+
+  it.each([
+    ['U+2028', ' '],
+    ['U+2029', ' ']
+  ])('a bearer token holding a %s is kept, with no warning', (_label, ch) => {
+    const auth = { type: 'bearer' as const, token: `ab${ch}cd` }
+    const file = parseHttpFile(serializeRequest(editorState({ auth })))
+    expect(file.requests[0].auth).toEqual(auth)
+    expect(file.warnings).toBeUndefined()
+  })
+})

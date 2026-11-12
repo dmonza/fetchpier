@@ -25,6 +25,7 @@ import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../workspace/defaults'
 import { CoreError } from '../shared/context'
 import { describeError } from '../shared/describe-error'
 import { decodeBody } from './decode-body'
+import { fillReasonPhrase } from '../activity-log/reason-phrase'
 
 /** Name of the abort reason an adapter's request timer uses (see {@link timeoutAbortReason}). */
 export const TIMEOUT_ABORT_NAME = 'TimeoutError'
@@ -132,34 +133,6 @@ function proxyHeadersInterceptor(): Interceptor {
 
 /** undici's message when a proxy answers the CONNECT tunnel with anything but 200. */
 const PROXY_TUNNEL_REFUSAL = /^Proxy response \((\d{3})\) !== 200/
-
-/** Maps common HTTP status codes to their standard reason phrases. */
-const STATUS_TEXT: Record<number, string> = {
-  100: 'Continue',
-  101: 'Switching Protocols',
-  200: 'OK',
-  201: 'Created',
-  202: 'Accepted',
-  204: 'No Content',
-  301: 'Moved Permanently',
-  302: 'Found',
-  304: 'Not Modified',
-  307: 'Temporary Redirect',
-  308: 'Permanent Redirect',
-  400: 'Bad Request',
-  401: 'Unauthorized',
-  403: 'Forbidden',
-  404: 'Not Found',
-  405: 'Method Not Allowed',
-  409: 'Conflict',
-  410: 'Gone',
-  422: 'Unprocessable Entity',
-  429: 'Too Many Requests',
-  500: 'Internal Server Error',
-  502: 'Bad Gateway',
-  503: 'Service Unavailable',
-  504: 'Gateway Timeout'
-}
 
 /** TLS material attached to a single send (CAs to add, client cert to present). */
 export interface ResolvedTlsMaterial {
@@ -731,9 +704,15 @@ export function normalizeProtocol(rawUrl: string): string {
  * base (origin + path; path handling is unchanged, §2.2) so it never re-normalizes
  * the query: the exact bytes the core produced reach the wire (this is what makes
  * the `encodeUrl: off` escape hatch a true raw passthrough).
+ *
+ * A fragment is never part of the target (RFC 9112 §3.2): everything from the
+ * first `#` is dropped. The engine already removes an authored one; this is the
+ * backstop for a raw (`encodeUrl: off`) value that resolved to text holding `#`.
  */
 function buildRequestTarget(rawUrl: string): { origin: string; path: string; protocol: string } {
-  const normalized = normalizeProtocol(rawUrl)
+  const withFragment = normalizeProtocol(rawUrl)
+  const hashIdx = withFragment.indexOf('#')
+  const normalized = hashIdx === -1 ? withFragment : withFragment.slice(0, hashIdx)
   const qIdx = normalized.indexOf('?')
   const beforeQuery = qIdx === -1 ? normalized : normalized.slice(0, qIdx)
   const rawQuery = qIdx === -1 ? '' : normalized.slice(qIdx + 1)
@@ -928,7 +907,7 @@ export async function sendRequestWithRaw(
     return {
       response: {
         status: response.statusCode,
-        statusText: STATUS_TEXT[response.statusCode] ?? String(response.statusCode),
+        statusText: fillReasonPhrase(response.statusCode) || String(response.statusCode),
         headers: normalisedHeaders,
         headerList,
         body: responseBody,

@@ -115,6 +115,27 @@ describe('multipart round-trip (CA-02)', () => {
     expect(serializeRequest(state({ multipartParts: reparsed }))).toBe(text)
   })
 
+  // FMT-18: `.` does not match U+2028 / U+2029, so a part marker whose name or
+  // filename holds one must still be read as a marker.
+  it.each([
+    ['a line separator', ' '],
+    ['a paragraph separator', ' ']
+  ])('a part name or filename holding %s round-trips (FMT-18)', (_label, sep) => {
+    const original = state({
+      multipartParts: [
+        textPart('mp-0', `a${sep}b`, 'v'),
+        filePart('mp-1', 'doc', REF_A, 'beach.jpg', 0, 'image/jpeg', { filename: `x${sep}y.jpg` })
+      ]
+    })
+    const text = serializeRequest(original)
+    const parsed = parseHttpFile(text)
+    const parts = parsed.requests[0].multipartParts!
+    expect(parts).toHaveLength(2)
+    expect(parts[0]).toMatchObject({ kind: 'text', name: `a${sep}b`, value: 'v' })
+    expect(parts[1]).toMatchObject({ kind: 'file', name: 'doc', filename: `x${sep}y.jpg` })
+    expect(serializeRequest(state({ multipartParts: parts }))).toBe(text)
+  })
+
   it('a file ref with no special characters stays unquoted (FMT-04)', () => {
     const text = serializeRequest(
       state({ multipartParts: [filePart('mp-0', 'photo', REF_A, 'beach.jpg', 1, 'image/jpeg')] })

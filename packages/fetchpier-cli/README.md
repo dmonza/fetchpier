@@ -67,7 +67,7 @@ When a command needs a workspace and none is found, it exits with code 4.
     Did you mean my-api/requests/auth/login.http? Paths are relative to the current directory.
   ```
 
-- Folders are walked in name order; `.runs/`, `.fetchpier/` and `.git/` are skipped.
+- Folders are walked in name order; every file or folder whose name starts with `.` is skipped (`.files/`, `.runs/`, `.fetchpier/`, `.git/`), as in the desktop sidebar. Name a dot-prefixed path explicitly to run it.
 - A `.http` file may hold several requests (`###` separators); only the **first**
   is executed, with a notice naming the file.
 

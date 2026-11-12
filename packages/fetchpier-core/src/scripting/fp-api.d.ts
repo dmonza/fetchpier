@@ -48,7 +48,8 @@ export interface FpRequest {
    *     `binaryFileRef` for the staged-file identifier; the bytes themselves
    *     stay in the host realm.
    *   - `'multipart-form'`: an {@link FpMultipartBody} object with a `parts`
-   *     array. Mutate via `body.parts.push(...)`, indexed access, or splice.
+   *     collection (array-like, see {@link FpMultipartParts}). Mutate via
+   *     `body.parts.push(...)`, indexed access, or splice.
    *     File parts may only be added by referencing an already-staged
    *     `fileRef` — raw bytes are never accepted from scripts.
    *
@@ -75,7 +76,8 @@ export interface FpRequest {
 
 /**
  * Structured request body exposed when `bodyType === 'multipart-form'`.
- * The single property is `parts`, an array-like list of text and file parts.
+ * The single property is `parts`, an array-like list of text and file parts
+ * (see {@link FpMultipartParts}).
  *
  * In pre-request scripts, `parts` is mutable: indexed assignment, `push`,
  * `splice`, `pop`, `shift`, `unshift`, `reverse`, and `sort` are supported.
@@ -86,7 +88,60 @@ export interface FpRequest {
  * In post-response scripts, all mutations throw.
  */
 export interface FpMultipartBody {
-  parts: FpMultipartPart[]
+  /** The parts, in send order. Replacing the collection itself throws. */
+  readonly parts: FpMultipartParts
+}
+
+/**
+ * The parts collection of a multipart body. Array-like, not an `Array`: it
+ * offers `length`, index access and the mutators below, and nothing else —
+ * no iteration helpers (`forEach`, `map`, `find`, `filter`, `slice`, …), no
+ * `for...of` and no spread. Iterate with an index loop (see the example).
+ * Every mutator throws in post-response scripts.
+ *
+ * @example
+ * const parts = fp.request.body.parts
+ * for (let i = 0; i < parts.length; i++) {
+ *   if (parts[i].name === 'file') parts[i].disabled = true
+ * }
+ */
+export interface FpMultipartParts {
+  /**
+   * Number of parts. Assigning a smaller number truncates the list; a larger
+   * one throws (it would leave empty slots).
+   */
+  length: number
+
+  /**
+   * The part at `index` (`undefined` past the end). Assigning a part spec
+   * replaces that part; assigning at index `length` appends; an index past
+   * `length` throws.
+   */
+  [index: number]: FpMultipartPart
+
+  /** Appends parts (each spec is validated) and returns the new length. */
+  push(...parts: FpMultipartPart[]): number
+
+  /** Removes and returns the last part, or `undefined` when empty. */
+  pop(): FpMultipartPart | undefined
+
+  /** Removes and returns the first part, or `undefined` when empty. */
+  shift(): FpMultipartPart | undefined
+
+  /** Prepends parts (each spec is validated) and returns the new length. */
+  unshift(...parts: FpMultipartPart[]): number
+
+  /**
+   * Removes `deleteCount` parts from `start` (through the end when omitted),
+   * inserts `parts` in their place, and returns the removed parts as an array.
+   */
+  splice(start?: number, deleteCount?: number, ...parts: FpMultipartPart[]): FpMultipartPart[]
+
+  /** Reverses the order in place and returns the collection. */
+  reverse(): FpMultipartParts
+
+  /** Sorts in place (by `compare`, which receives parts) and returns the collection. */
+  sort(compare?: (a: FpMultipartPart, b: FpMultipartPart) => number): FpMultipartParts
 }
 
 /** One part of a multipart body — either text or file. */
@@ -231,8 +286,11 @@ export interface FpResponse {
   /**
    * Parses the response body as XML into a JSON-like object tree.
    *
-   * Uses `fast-xml-parser` under the hood with safe defaults (no entity
-   * expansion, attribute names prefixed with `@_`). Repeated calls with no
+   * Uses `fast-xml-parser` under the hood. Entities declared in the document's
+   * internal DTD are expanded, within the parser's size, count and expansion
+   * limits (an entity that references other entities is left unexpanded, so a
+   * billion-laughs document does not grow); a document that declares an
+   * external entity fails to parse. Attribute names are prefixed with `@_`. Repeated calls with no
    * options share a cached result within the same script execution.
    *
    * The result is typed as freely usable, identically to {@link FpResponse.json}:
@@ -281,8 +339,11 @@ export interface FpXml2JsonOptions {
 /**
  * Persistent environment variables for the active environment.
  *
- * Changes are written back to the environment file (`*.env.json`) after the
- * request completes. Both phases can read and write.
+ * Changes are saved after the request completes to this machine's local
+ * values for the environment (`environments/<id>/.state/localvalues.json`);
+ * the shared environment config is never modified. The desktop app always
+ * saves them; the `fp` CLI only with `--persist-env` (otherwise they last for
+ * the run). Both phases can read and write.
  */
 export interface FpEnvironment {
   /** Returns the variable value, or `undefined` if not set. */
@@ -518,7 +579,8 @@ export interface FpApi {
    * Starts a fluent chai-like assertion on `value`.
    *
    * @example
-   * fp.expect(user).to.have.property('email').that.is.a('string')
+   * fp.expect(user).to.have.property('email')
+   * fp.expect(user.email).to.be.a('string')
    */
   expect(value: unknown): ChaiExpect
 

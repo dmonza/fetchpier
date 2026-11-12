@@ -10,9 +10,10 @@ async function collectHttpFiles(dir: string): Promise<string[]> {
   // Sort entries so traversal order is stable across platforms.
   entries.sort((a, b) => a.name.localeCompare(b.name))
   for (const entry of entries) {
-    // Skip app-state and run-log folders.
+    // Skip every dot-named entry, as the desktop tree does: `.files/` (staged
+    // attachments), `.runs/`, `.fetchpier/`, `.git/` and hidden user files.
+    if (entry.name.startsWith('.')) continue
     if (entry.isDirectory()) {
-      if (entry.name === '.fetchpier' || entry.name === '.runs' || entry.name === '.git') continue
       out.push(...(await collectHttpFiles(join(dir, entry.name))))
     } else if (entry.isFile() && entry.name.endsWith('.http')) {
       out.push(join(dir, entry.name))

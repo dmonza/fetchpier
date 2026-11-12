@@ -19,11 +19,13 @@ import {
   authFieldTexts,
   mapAuthStrings,
   resolveAuthConfig,
+  setRecordHeaderUnique,
   MASK_PRESERVING_MATERIALIZATION
 } from './auth'
 import { resolveRequestVariables, type ResolvedRequest } from './variables'
 import {
   splitUrlAndParams,
+  splitUrlFragment,
   splitFormBody,
   assembleQuery,
   encodeQueryComponentPreservingMasks,
@@ -467,6 +469,11 @@ export async function execute(
     queryParams = split.params
     queryWarnings = split.warnings
   }
+  // A fragment rides on the base (the split keeps it there for the file) but is
+  // never sent (FMT-01, RFC 9112 §3.2): drop it before auth or the query is
+  // appended, so an api-key query cannot land inside it and the snapshot is the
+  // URL actually sent.
+  baseUrl = splitUrlFragment(baseUrl).url
   // The same for a form body: the desktop passes structured `formFields`; the CLI
   // parser (or a script that rewrote the body) hands a raw form-urlencoded body,
   // so it is split with the loader's decoder and then built like the fields are.
@@ -886,15 +893,21 @@ export async function execute(
         reason: describeError(err)
       })
     }
-  } else if (rawSetCookie.length > 0) {
+  } else {
     // The jar did not run for this send — no environment selected, the request
     // set its own `Cookie` header, or the jar is disabled. The response still
     // sent these, and hiding them because *we* chose not to store them would be
     // the tool withholding what it plainly observed. `stored` stays undefined:
-    // nothing decided either way.
+    // nothing decided either way. Each cookie is attributed to the hop that
+    // offered it, as the jar path does: the exchange records every hop's
+    // `Set-Cookie`, while `rawSetCookie` holds only the final response's, which
+    // is attributed to the final URL when no hop recorded any.
     const receivedAt = new Date()
-    receivedCookies = rawSetCookie
-      .map((h) => snapshotFromSetCookie(h, wireUrl, receivedAt))
+    const offered = exchange?.hops.some((h) => h.setCookie.length > 0)
+      ? exchange.hops.flatMap((h) => h.setCookie.map((header) => ({ header, url: h.url })))
+      : rawSetCookie.map((header) => ({ header, url: exchange?.finalUrl ?? wireUrl }))
+    receivedCookies = offered
+      .map(({ header, url }) => snapshotFromSetCookie(header, url, receivedAt))
       .filter((c): c is CookieSnapshot => c !== null)
   }
 
@@ -921,9 +934,16 @@ export async function execute(
   // (`logResolved`) fields so secret values never reach the activity panel,
   // reporters, or `.runs/`. The multipart parts summary is the only place they
   // can see the encoded structure (file bytes are intentionally absent).
+  // The overrides replace every case variant, as the wire does (the client drops
+  // a user-typed `content-type` for the generated one), so the snapshot never
+  // lists a header that was not sent.
   const headersForSnapshot: Record<string, string> = { ...logWithAuth.headers }
-  if (cookieHeaderValue !== undefined) headersForSnapshot['Cookie'] = cookieHeaderValue
-  if (multipartEncoded) headersForSnapshot['Content-Type'] = multipartEncoded.contentType
+  if (cookieHeaderValue !== undefined) {
+    setRecordHeaderUnique(headersForSnapshot, 'Cookie', cookieHeaderValue)
+  }
+  if (multipartEncoded) {
+    setRecordHeaderUnique(headersForSnapshot, 'Content-Type', multipartEncoded.contentType)
+  }
 
   // Collect from the marker-bearing `resolved` fields (markers are gone in
   // `logResolved`, already replaced by `{secret:<name>}`). The auth config is

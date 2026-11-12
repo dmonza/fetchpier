@@ -95,6 +95,40 @@ describe('loadForEnvironment', () => {
     expect(store.getState().isLoading).toBe(false)
     errSpy.mockRestore()
   })
+
+  it('keeps the load failure so the panel can explain it, and clears it on success (ENG-37)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.cookies.list.mockRejectedValueOnce(new Error('COOKIE_JAR_UNREADABLE: bad json'))
+    await store.getState().loadForEnvironment('dev')
+    expect(store.getState().loadError).toBe('COOKIE_JAR_UNREADABLE: bad json')
+    await store.getState().loadForEnvironment('dev')
+    expect(store.getState().loadError).toBeNull()
+    errSpy.mockRestore()
+  })
+
+  // The banner recommends Clear all, or fixing the file: either way out must
+  // take the banner down, without reopening the panel (ENG-37 review).
+  it('clears the load failure once Clear all succeeds', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.cookies.list.mockRejectedValueOnce(new Error('COOKIE_JAR_UNREADABLE: bad json'))
+    await store.getState().loadForEnvironment('dev')
+    await store.getState().clearAll()
+    expect(store.getState().loadError).toBeNull()
+    errSpy.mockRestore()
+  })
+
+  it('clears the load failure when a cookies:changed refresh reads the jar', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.cookies.list.mockRejectedValueOnce(new Error('COOKIE_JAR_UNREADABLE: bad json'))
+    await store.getState().loadForEnvironment('dev')
+    api.cookies.list.mockResolvedValueOnce([makeCookie()])
+    onChangedCb!('dev')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(store.getState().loadError).toBeNull()
+    expect(store.getState().cookies).toHaveLength(1)
+    errSpy.mockRestore()
+  })
 })
 
 describe('create / update / remove are guarded by environmentId', () => {

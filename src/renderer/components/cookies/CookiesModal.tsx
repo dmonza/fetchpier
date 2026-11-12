@@ -17,6 +17,7 @@ import { cn } from '../../lib/utils'
 import { useCookieStore } from '../../stores/cookies'
 import type { Cookie } from '../../../shared/types'
 import { CookieForm } from './CookieForm'
+import { cookieErrorText } from './cookie-error'
 
 interface Props {
   /** Stable id of the environment that owns this cookie jar (used for IPC). */
@@ -87,6 +88,15 @@ export function CookiesModal({
   const loadForEnvironment = useCookieStore((s) => s.loadForEnvironment)
   const clearAll = useCookieStore((s) => s.clearAll)
   const remove = useCookieStore((s) => s.remove)
+  const loadError = useCookieStore((s) => s.loadError)
+
+  // A delete or "Clear all" the jar refused (e.g. an unreadable jar file).
+  const [actionError, setActionError] = useState<string | null>(null)
+  const failAction = (err: unknown): void => {
+    console.error(err)
+    setActionError(cookieErrorText(err, t))
+  }
+  const panelError = actionError ?? (loadError !== null ? cookieErrorText(loadError, t) : null)
 
   const [editing, setEditing] = useState<Cookie | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -201,6 +211,15 @@ export function CookiesModal({
           </div>
         </div>
 
+        {panelError && (
+          <div
+            role="alert"
+            className="shrink-0 border-b border-border px-4 py-2 text-xs text-danger-text"
+          >
+            {panelError}
+          </div>
+        )}
+
         {/* Results — scrollable */}
         <div className="flex-1 overflow-auto">
           <div className="rounded border-border">
@@ -283,7 +302,8 @@ export function CookiesModal({
                                   className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-danger-text"
                                   onClick={() => {
                                     if (confirm(t('cookies.confirmDelete', { name: c.name }))) {
-                                      remove(c.id).catch(console.error)
+                                      setActionError(null)
+                                      remove(c.id).catch(failAction)
                                     }
                                   }}
                                   title={t('cookies.delete')}
@@ -305,7 +325,8 @@ export function CookiesModal({
 
         {/* Footer */}
         <DialogFooter className="shrink-0 border-t border-border px-4 py-2">
-          {cookies.length > 0 && !confirmClearAll && (
+          {/* Also offered over an unreadable jar: it is the way to start over. */}
+          {(cookies.length > 0 || loadError !== null) && !confirmClearAll && (
             <Button
               variant="ghost"
               size="sm"
@@ -322,7 +343,8 @@ export function CookiesModal({
                 variant="destructive"
                 size="sm"
                 onClick={() => {
-                  clearAll().catch(console.error)
+                  setActionError(null)
+                  clearAll().catch(failAction)
                   setConfirmClearAll(false)
                 }}
               >

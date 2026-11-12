@@ -11,7 +11,8 @@ import type {
   RequestSettings,
   SettingValue
 } from '@shared/types'
-import { authEcho } from '@shared/lib/auth-echo'
+import { authEcho, isAuthQueryParam } from '@shared/lib/auth-echo'
+import { splitUrlFragment } from '@shared/lib/query-string'
 import { headersToRecord, removeHeaders } from '@shared/lib/headers'
 import { parseDisabledRow } from '@shared/lib/disabled-rows'
 import { mapTokenLiteralsSafe } from '@shared/lib/token-grammar'
@@ -88,21 +89,28 @@ const AUTH_END_MARKER = /^\s*#\s*@end-auth\b/
  * script block inside the .http file. Lines without the prefix are returned as-is.
  */
 function stripScriptCommentPrefix(line: string): string {
-  // Match an optional leading whitespace + `#` + optional single space
-  const m = line.match(/^(\s*)#( ?)(.*)$/)
+  // Match an optional leading whitespace + `#` + optional single space. `[\s\S]`,
+  // not `.`: a U+2028 / U+2029 is not a line break here (lines split on `\n`
+  // only), so the rest must match across it (FMT-18).
+  const m = line.match(/^(\s*)#( ?)([\s\S]*)$/)
   if (!m) return line
   return m[1] + m[3]
 }
 
-/** Parses a single `# key: value` line inside the @auth block. */
+/**
+ * Parses a single `# key: value` line inside the @auth block. Only the key is
+ * trimmed: the value is the text after the colon minus one separator space, so a
+ * credential with leading or trailing whitespace round-trips (FMT-17), as a
+ * header value does.
+ */
 function parseAuthFieldLine(line: string): [string, string] | null {
-  const m = line.match(/^\s*#\s?(.*)$/)
+  const m = line.match(/^\s*#\s?([\s\S]*)$/)
   if (!m) return null
-  const body = m[1].trim()
-  if (!body) return null
+  const body = m[1]
+  if (!body.trim()) return null
   const colon = body.indexOf(':')
   if (colon < 0) return null
-  return [body.slice(0, colon).trim(), body.slice(colon + 1).trim()]
+  return [body.slice(0, colon).trim(), stripOneLeadingSpace(body.slice(colon + 1))]
 }
 
 /**
@@ -123,7 +131,10 @@ function reconstructAuth(fields: Record<string, string>): AuthConfig | undefined
     return extra ?? null
   }
 
-  const type = fields['type']
+  // `type` and `location` are keywords, and the api-key `key` is a header or
+  // query-parameter name — none is a credential, so padding around them is not
+  // part of the value (FMT-17 keeps the credential fields verbatim).
+  const type = fields['type']?.trim()
   if (type === undefined) return warn('missing required field "type"')
 
   switch (type) {
@@ -146,13 +157,14 @@ function reconstructAuth(fields: Record<string, string>): AuthConfig | undefined
     case 'api-key': {
       const extra = unknownKeys(['type', 'key', 'value', 'location'])
       if (extra) return warn(`unknown key "${extra}"`)
-      if (fields['key'] === undefined) return warn('"api-key" requires "key"')
+      const key = fields['key']?.trim()
+      if (key === undefined) return warn('"api-key" requires "key"')
       if (fields['value'] === undefined) return warn('"api-key" requires "value"')
-      const location = fields['location'] ?? 'header'
+      const location = fields['location']?.trim() ?? 'header'
       if (location !== 'header' && location !== 'query') {
         return warn(`unknown location "${location}"`)
       }
-      return { type: 'api-key', key: fields['key'], value: fields['value'], location }
+      return { type: 'api-key', key, value: fields['value'], location }
     }
     default:
       return warn(`unknown type "${type}"`)
@@ -195,8 +207,8 @@ const HTTP_VERSION_VALUES: readonly HttpVersion[] = ['auto', 'http1', 'http2']
 
 /** Parses a single `key: value` line inside the @settings block into a typed override. */
 function parseSettingLine(line: string): [keyof RequestSettings, SettingValue<unknown>] | null {
-  // Strip leading `# ` (or `#`) prefix
-  const m = line.match(/^\s*#\s?(.*)$/)
+  // Strip leading `# ` (or `#`) prefix (`[\s\S]`: across a U+2028 / U+2029, FMT-18)
+  const m = line.match(/^\s*#\s?([\s\S]*)$/)
   if (!m) return null
   const body = m[1].trim()
   if (!body) return null
@@ -298,9 +310,12 @@ function extractScriptAt(
  * Removes every query parameter whose (token-aware decoded) name matches `name`
  * from a URL — the api-key-in-query surface an active scheme owns. Returns the
  * rewritten URL, or `null` when nothing matched (caller leaves the URL untouched).
- * Remaining parameters keep their original encoding verbatim.
+ * Remaining parameters keep their original encoding verbatim, and a fragment
+ * stays at the end of the URL (FMT-01). The name match is the shared
+ * {@link isAuthQueryParam} rule (exact, trimmed — FMT-16).
  */
-function stripQueryParamsByName(url: string, name: string): string | null {
+function stripQueryParamsByName(rawUrl: string, name: string): string | null {
+  const { url, fragment } = splitUrlFragment(rawUrl)
   const qIdx = url.indexOf('?')
   if (qIdx === -1) return null
   const base = url.slice(0, qIdx)
@@ -313,10 +328,10 @@ function stripQueryParamsByName(url: string, name: string): string | null {
     // now contains and reports it; compare the author's bytes instead. The
     // parameter is simply not recognized as this scheme's echo, so it survives.
     const decoded = mapTokenLiteralsSafe(rawKey, decodeURIComponent)
-    return (decoded.failed ? rawKey : decoded.text) !== name
+    return !isAuthQueryParam(decoded.failed ? rawKey : decoded.text, name)
   })
   if (kept.length === segs.length) return null
-  return kept.length > 0 ? `${base}?${kept.join('&')}` : base
+  return (kept.length > 0 ? `${base}?${kept.join('&')}` : base) + fragment
 }
 
 /**
@@ -456,6 +471,10 @@ function parseRequestBlockInner(block: string): HttpRequest | null {
     const candidate = value.toLowerCase()
     if ((RAW_SUBTYPE_VALUES as readonly string[]).includes(candidate)) {
       rawSubtype = candidate as RawSubtype
+    } else {
+      // The line is consumed and a save writes the editor's subtype instead, so
+      // it is a load warning of the request (FMT-19), not a silent drop.
+      parseWarning(`unknown # @rawSubtype value "${value}"; the body loads as the default subtype`)
     }
   }
   // A `# @rawSubtype:` line carrying a recognized value, or null. Used to decide

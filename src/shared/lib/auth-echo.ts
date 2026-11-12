@@ -37,6 +37,17 @@ export interface AuthEcho {
   query?: AuthEchoQuery
 }
 
+/**
+ * Whether a query parameter name is the one an api-key (location: query) scheme
+ * owns (FMT-16). Query names are case-sensitive on the wire, so the match is
+ * exact on the trimmed names. The one rule the parser (strip on load), the
+ * serializer (drop on save), the editor (hide the row) and the send payload
+ * (drop on send) share, so the desktop and the CLI agree on which param is the key.
+ */
+export function isAuthQueryParam(paramName: string, schemeKey: string): boolean {
+  return paramName.trim() === schemeKey.trim()
+}
+
 /** Computes the echo (header or query parameter) a scheme materializes, if any. */
 export function authEcho(auth: AuthConfig | undefined | null): AuthEcho {
   if (!auth) return {}

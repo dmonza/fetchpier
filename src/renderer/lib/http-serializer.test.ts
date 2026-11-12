@@ -23,6 +23,35 @@ describe('computeFullUrl', () => {
     expect(computeFullUrl('https://api.com/users', [])).toBe('https://api.com/users')
   })
 
+  // FMT-01: the fragment rides on the base and is shown after the query.
+  it('puts the query before a fragment of the base, and gives back the typed URL', () => {
+    expect(computeFullUrl('https://api.com/items#top', [kv('1', 'page', '2')])).toBe(
+      'https://api.com/items?page=2#top'
+    )
+    expect(computeFullUrl('https://api.com/items#top', [kv('1', '', '')])).toBe(
+      'https://api.com/items?#top'
+    )
+    for (const typed of ['https://api.com/items?page=2#top', 'https://api.com/items?#top']) {
+      const { baseUrl, params } = splitUrlAndParams(typed)
+      expect(computeFullUrl(baseUrl, params)).toBe(typed)
+    }
+  })
+
+  // A literal `#` in a Params-table key or value is shown as `%23`: the URL bar
+  // re-splits its text on every edit, and a bare `#` would be cut off as the
+  // fragment (and never sent). A `#` inside a {{token}} is left as typed.
+  it('shows a # in a param key or value as %23, so a URL-bar edit keeps it', () => {
+    const params = [kv('1', 'color', '#fff'), kv('2', 'a#b', '{{x#y}}')]
+    const shown = computeFullUrl('https://api.test/p', params)
+    expect(shown).toBe('https://api.test/p?color=%23fff&a%23b={{x#y}}')
+    const { baseUrl, params: back } = splitUrlAndParams(shown)
+    expect(baseUrl).toBe('https://api.test/p')
+    expect(back.map((p) => [p.key, p.value])).toEqual([
+      ['color', '#fff'],
+      ['a#b', '{{x#y}}']
+    ])
+  })
+
   it('appends enabled params as query string', () => {
     const params = [kv('1', 'page', '1'), kv('2', 'limit', '10')]
     expect(computeFullUrl('https://api.com/users', params)).toBe(

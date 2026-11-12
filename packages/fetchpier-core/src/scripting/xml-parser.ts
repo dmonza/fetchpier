@@ -4,9 +4,11 @@
 // script can navigate with standard property access. All scalar values are
 // strings — no automatic number coercion (see REQ-40 §1 for rationale).
 //
-// Defaults are picked to be safe: DTDs are not expanded by `fast-xml-parser`,
-// external entities throw, and entity expansion is length-bounded (inherently
-// blocks billion-laughs).
+// Defaults are picked to be safe: entities declared in the internal DTD are
+// expanded (`processEntities`), within `fast-xml-parser`'s size, count and
+// expansion limits; an entity whose value references other entities is left
+// unexpanded, which keeps billion-laughs from growing; a declared external
+// entity makes the parse throw.
 
 import { XMLParser, XMLValidator } from 'fast-xml-parser'
 

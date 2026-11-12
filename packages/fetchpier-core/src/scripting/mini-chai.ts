@@ -273,6 +273,16 @@ function buildExpect(
       has = Object.prototype.hasOwnProperty.call(t, name) || name in (t as object)
       actual = has ? (t as Record<string, unknown>)[name] : undefined
     }
+    // chai: negated with a value, the assertion fails only when the property
+    // exists AND equals the value — a missing property or another value passes.
+    if (neg && arguments.length > 1) {
+      check(
+        has && deepEqual(actual, value),
+        `expected ${label} to equal ${describe(value)} but got ${describe(actual)}`,
+        `expected ${label} to not equal ${describe(value)}`
+      )
+      return
+    }
     check(
       has,
       `expected ${describe(t)} to have ${label}`,

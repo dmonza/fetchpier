@@ -258,3 +258,28 @@ describe('auth on the wire — secret masking', () => {
     expect(snap.secretsMasked).toContain('apiSecret')
   })
 })
+
+describe('auth on the wire — the snapshot reports what was sent', () => {
+  // ENG-30: a case variant of the managed header (here written by a pre-request
+  // script) is replaced on the wire; the snapshot must not keep it beside the
+  // managed value.
+  it('lists a script-written case variant of Authorization once, as sent', async () => {
+    const endpoint = await server.forGet('/variant').thenReply(200, 'ok')
+    const req: HttpRequest = {
+      method: 'GET',
+      url: `${server.url}/variant`,
+      headers: {},
+      auth: { type: 'bearer', token: 'abc' },
+      preRequestScript: `fp.request.headers.set('authorization', 'Bearer from-script')`
+    }
+
+    const result = await execute(req, baseOpts)
+
+    expect(result.error).toBeUndefined()
+    expect((await endpoint.getSeenRequests())[0].headers.authorization).toBe('Bearer abc')
+    const auths = Object.entries(result.request!.headers).filter(
+      ([k]) => k.toLowerCase() === 'authorization'
+    )
+    expect(auths).toEqual([['Authorization', 'Bearer abc']])
+  })
+})

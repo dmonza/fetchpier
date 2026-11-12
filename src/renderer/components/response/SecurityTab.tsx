@@ -126,10 +126,13 @@ export function SecurityTab({
     return error ? <Centered>{t('response.security.noResponse')}</Centered> : <>{emptyState}</>
   }
 
-  const groups = FINDING_SEVERITIES.map((severity) => ({
-    severity,
-    items: findings.items.filter((f) => f.severity === severity)
-  })).filter((g) => g.items.length > 0 || (g.severity === 'info' && findings.tls === 'unavailable'))
+  // The synthetic "TLS details not available" row sits in the info group and
+  // counts toward its heading like any other row.
+  const groups = FINDING_SEVERITIES.map((severity) => {
+    const items = findings.items.filter((f) => f.severity === severity)
+    const tlsRow = severity === 'info' && findings.tls === 'unavailable'
+    return { severity, items, tlsRow, count: items.length + (tlsRow ? 1 : 0) }
+  }).filter((g) => g.count > 0)
 
   return (
     <div className="h-full overflow-auto">
@@ -144,13 +147,13 @@ export function SecurityTab({
       {groups.map((group) => (
         <section key={group.severity} data-severity-group={group.severity}>
           <h3 className="bg-surface-2 px-3 py-1 text-[11px] font-semibold text-muted-foreground">
-            {t(`findings.severityGroup.${group.severity}`, { count: group.items.length })}
+            {t(`findings.severityGroup.${group.severity}`, { count: group.count })}
           </h3>
           <ul>
             {group.items.map((f, i) => (
               <FindingRow key={`${f.ruleId}-${i}`} finding={f} />
             ))}
-            {group.severity === 'info' && findings.tls === 'unavailable' && (
+            {group.tlsRow && (
               <li className="flex gap-2 border-b border-border px-3 py-2 text-xs">
                 <SeverityChip severity="info" />
                 <span className="text-foreground">{t('response.security.tlsUnavailable')}</span>

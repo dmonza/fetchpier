@@ -80,6 +80,18 @@ describe('decodeBody', () => {
     expect(out.body).toBe(bomb)
   })
 
+  // ENG-16: the raw-inflate fallback must not mask the cap error.
+  it.each([
+    ['zlib-wrapped', deflateSync],
+    ['raw', deflateRawSync]
+  ])('a %s deflate body past the cap reports the size limit', (_l, compress) => {
+    const bomb = compress(Buffer.alloc(64 * 1024, 0))
+    const out = decodeBody(bomb, 'deflate', { maxDecodedBytes: 1024 })
+    expect(out.status).toBe('failed')
+    expect(out.body).toBe(bomb)
+    expect(out.warning && 'reason' in out.warning && out.warning.reason).toMatch(/larger than 1024/)
+  })
+
   it('exposes a generous default cap', () => {
     expect(MAX_DECODED_BYTES).toBe(100 * 1024 * 1024)
   })

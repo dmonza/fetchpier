@@ -177,6 +177,10 @@ describe('parseXmlSafe — errors', () => {
 })
 
 describe('parseXmlSafe — security', () => {
+  it('expands an entity declared in the internal DTD (documented behavior)', () => {
+    expect(parseXmlSafe('<!DOCTYPE a [<!ENTITY e "hello">]><a>&e;</a>')).toEqual({ a: 'hello' })
+  })
+
   it('does not expand external entities (XXE)', () => {
     const xml =
       '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>'

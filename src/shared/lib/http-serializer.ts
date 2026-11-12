@@ -14,7 +14,8 @@ import {
 } from './multipart-format'
 import { mapTokenLiterals } from './token-grammar'
 import { serializeDisabledRow } from './disabled-rows'
-import { authEcho } from './auth-echo'
+import { authEcho, isAuthQueryParam } from './auth-echo'
+import { appendQuery, splitUrlFragment } from './query-string'
 
 /**
  * Converts enabled key-value pairs to `?key=value&...` query string (without
@@ -40,11 +41,14 @@ function buildQueryString(params: KeyValuePair[]): string {
   )
 }
 
-/** Appends query params to a URL (handles already-existing `?` in base URL) */
+/**
+ * Appends query params to a URL (handles already-existing `?` in base URL, and
+ * keeps a fragment of the base after the query — FMT-01).
+ */
 function applyParamsToUrl(baseUrl: string, params: KeyValuePair[]): string {
   const qs = buildQueryString(params)
   if (!qs) return baseUrl
-  return baseUrl.includes('?') ? `${baseUrl}&${qs}` : `${baseUrl}?${qs}`
+  return appendQuery(baseUrl, qs)
 }
 
 /**
@@ -290,7 +294,7 @@ export function serializeRequest(state: RequestEditorState, requestId?: string):
   // An active scheme owns its name: a manual same-name parameter is dropped, not
   // persisted alongside the echo (REQ-0083 §6.4, owner decision).
   const manualParams = echo.query
-    ? params.filter((p) => p.key.trim().toLowerCase() !== echo.query!.key.trim().toLowerCase())
+    ? params.filter((p) => !isAuthQueryParam(p.key, echo.query!.key))
     : params
   const allParams = [...authParams, ...manualParams]
   const finalUrl = applyParamsToUrl(url, allParams)
@@ -443,20 +447,28 @@ export function serializeRequest(state: RequestEditorState, requestId?: string):
  * Values are NOT percent-encoded — this is for display in the URL bar only.
  * Disabled params and params with an empty key are excluded from the query string.
  * If all enabled params are empty placeholders (key='' and value=''), appends just '?'.
+ * A fragment the base carries (FMT-01) is shown after the query, where it was typed.
+ * The one exception to "not encoded": a literal `#` in a key or value is shown as
+ * `%23` (outside `{{tokens}}`), because the URL bar re-splits its text on every
+ * edit and a bare `#` would be cut off as the fragment.
  */
 export function computeFullUrl(baseUrl: string, params: KeyValuePair[]): string {
   const enabled = params.filter((p) => p.enabled)
   const withKey = enabled.filter((p) => p.key.trim() !== '')
+  const { url, fragment } = splitUrlFragment(baseUrl)
   if (withKey.length > 0) {
+    const shown = (s: string): string => mapTokenLiterals(s, (lit) => lit.replace(/#/g, '%23'))
     // REQ-0124: a value-less parameter renders as its bare key, so the field
     // gives back exactly the text that was typed into it instead of silently
     // re-adding a separator the user removed.
-    const qs = withKey.map((p) => (p.valueless ? p.key : `${p.key}=${p.value}`)).join('&')
-    return `${baseUrl}?${qs}`
+    const qs = withKey
+      .map((p) => (p.valueless ? shown(p.key) : `${shown(p.key)}=${shown(p.value)}`))
+      .join('&')
+    return `${url}?${qs}${fragment}`
   }
   // All enabled params are empty placeholders (e.g. bare '?' in the URL bar)
   if (enabled.length > 0 && enabled.every((p) => p.key === '' && p.value === '')) {
-    return `${baseUrl}?`
+    return `${url}?${fragment}`
   }
   return baseUrl
 }

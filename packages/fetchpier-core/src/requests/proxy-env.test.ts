@@ -146,6 +146,39 @@ describe('resolveProxyRouting', () => {
     expect(exposed).not.toContain(PASSWORD)
   })
 
+  // With no `scheme://`, a URL parser reads `user:` as the scheme (ENG-14): no
+  // part of the value is quoted, not even the username.
+  it.each([
+    ['HTTPS_PROXY with credentials', { env: { HTTPS_PROXY: `alice:${PASSWORD}@proxy:3128` } }],
+    ['flag with credentials', { flag: `alice:${PASSWORD}@proxy:3128` }],
+    ['HTTP_PROXY host:port', { env: { HTTP_PROXY: 'alice.proxy:3128' } }]
+  ])('a %s but no scheme names no part of its value', (_l, input) => {
+    let err: unknown
+    try {
+      resolveProxyRouting(input)
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(CoreError)
+    expect((err as CoreError).code).toBe('PROXY_INVALID')
+    const exposed = `${(err as CoreError).message} ${JSON.stringify((err as CoreError).details)}`
+    expect(exposed).not.toContain('alice')
+    expect(exposed).not.toContain(PASSWORD)
+    expect((err as CoreError).message).toMatch(/http:\/\/ or https:\/\//)
+  })
+
+  it('an explicit unsupported scheme is still named', () => {
+    expect(() => resolveProxyRouting({ flag: 'socks5://proxy:1080' })).toThrow(/"socks5:"/)
+  })
+
+  it('NO_PROXY with an IPv6 entry sends an IPv6 loopback target direct', () => {
+    const routing = resolveProxyRouting({
+      env: { HTTP_PROXY: 'http://proxy.example:8080', NO_PROXY: 'localhost,127.0.0.1,::1' }
+    })
+    expect(routing.proxyFor('http://[::1]:3000/health')).toBeUndefined()
+    expect(routing.proxyFor('http://[::2]:3000/health')).toBeDefined()
+  })
+
   it('rejects the flag together with noProxy', () => {
     expect(() => resolveProxyRouting({ flag: 'http://p:1', noProxy: true })).toThrow(CoreError)
   })
@@ -163,7 +196,17 @@ describe('matchesNoProxy', () => {
     ['api.example.com:8443', 'https://api.example.com/x', false],
     ['*', 'https://anything.test/x', true],
     ['localhost, 127.0.0.1', 'http://127.0.0.1:9200/x', true],
-    ['', 'https://api.example.com/x', false]
+    ['', 'https://api.example.com/x', false],
+    // IPv6 literals (ENG-13): bare, bracketed, and bracketed with a port.
+    ['::1', 'http://[::1]:3000/', true],
+    ['[::1]', 'http://[::1]:3000/', true],
+    ['[::1]:3000', 'http://[::1]:3000/', true],
+    ['[::1]:4000', 'http://[::1]:3000/', false],
+    ['localhost,127.0.0.1,::1', 'http://[::1]:3000/health', true],
+    ['[FE80::ABCD]', 'http://[fe80::abcd]/x', true],
+    ['::1', 'http://[::2]/x', false],
+    ['::1', 'http://localhost/x', false],
+    ['[::1]', 'http://localhost/x', false]
   ])('NO_PROXY=%j against %s → %s', (list, url, expected) => {
     expect(matchesNoProxy(url, list)).toBe(expected)
   })

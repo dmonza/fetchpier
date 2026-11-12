@@ -189,4 +189,38 @@ describe('mini-chai', () => {
     vExpect(() => expect(obj).to.not.have.nested.property('a.missing')).not.toThrow()
     vExpect(() => expect(obj).to.not.have.nested.property('a.b')).toThrow(AssertionError)
   })
+
+  // chai: a negated property(name, value) fails only when the property exists
+  // AND deep-equals the value.
+  it('not.property(name, value) — passes on a different value or a missing property', () => {
+    const obj = { a: 1, o: { x: 1 } }
+    vExpect(() => expect(obj).to.not.have.property('a', 2)).not.toThrow()
+    vExpect(() => expect(obj).to.not.have.property('b', 1)).not.toThrow()
+    vExpect(() => expect(obj).to.not.have.property('o', { x: 2 })).not.toThrow()
+    vExpect(() => expect(obj).to.not.have.property('a', 1)).toThrow(
+      'expected property "a" to not equal 1'
+    )
+    vExpect(() => expect(obj).to.not.have.property('o', { x: 1 })).toThrow(AssertionError)
+    // An explicit undefined value is still a value: a missing property passes.
+    vExpect(() => expect(obj).to.not.have.property('b', undefined)).not.toThrow()
+  })
+
+  it('not.nested.property(path, value) — same semantics on dotted paths', () => {
+    const obj = { a: { b: [10, { c: 'deep' }] } }
+    vExpect(() => expect(obj).to.not.have.nested.property('a.b.0', 11)).not.toThrow()
+    vExpect(() => expect(obj).to.not.have.nested.property('a.missing', 10)).not.toThrow()
+    vExpect(() => expect(obj).to.not.have.nested.property('a.b.0', 10)).toThrow(AssertionError)
+    vExpect(() => expect(obj).to.not.have.nested.property('a.b.1', { c: 'deep' })).toThrow(
+      AssertionError
+    )
+  })
+
+  it('positive property(name, value) still fails on a missing property or a different value', () => {
+    vExpect(() => expect({ a: 1 }).to.have.property('b', 1)).toThrow(
+      'expected {"a":1} to have property "b"'
+    )
+    vExpect(() => expect({ a: 1 }).to.have.property('a', 2)).toThrow(
+      'expected property "a" to equal 2 but got 1'
+    )
+  })
 })

@@ -504,6 +504,50 @@ describe('parseHttpFile', () => {
     expect(req(result).body).toContain('real body')
   })
 
+  // FMT-19: in the metadata region the line is consumed, so it must not vanish silently.
+  it.each(['yaml', 'jsno'])(
+    'warns on load for an unknown `# @rawSubtype: %s` in the metadata region',
+    (value) => {
+      const content = [
+        `# @rawSubtype: ${value}`,
+        'POST https://api.example.com/x',
+        'Content-Type: application/json',
+        '',
+        '{"a":1}'
+      ].join('\n')
+      const result = parseHttpFile(content)
+      const r = req(result)
+      expect(r.rawSubtype).toBeUndefined()
+      expect(r.body).toBe('{"a":1}')
+      expect(r.loadWarnings).toEqual([expect.stringContaining(`"${value}"`)])
+      expect(result.warnings).toEqual(r.loadWarnings)
+    }
+  )
+
+  it('a recognized metadata `# @rawSubtype:` value (any case) loads with no warning', () => {
+    const content = ['# @rawSubtype: XML', 'POST https://api.example.com/x', '', '<a/>'].join('\n')
+    const result = parseHttpFile(content)
+    expect(req(result).rawSubtype).toBe('xml')
+    expect(req(result).loadWarnings).toBeUndefined()
+    expect(result.warnings).toBeUndefined()
+  })
+
+  // FMT-18: U+2028 / U+2029 are not line breaks for the parser; a directive holding one still matches.
+  it.each([
+    ['U+2028', ' '],
+    ['U+2029', ' ']
+  ])('reads a `# @settings` line with a trailing %s', (_label, ch) => {
+    const content = [
+      '# @settings',
+      `# maxRedirects: 3${ch}`,
+      '# @end-settings',
+      'GET https://api.example.com/x'
+    ].join('\n')
+    const result = parseHttpFile(content)
+    expect(req(result).settings).toEqual({ maxRedirects: { inherit: false, value: 3 } })
+    expect(result.warnings).toBeUndefined()
+  })
+
   it('returns undefined rawSubtype when no marker is present', () => {
     const content = ['POST https://api.example.com/x', '', '{"ok":true}'].join('\n')
     const result = parseHttpFile(content)

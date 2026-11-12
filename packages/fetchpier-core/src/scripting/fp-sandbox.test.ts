@@ -829,7 +829,47 @@ describe('FORBIDDEN_GLOBALS — every name is shadowed inside scripts', () => {
       expect(outcome.result.success).toBe(true)
       expect(outcome.variables.t).toBe('undefined')
     })
+
+    // SCR-08: a top-level declaration of the same name shadows the wrapper's
+    // binding instead of being an early "already declared" SyntaxError.
+    it(`a top-level const / let named ${name} runs and holds the script's value`, () => {
+      for (const kw of ['const', 'let']) {
+        const outcome = runFpScript({
+          phase: 'pre-request',
+          script: `${kw} ${name} = "${kw}-value";\nfp.variables.set("v", ${name});`,
+          request: baseRequest(),
+          environment: {},
+          variables: {}
+        })
+        expect(outcome.result.error?.message).toBeUndefined()
+        expect(outcome.variables.v).toBe(`${kw}-value`)
+      }
+    })
   }
+
+  it('a script that declares one forbidden name still sees the others shadowed', () => {
+    const outcome = runFpScript({
+      phase: 'pre-request',
+      script: 'const module = 1;\nfp.variables.set("t", typeof process + "/" + typeof Promise);',
+      request: baseRequest(),
+      environment: {},
+      variables: {}
+    })
+    expect(outcome.result.success).toBe(true)
+    expect(outcome.variables.t).toBe('undefined/undefined')
+  })
+
+  it('a duplicate declaration within the script itself is still a SyntaxError', () => {
+    const outcome = runFpScript({
+      phase: 'pre-request',
+      script: 'const a = 1;\nconst a = 2;',
+      request: baseRequest(),
+      environment: {},
+      variables: {}
+    })
+    expect(outcome.result.success).toBe(false)
+    expect(outcome.result.error?.message).toMatch(/already been declared/)
+  })
 })
 
 describe('5-second default timeout (REQ §4.3.4)', () => {

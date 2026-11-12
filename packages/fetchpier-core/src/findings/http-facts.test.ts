@@ -107,6 +107,11 @@ describe('isExplicitlyShareable — RFC 9111, explicit freshness only', () => {
     ['s-maxage=60', undefined, true],
     ['s-maxage=0', undefined, false],
     ['max-age=0, s-maxage=60', undefined, true],
+    // s-maxage overrides max-age and Expires for a shared cache (RFC 9111 §5.2.2.10).
+    ['max-age=600, s-maxage=0', undefined, false],
+    ['s-maxage=0, max-age=600', undefined, false],
+    ['s-maxage=0', tomorrow, false],
+    ['s-maxage=60, max-age=0', undefined, true],
     [undefined, tomorrow, true],
     [undefined, yesterday, false],
     [undefined, 'not-a-date', false],

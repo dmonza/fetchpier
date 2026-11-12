@@ -5,7 +5,8 @@
  * `os-keychain` backend it is repopulated lazily from the persistent keystore;
  * for `session-only` it is the sole home of the key until the app quits.
  *
- * Cleared on workspace lock / switch / quit (`lockAll`).
+ * Cleared by `lockAll` (a full lock) and on quit. A workspace switch clears it
+ * only on `os-keychain`; `session-only` keys survive it.
  */
 
 const liveKeys = new Map<string, Uint8Array>()
@@ -27,7 +28,7 @@ export function isUnlocked(keyId: string): boolean {
   return liveKeys.has(keyId)
 }
 
-/** Drop every live key. Called on workspace lock/switch and app quit. */
+/** Drop every live key (a full lock; also on a workspace switch on `os-keychain`). */
 export function lockAll(): void {
   liveKeys.clear()
 }

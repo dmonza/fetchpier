@@ -116,6 +116,25 @@ export const MASK_PRESERVING_MATERIALIZATION: AuthMaterializationOptions = {
   encodeBasicCredential: (s) => s
 }
 
+/**
+ * The record counterpart of `setHeaderUnique`: drops every key matching `name`
+ * case-insensitively, then sets `name`. The record is what the request snapshot
+ * reports (and what goes on the wire when there is no list), so a case variant
+ * left beside the managed key would report a header that was never sent.
+ * Mutates `record`.
+ */
+export function setRecordHeaderUnique(
+  record: Record<string, string>,
+  name: string,
+  value: string
+): void {
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(record)) {
+    if (key.toLowerCase() === lower) delete record[key]
+  }
+  record[name] = value
+}
+
 export function applyAuth<
   T extends { url: string; headers: Record<string, string>; headerList?: HeaderEntry[] }
 >(request: T, auth: AuthConfig | undefined, options: AuthMaterializationOptions = {}): T {
@@ -135,7 +154,7 @@ export function applyAuth<
   // Materialize a managed header: the scheme owns this name, so every same-name
   // entry (including duplicates) is replaced by a single value (REQ §6.4).
   const setManaged = (name: string, value: string): void => {
-    headers[name] = value
+    setRecordHeaderUnique(headers, name, value)
     if (headerList) headerList = setHeaderUnique(headerList, name, value)
   }
 

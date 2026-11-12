@@ -1,5 +1,5 @@
 import type { KeyValuePair, QueryDecodeWarning } from '../types'
-import { mapTokenLiterals, mapTokenLiteralsSafe } from './token-grammar'
+import { createTokenRegex, mapTokenLiterals, mapTokenLiteralsSafe } from './token-grammar'
 
 /**
  * URL ↔ structured-query primitives shared by the renderer (load path), the
@@ -19,8 +19,37 @@ import { mapTokenLiterals, mapTokenLiteralsSafe } from './token-grammar'
  */
 
 /**
+ * Splits a URL at its fragment: the first `#` outside a `{{variable}}` token
+ * (FMT-01). Everything from it on is the fragment (`#` included; `''` when there
+ * is none), so a `?` or `&` inside it is never read as query syntax. A `#` inside
+ * a token is part of the token, as the shared grammar defines it.
+ */
+export function splitUrlFragment(rawUrl: string): { url: string; fragment: string } {
+  const regex = createTokenRegex()
+  let from = 0
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(rawUrl)) !== null) {
+    const hash = rawUrl.slice(from, match.index).indexOf('#')
+    if (hash !== -1) return cut(rawUrl, from + hash)
+    from = match.index + match[0].length
+  }
+  const hash = rawUrl.indexOf('#', from)
+  return hash === -1 ? { url: rawUrl, fragment: '' } : cut(rawUrl, hash)
+}
+
+function cut(rawUrl: string, at: number): { url: string; fragment: string } {
+  return { url: rawUrl.slice(0, at), fragment: rawUrl.slice(at) }
+}
+
+/**
  * Parses a URL into its base (scheme/host/path) and an array of `KeyValuePair`
  * query params.
+ *
+ * Fragment (FMT-01): the fragment is split off before the query is read and is
+ * kept at the end of `baseUrl`, so the URL text round-trips (the editor and the
+ * file keep it) while no parameter ever carries it. The assemblers put the query
+ * back before it, and the engine drops it before sending: a fragment is never
+ * part of the request target (RFC 9112 §3.2).
  *
  * Token-aware decode (REQ-0080 §6.4): only literal segments are percent-decoded;
  * `{{variable}}` tokens pass through verbatim, so a token containing a literal
@@ -39,11 +68,12 @@ export function splitUrlAndParams(rawUrl: string): {
   params: KeyValuePair[]
   warnings: QueryDecodeWarning[]
 } {
-  const qIdx = rawUrl.indexOf('?')
+  const { url, fragment } = splitUrlFragment(rawUrl)
+  const qIdx = url.indexOf('?')
   if (qIdx === -1) return { baseUrl: rawUrl, params: [], warnings: [] }
 
-  const baseUrl = rawUrl.slice(0, qIdx)
-  const queryString = rawUrl.slice(qIdx + 1)
+  const baseUrl = url.slice(0, qIdx) + fragment
+  const queryString = url.slice(qIdx + 1)
 
   // Bare '?' with no query string → one empty placeholder param
   if (queryString === '') {
@@ -201,7 +231,8 @@ export function encodeQueryComponentPreservingMasks(component: string): string {
  *   never normalized via `new URL()`). The masked-snapshot caller passes
  *   {@link encodeQueryComponentPreservingMasks} so `{secret:…}` masks stay legible.
  * - The query is appended with `?` (or `&` if the base already has a `?`, which
- *   happens when an api-key-in-query was applied to the base upstream).
+ *   happens when an api-key-in-query was applied to the base upstream), before
+ *   any fragment the base carries (FMT-01; see {@link splitUrlAndParams}).
  *
  * Side-effect-free.
  */
@@ -226,6 +257,15 @@ export function assembleQuery(
       return `${key}=${value}`
     })
   if (pairs.length === 0) return baseUrl
-  const qs = pairs.join('&')
-  return baseUrl.includes('?') ? `${baseUrl}&${qs}` : `${baseUrl}?${qs}`
+  return appendQuery(baseUrl, pairs.join('&'))
+}
+
+/**
+ * Appends a built query string (no leading `?`) to a base URL: with `&` when the
+ * base already has a query, else with `?`, and before the base's fragment. The
+ * one place the separator rule lives (assembly, save and the URL bar).
+ */
+export function appendQuery(baseUrl: string, qs: string): string {
+  const { url, fragment } = splitUrlFragment(baseUrl)
+  return `${url}${url.includes('?') ? '&' : '?'}${qs}${fragment}`
 }

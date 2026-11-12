@@ -104,8 +104,9 @@ const positiveSeconds = (v: string | undefined): boolean =>
 
 /**
  * Whether a response is **explicitly** cacheable by a shared cache (RFC 9111):
- * `public`, a positive `s-maxage` or `max-age`, or — with neither freshness
- * directive present — an `Expires` in the future. Heuristic freshness does not
+ * `public`, a positive `s-maxage` (which, when present, decides alone), else a
+ * positive `max-age`, or — with neither freshness directive present — an
+ * `Expires` in the future. Heuristic freshness does not
  * count. `private` (in any form), `no-store`, and `no-cache` bare or naming
  * `Set-Cookie` protect the response.
  */
@@ -123,8 +124,9 @@ export function isExplicitlyShareable(
     }
   }
   if (cc.has('public')) return true
-  if (positiveSeconds(cc.get('s-maxage')) || positiveSeconds(cc.get('max-age'))) return true
-  if (cc.has('max-age') || cc.has('s-maxage')) return false
+  // For a shared cache, s-maxage overrides max-age and Expires (RFC 9111 §5.2.2.10).
+  if (cc.has('s-maxage')) return positiveSeconds(cc.get('s-maxage'))
+  if (cc.has('max-age')) return positiveSeconds(cc.get('max-age'))
   if (!expires) return false
   const at = new Date(expires)
   return !Number.isNaN(at.getTime()) && at.getTime() > now.getTime()

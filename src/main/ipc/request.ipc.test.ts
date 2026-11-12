@@ -54,7 +54,7 @@ vi.mock('../tls/store', () => ({
 }))
 
 vi.mock('../secrets/service', () => ({
-  lockAllSecrets: vi.fn()
+  resetSecretsOnWorkspaceSwitch: vi.fn()
 }))
 
 vi.mock('../secrets/keystore', () => ({

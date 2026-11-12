@@ -255,12 +255,81 @@ describe('COOKIE-008 — the response cookies are reported even when the jar is 
     expect(Date.parse(row.expires!)).toBeGreaterThan(Date.now())
   })
 
+  it.each([
+    ['with no environment selected', null],
+    ['with the jar on', 'dev']
+  ])('does not fail the send over an out-of-range Max-Age %s (ENG-32)', async (_l, envId) => {
+    await server
+      .forGet('/x')
+      .thenReply(200, 'ok', { 'set-cookie': 'big=1; Max-Age=9007199254740991; Path=/' })
+    const res = await execute(get(`${hostA}/x`), { ...opts(), environmentId: envId })
+    expect(res.error).toBeUndefined()
+    expect(res.response?.status).toBe(200)
+    expect(res.cookies?.received.map((c) => c.expires)).toEqual([new Date(8.64e15).toISOString()])
+  })
+
+  it('attributes each redirect hop’s cookies to that hop without the jar (ENG-28)', async () => {
+    // Without the jar there is no session to record the hops, so the snapshots
+    // come from the exchange: the domain, path and hop column must name the host
+    // that set the cookie, and an intermediate 3xx's cookie is listed too.
+    await server
+      .forGet('/a/x')
+      .thenReply(302, undefined, { location: `${hostB}/b/y`, 'set-cookie': 'early=0' })
+    await server.forGet('/b/y').thenReply(200, 'ok', { 'set-cookie': 'sid=1' })
+
+    const res = await execute(get(`${hostA}/a/x`), { ...opts(), environmentId: null })
+
+    expect(res.response?.status).toBe(200)
+    expect(
+      res.cookies?.received.map((c) => ({
+        name: c.name,
+        domain: c.domain,
+        path: c.path,
+        url: c.url
+      }))
+    ).toEqual([
+      { name: 'early', domain: 'localhost', path: '/a', url: `${hostA}/a/x` },
+      { name: 'sid', domain: '127.0.0.1', path: '/b', url: `${hostB}/b/y` }
+    ])
+  })
+
+  it('attributes per hop when the request writes its own Cookie header (ENG-28)', async () => {
+    await server.forGet('/a/x').thenReply(302, undefined, { location: `${hostB}/b/y` })
+    await server.forGet('/b/y').thenReply(200, 'ok', { 'set-cookie': 'sid=1' })
+
+    const res = await execute(
+      get(`${hostA}/a/x`, { headers: { Cookie: 'mine=1' }, disableCookieJar: true }),
+      opts()
+    )
+
+    expect(res.cookies?.received.map((c) => [c.domain, c.url])).toEqual([
+      ['127.0.0.1', `${hostB}/b/y`]
+    ])
+  })
+
   it('lists a cookie the jar refused, flagged as not stored', async () => {
     await server.forGet('/x').thenReply(200, 'ok', { 'set-cookie': 'sid=1; Domain=unrelated.test' })
     const res = await execute(get(`${hostA}/x`), opts())
     expect(res.cookies?.received.map((c) => c.name)).toEqual(['sid'])
     expect(res.cookies?.received[0].stored).toBe(false)
     expect(await list(workspaceDir, 'dev')).toHaveLength(0)
+  })
+})
+
+describe('an unreadable cookie jar does not lose the stored cookies (ENG-37)', () => {
+  it('sends without the jar, advises, and leaves the file as it was', async () => {
+    const stateDir = join(workspaceDir, 'environments', 'dev', '.state')
+    const broken = '{ "environmentId": "dev", "cookies": [ { "name": "session", } ] }'
+    await fs.mkdir(stateDir, { recursive: true })
+    await fs.writeFile(join(stateDir, 'cookies.json'), broken)
+    await server.forGet('/x').thenReply(200, 'ok', { 'set-cookie': 'newc=1; Path=/' })
+
+    const res = await execute(get(`${hostA}/x`), opts())
+
+    expect(res.response?.status).toBe(200)
+    const advisory = res.warnings?.find((w) => w.code === 'COOKIE_JAR_UNAVAILABLE')
+    expect(advisory).toMatchObject({ phase: 'read' })
+    expect(await fs.readFile(join(stateDir, 'cookies.json'), 'utf-8')).toBe(broken)
   })
 })
 
@@ -406,6 +475,23 @@ describe('COOKIE-012 — cookie snapshots never carry a secret from the wire URL
     const res = await send(`${hostA}/c`, { environmentId: null })
 
     expect(res.cookies?.received.map((c) => c.url)).toEqual([`${hostA}/c?api_key={secret:apiKey}`])
+    expect(JSON.stringify(res.cookies)).not.toContain(KEY)
+  })
+
+  it('masks every received hop URL across a redirect when the jar does not run', async () => {
+    // ENG-28: without the jar the snapshots are built per hop from the exchange,
+    // so a redirect target that echoes the secret must go through the same mask.
+    await server
+      .forGet('/login')
+      .thenReply(302, undefined, { location: `/home?echo=${KEY}`, 'set-cookie': 'sid=abc' })
+    await server.forGet('/home').thenReply(200, 'ok', { 'set-cookie': 'pref=1' })
+
+    const res = await send(`${hostA}/login`, { environmentId: null })
+
+    expect(res.response?.status).toBe(200)
+    expect(res.cookies?.received.map((c) => c.name)).toEqual(['sid', 'pref'])
+    expect(res.cookies?.received[0].url).toBe(`${hostA}/login?api_key={secret:apiKey}`)
+    expect(res.cookies?.received[1].url.startsWith(`${hostA}/home?echo=`)).toBe(true)
     expect(JSON.stringify(res.cookies)).not.toContain(KEY)
   })
 })

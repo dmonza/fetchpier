@@ -5,6 +5,8 @@ interface CookieStore {
   cookies: Cookie[]
   isLoading: boolean
   environmentId: string | null
+  /** The message of the last failed load, `null` once a load succeeds. */
+  loadError: string | null
 
   loadForEnvironment: (envId: string | null) => Promise<void>
   create: (cookie: Omit<Cookie, 'id' | 'createdAt' | 'updatedAt' | 'source'>) => Promise<void>
@@ -17,20 +19,25 @@ export const useCookieStore = create<CookieStore>()((set, get) => ({
   cookies: [],
   isLoading: false,
   environmentId: null,
+  loadError: null,
 
   loadForEnvironment: async (envId) => {
     set({ isLoading: true, environmentId: envId })
     await window.api.cookies.setActiveEnvironment(envId)
     if (!envId) {
-      set({ cookies: [], isLoading: false })
+      set({ cookies: [], isLoading: false, loadError: null })
       return
     }
     try {
       const cookies = await window.api.cookies.list(envId)
-      set({ cookies, isLoading: false })
+      set({ cookies, isLoading: false, loadError: null })
     } catch (err) {
       console.error('[cookies] load failed:', err)
-      set({ cookies: [], isLoading: false })
+      set({
+        cookies: [],
+        isLoading: false,
+        loadError: err instanceof Error ? err.message : String(err)
+      })
     }
   },
 
@@ -62,7 +69,9 @@ export const useCookieStore = create<CookieStore>()((set, get) => ({
     const env = get().environmentId
     if (!env) return
     await window.api.cookies.clear(env)
-    set({ cookies: [] })
+    // The unreadable-jar banner recommends Clear all: once it succeeded, the
+    // file it was about is gone.
+    set({ cookies: [], loadError: null })
   }
 }))
 
@@ -73,7 +82,9 @@ if (typeof window !== 'undefined' && window.api?.cookies?.onChanged) {
     if (current && envId === current) {
       window.api.cookies
         .list(envId)
-        .then((cookies) => useCookieStore.setState({ cookies }))
+        // A successful read means the jar is readable again (fixed by hand, or
+        // replaced): the load failure no longer applies.
+        .then((cookies) => useCookieStore.setState({ cookies, loadError: null }))
         .catch((err) => console.error('[cookies] refresh failed:', err))
     }
   })

@@ -67,8 +67,13 @@ function parseProxy(raw: string, source: ProxySource): ProxyConfig {
     throw invalidProxy(source, 'not a valid URL')
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-    // The protocol is parsed out of the URL and carries no credential.
-    throw invalidProxy(source, `"${u.protocol}" is not supported (use http:// or https://)`)
+    // The protocol carries no credential only when the value spells out
+    // `<scheme>://`. Without it the parser reads everything up to the first `:`
+    // as the scheme, which for `user:pass@host:port` is the username.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+      throw invalidProxy(source, `"${u.protocol}" is not supported (use http:// or https://)`)
+    }
+    throw invalidProxy(source, 'the value has no http:// or https:// scheme')
   }
   const username = decodeCredential(u.username, source)
   const password = decodeCredential(u.password, source)
@@ -79,7 +84,9 @@ function parseProxy(raw: string, source: ProxySource): ProxyConfig {
 
 /**
  * Whether `url`'s host is excluded by a `NO_PROXY` list: comma-separated hosts,
- * domain suffixes (with or without a leading dot), `host:port`, or `*`.
+ * domain suffixes (with or without a leading dot), `host:port`, or `*`. An IPv6
+ * literal is accepted bare (`::1`), bracketed (`[::1]`) or with a port
+ * (`[::1]:3000`).
  */
 export function matchesNoProxy(url: string, noProxyList: string | undefined): boolean {
   if (!noProxyList) return false
@@ -98,10 +105,20 @@ export function matchesNoProxy(url: string, noProxyList: string | undefined): bo
     if (entry === '*') return true
     let entryHost = entry
     let entryPort: string | undefined
-    const portMatch = entry.match(/^(.*):(\d+)$/)
-    if (portMatch && !entry.includes(']')) {
-      entryHost = portMatch[1]
-      entryPort = portMatch[2]
+    if (entry.startsWith('[')) {
+      // A bracketed IPv6 literal, with or without a port.
+      const bracketed = entry.match(/^\[([^\]]*)\](?::(\d+))?$/)
+      if (!bracketed) continue
+      entryHost = bracketed[1]
+      entryPort = bracketed[2]
+    } else if (entry.indexOf(':') === entry.lastIndexOf(':')) {
+      // At most one `:` — `host:port`. More than one is a bare IPv6 address,
+      // which carries no port.
+      const portMatch = entry.match(/^(.*):(\d+)$/)
+      if (portMatch) {
+        entryHost = portMatch[1]
+        entryPort = portMatch[2]
+      }
     }
     if (entryPort && entryPort !== port) continue
     entryHost = entryHost.replace(/^\*?\./, '')

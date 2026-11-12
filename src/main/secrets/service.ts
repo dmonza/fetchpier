@@ -51,6 +51,17 @@ export function lockAllSecrets(): void {
   resetGrace()
 }
 
+/**
+ * A workspace switch or close: reset the reveal grace. On `os-keychain` the live
+ * keys are dropped too (they re-unlock lazily from the keystore). On
+ * `session-only` memory is the key's only home, so the keys and their session
+ * metadata stay until the app quits.
+ */
+export function resetSecretsOnWorkspaceSwitch(): void {
+  resetGrace()
+  if (detectBackend() === 'os-keychain') lockAll()
+}
+
 function workspaceHint(workspacePath: string): string {
   return basename(workspacePath)
 }

@@ -25,7 +25,7 @@ import { VariableHighlightInput } from '../ui/VariableHighlightInput'
 import { SaveRequestDialog } from './SaveRequestDialog'
 import { serializeRequest, splitUrlAndParams, computeFullUrl } from '@shared/lib/http-serializer'
 import { hashString } from '@shared/lib/hash'
-import { authEcho } from '@shared/lib/auth-echo'
+import { authEcho, isAuthQueryParam } from '@shared/lib/auth-echo'
 import { implicitDefaultHeaderEntries } from './implicit-headers'
 import { serializeTab } from '../../lib/tab-dirty'
 import { loadedTabFields } from '../../lib/loaded-tab'
@@ -581,9 +581,9 @@ function RequestEditorInner(): React.JSX.Element {
   // scheme is the sole source for that name, represented by the read-only managed
   // row (REQ-0083 §6.4, owner decision).
   const echoHeaderName = echo.header?.name.trim().toLowerCase()
-  const echoParamName = echo.query?.key.trim().toLowerCase()
+  const echoParamName = echo.query?.key
   const visibleParams = echoParamName
-    ? request.params.filter((p) => p.key.trim().toLowerCase() !== echoParamName)
+    ? request.params.filter((p) => !isAuthQueryParam(p.key, echoParamName))
     : request.params
 
   const methodColor =

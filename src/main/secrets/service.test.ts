@@ -27,8 +27,8 @@ vi.mock('electron', () => ({
 
 import * as service from './service'
 import * as localValues from './local-values'
-import { lockAll } from './unlock-state'
-import { storeWorkspaceKey } from './keystore'
+import { isUnlocked, lockAll } from './unlock-state'
+import { listKeyEntries, storeWorkspaceKey } from './keystore'
 import { secrets, workspace } from '@fetchpier/core'
 
 let ws: string
@@ -514,5 +514,34 @@ describe('secrets service', () => {
     expect('doesNotExist' in updated.variables).toBe(false)
     // Existing entries survive.
     expect(updated.variables.apiToken).toBe('PLAINTOKEN')
+  })
+})
+
+describe('secrets service — workspace switch', () => {
+  // On session-only the in-memory key is the only copy: a switch must keep it
+  // (and its "This session only" entry) until quit.
+  it('session-only: a switch keeps the workspace key and its session entry', async () => {
+    backend = 'basic_text'
+    const { keyId } = await service.setupKey(ws)
+
+    service.resetSecretsOnWorkspaceSwitch()
+    service.resetSecretsOnWorkspaceSwitch()
+
+    expect(isUnlocked(keyId)).toBe(true)
+    expect((await service.getStatus(ws)).unlocked).toBe(true)
+    expect((await listKeyEntries()).map((e) => [e.keyId, e.backing])).toContainEqual([
+      keyId,
+      'session-only'
+    ])
+  })
+
+  it('os-keychain: a switch drops the live key, which re-unlocks lazily from the keystore', async () => {
+    const { keyId } = await service.setupKey(ws)
+
+    service.resetSecretsOnWorkspaceSwitch()
+
+    expect(isUnlocked(keyId)).toBe(false)
+    expect((await service.getStatus(ws)).unlocked).toBe(true)
+    expect(isUnlocked(keyId)).toBe(true)
   })
 })

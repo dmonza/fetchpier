@@ -134,6 +134,31 @@ describe('multipart body — end-to-end via execute()', () => {
     expect(text).toContain(`filename="a.jpg"`)
   })
 
+  it('lists a hand-typed lowercase content-type once in the snapshot, as sent (ENG-30)', async () => {
+    const ws = newWorkspace()
+    const endpoint = await server.forPost('/ct').thenReply(200, 'ok')
+    const req: HttpRequest = {
+      method: 'POST',
+      url: `${server.url}/ct`,
+      headers: { 'content-type': 'multipart/form-data' },
+      headerList: [{ name: 'content-type', value: 'multipart/form-data' }],
+      bodyType: 'multipart-form',
+      multipartParts: [{ kind: 'text', id: 'mp-0', name: 'a', value: 'b' }]
+    }
+    const result = await execute(req, {
+      environmentId: null,
+      workspaceSettings: DEFAULT_WORKSPACE_HTTP_SETTINGS,
+      workspacePath: ws
+    })
+    expect(result.error).toBeUndefined()
+    const sent = (await endpoint.getSeenRequests())[0].headers['content-type']
+    expect(sent).toMatch(/boundary=/)
+    const cts = Object.entries(result.request!.headers).filter(
+      ([k]) => k.toLowerCase() === 'content-type'
+    )
+    expect(cts).toEqual([['Content-Type', sent]])
+  })
+
   it('CA-12: skips disabled parts when encoding for the wire', async () => {
     const ws = newWorkspace()
     const endpoint = await server.forPost('/y').thenReply(200, 'ok')

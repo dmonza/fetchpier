@@ -1,6 +1,6 @@
 import type { HeaderEntry, HttpRequest, RequestEditorState } from '../../../shared/types'
 import { RAW_SUBTYPE_CONTENT_TYPE } from '../../../shared/types'
-import { authEcho } from '@shared/lib/auth-echo'
+import { authEcho, isAuthQueryParam } from '@shared/lib/auth-echo'
 
 /**
  * Builds the `HttpRequest` payload handed to the execution core for a send.
@@ -32,7 +32,7 @@ export function buildHttpRequestPayload(
   // nothing is double-applied (REQ-0083 §6.4, owner decision).
   const echo = authEcho(auth)
   const echoHeaderName = echo.header?.name.trim().toLowerCase()
-  const echoParamName = echo.query?.key.trim().toLowerCase()
+  const echoParamName = echo.query?.key
 
   // Build the ordered, duplicate-capable header list from enabled pairs (the
   // authoritative wire representation), plus the lossy record fallback. An
@@ -69,8 +69,9 @@ export function buildHttpRequestPayload(
     requestBody = bodyType !== 'none' && body ? body : undefined
   }
 
+  // Header names are case-insensitive; query names are not (FMT-16).
   const cleanParams = echoParamName
-    ? params.filter((p) => p.key.trim().toLowerCase() !== echoParamName)
+    ? params.filter((p) => !isAuthQueryParam(p.key, echoParamName))
     : params
 
   return {

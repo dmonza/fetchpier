@@ -23,7 +23,8 @@ const FILE_REF_PATTERN = /^[a-f0-9]{64}__.+$/
 
 export const MULTIPART_BEGIN_MARKER = /^\s*#\s*@multipart\s+begin\s*$/
 export const MULTIPART_END_MARKER = /^\s*#\s*@multipart\s+end\s*$/
-export const MULTIPART_PART_MARKER = /^\s*#\s*@multipart-part\b(.*)$/
+// `[\s\S]`, not `.`: a quoted name or filename may hold U+2028 / U+2029 (FMT-18).
+export const MULTIPART_PART_MARKER = /^\s*#\s*@multipart-part\b([\s\S]*)$/
 export const MULTIPART_PREVIEW_BEGIN_MARKER = /^\s*#\s*@multipart-preview\s+begin\s*$/
 export const MULTIPART_PREVIEW_END_MARKER = /^\s*#\s*@multipart-preview\s+end\s*$/
 

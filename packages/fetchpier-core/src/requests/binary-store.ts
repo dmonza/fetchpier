@@ -98,15 +98,26 @@ export async function stageBinary(
 ): Promise<StagedBinaryFile> {
   const buf = await fs.readFile(sourcePath)
   const hash = hashBuffer(buf)
-  const originalName = sanitizeOriginalName(basename(sourcePath))
-  const ref = buildRef(hash, originalName)
   const targetDir = resolveInsideWorkspace(workspacePath, ...BINARY_FILES_DIR)
   await fs.mkdir(targetDir, { recursive: true })
+  // The same bytes already staged under a name that differs only in case are
+  // reused under the name on disk. On a case-insensitive filesystem the new
+  // name would "exist" as that file and the returned ref would match no file on
+  // a case-sensitive checkout; deciding by listing gives every platform the
+  // same answer.
+  const wanted = buildRef(hash, sanitizeOriginalName(basename(sourcePath)))
+  const lower = wanted.toLowerCase()
+  const entries = await fs.readdir(targetDir)
+  const ref =
+    entries.find((e) => e === wanted) ?? entries.find((e) => e.toLowerCase() === lower) ?? wanted
+  const originalName = ref.slice(hash.length + 2)
   const targetPath = join(targetDir, ref)
-  try {
-    await fs.access(targetPath)
-  } catch {
-    await atomicWriteFile(targetPath, buf)
+  if (ref === wanted) {
+    try {
+      await fs.access(targetPath)
+    } catch {
+      await atomicWriteFile(targetPath, buf)
+    }
   }
   const mimeType = lookupMimeType(originalName)
   return {

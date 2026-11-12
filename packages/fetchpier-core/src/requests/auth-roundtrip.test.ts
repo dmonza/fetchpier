@@ -207,3 +207,114 @@ describe('REQ-0083 auth round-trip', () => {
     expect(sent.url.match(/api_key=secret/g)).toHaveLength(1)
   })
 })
+
+// FMT-16: query names are case-sensitive; the scheme owns its exact (trimmed) name only.
+describe('api-key query name matching (FMT-16)', () => {
+  const API_KEY_FILE =
+    '# @auth\n# type: api-key\n# key: api_key\n# value: secret\n# location: query\n# @end-auth\n\n' +
+    'GET https://api.example.com/items?api_key=secret&API_KEY=other\n'
+
+  it('keeps a param that differs only in case on load, save and the CLI send', () => {
+    const parsed = parseHttpFile(API_KEY_FILE).requests[0]
+    expect(parsed.url).toBe('https://api.example.com/items?API_KEY=other')
+
+    const reopened = reopen(parsed)
+    expect(reopened.params.map((p) => p.key)).toEqual(['API_KEY'])
+    expect(serializeRequest(reopened)).toContain(
+      'GET https://api.example.com/items?api_key=secret&API_KEY=other'
+    )
+    expect(applyAuth(parsed, parsed.auth).url).toBe(
+      'https://api.example.com/items?API_KEY=other&api_key=secret'
+    )
+  })
+
+  it('a re-save after reopen is byte-identical', () => {
+    const first = serializeRequest(reopen(parseHttpFile(API_KEY_FILE).requests[0]))
+    const second = serializeRequest(reopen(parseHttpFile(first).requests[0]))
+    expect(second).toBe(first)
+  })
+
+  it('still drops a manual param with the exact name, on save', () => {
+    const text = serializeRequest(
+      state({
+        url: 'https://api.example.com/items',
+        params: [
+          { id: 'p1', key: 'api_key', value: 'manual', enabled: true },
+          { id: 'p2', key: 'page', value: '1', enabled: true }
+        ],
+        auth: { type: 'api-key', key: 'api_key', value: 'secret', location: 'query' }
+      })
+    )
+    expect(text).toContain('GET https://api.example.com/items?api_key=secret&page=1')
+    expect(text).not.toContain('manual')
+  })
+})
+
+// FMT-01: a fragment after the echo survives the parser's strip of the scheme's param.
+describe('api-key query echo next to a fragment (FMT-01)', () => {
+  const block =
+    '# @auth\n# type: api-key\n# key: api_key\n# value: s\n# location: query\n# @end-auth\n\n'
+
+  it.each([
+    ['the echo last', 'items?page=2&api_key=s#top', 'items?page=2#top'],
+    ['the echo alone', 'items?api_key=s#top', 'items#top']
+  ])('strips only the echo, keeping the fragment (%s)', (_label, written, expected) => {
+    const parsed = parseHttpFile(`${block}GET https://api.example.com/${written}\n`).requests[0]
+    expect(parsed.url).toBe(`https://api.example.com/${expected}`)
+  })
+})
+
+// FMT-17: only the key and the single separator space are structure; the value is verbatim.
+describe('auth field whitespace (FMT-17)', () => {
+  it.each<AuthConfig>([
+    { type: 'bearer', token: ' abc ' },
+    { type: 'basic', username: '  alice', password: ' p ' },
+    { type: 'api-key', key: 'X-Key', value: 'v  ', location: 'header' }
+  ])('keeps leading and trailing whitespace across save → load → save ($type)', (auth) => {
+    const first = serializeRequest(state({ url: 'https://api.example.com', auth }))
+    const parsed = parseHttpFile(first).requests[0]
+    expect(parsed.auth).toEqual(auth)
+    expect(serializeRequest(reopen(parsed))).toBe(first)
+  })
+
+  it.each([
+    ['no separator space', '# token:abc', 'abc'],
+    ['one separator space', '# token: abc', 'abc'],
+    ['two spaces', '# token:  abc', ' abc'],
+    ['a trailing space', '# token: abc ', 'abc ']
+  ])('reads a hand-written value with %s', (_label, line, expected) => {
+    const text = `# @auth\n# type: bearer\n${line}\n# @end-auth\n\nGET https://api.example.com\n`
+    expect(parseHttpFile(text).requests[0].auth).toEqual({ type: 'bearer', token: expected })
+  })
+
+  it('still reads padded `type` and `location` keywords', () => {
+    const text =
+      '# @auth\n#   type:  api-key \n# key: k\n# value: v\n# location:  query \n# @end-auth\n\n' +
+      'GET https://api.example.com\n'
+    const file = parseHttpFile(text)
+    expect(file.requests[0].auth).toEqual({
+      type: 'api-key',
+      key: 'k',
+      value: 'v',
+      location: 'query'
+    })
+    expect(file.warnings).toBeUndefined()
+  })
+
+  // The api-key `key` is a header or query-parameter name, never a credential: a
+  // padded name would make undici reject the header, or send `%20api_key=`.
+  it.each([
+    ['aligned columns', '# key:  X-API-Key'],
+    ['a trailing space', '# key: X-API-Key ']
+  ])('reads a padded api-key name (%s) as the bare name', (_label, line) => {
+    const text =
+      `# @auth\n# type: api-key\n${line}\n# value: v\n# location: header\n# @end-auth\n\n` +
+      'GET https://api.example.com\n'
+    expect(parseHttpFile(text).requests[0].auth).toEqual({
+      type: 'api-key',
+      key: 'X-API-Key',
+      value: 'v',
+      location: 'header'
+    })
+  })
+})

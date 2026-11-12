@@ -9,16 +9,23 @@ vi.mock('react-i18next', () => ({
   })
 }))
 
-const h = vi.hoisted(() => ({ cookies: [] as Cookie[] }))
+const h = vi.hoisted(() => ({
+  cookies: [] as Cookie[],
+  loadError: null as string | null,
+  remove: async (): Promise<void> => {}
+}))
 
 vi.mock('../../stores/cookies', () => {
   const state = {
     get cookies() {
       return h.cookies
     },
+    get loadError() {
+      return h.loadError
+    },
     loadForEnvironment: async (): Promise<void> => {},
     clearAll: async (): Promise<void> => {},
-    remove: async (): Promise<void> => {},
+    remove: (): Promise<void> => h.remove(),
     create: async (): Promise<void> => {},
     update: async (): Promise<void> => {}
   }
@@ -85,6 +92,55 @@ afterEach(async () => {
   root = null
   document.body.innerHTML = ''
   vi.useRealTimers()
+  h.loadError = null
+  h.remove = async (): Promise<void> => {}
+  vi.unstubAllGlobals()
+})
+
+// ENG-37: an unreadable jar file is reported in the panel, never shown as an
+// empty jar the user would then "fill" over the stored cookies.
+describe('CookiesModal — an unreadable jar', () => {
+  const UNREADABLE = 'COOKIE_JAR_UNREADABLE: cannot read the cookie jar /ws/cookies.json: bad'
+
+  it('explains a jar that failed to load', async () => {
+    h.loadError = UNREADABLE
+    await renderAt(0, makeCookie())
+    expect(document.body.textContent).toContain('cookies.errors.jarUnreadable')
+    expect(document.body.textContent).not.toContain('/ws/cookies.json')
+  })
+
+  it('offers Clear all over an unreadable, empty-looking jar', async () => {
+    h.loadError = UNREADABLE
+    h.cookies = []
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root!.render(
+        <CookiesModal environmentId="env1" environmentName="dev" open onOpenChange={() => {}} />
+      )
+    })
+    const labels = [...document.body.querySelectorAll('button')].map((b) => b.textContent)
+    expect(labels).toContain('cookies.clearAll')
+  })
+
+  it('shows no error for a jar that loaded', async () => {
+    await renderAt(0, makeCookie())
+    expect(document.body.textContent).not.toContain('cookies.errors.jarUnreadable')
+  })
+
+  it('explains a delete the jar refused', async () => {
+    h.remove = async (): Promise<void> => {
+      throw new Error(UNREADABLE)
+    }
+    vi.stubGlobal('confirm', () => true)
+    const row = await renderAt(0, makeCookie())
+    const del = row.querySelector<HTMLButtonElement>('button[title="cookies.delete"]')!
+    await act(async () => {
+      del.click()
+    })
+    expect(document.body.textContent).toContain('cookies.errors.jarUnreadable')
+  })
 })
 
 // UI-02: the panel applies the jar's rule — a Max-Age lifetime runs from the

@@ -187,6 +187,42 @@ describe('applyAuth', () => {
       expect(result.headerList!.some((h) => h.name === 'Accept')).toBe(true)
     })
 
+    // ENG-30: the record feeds the request snapshot (and, with no list, the
+    // wire), so a case variant left there reports a credential never sent.
+    it.each<[string, AuthConfig, string, string]>([
+      ['bearer', { type: 'bearer', token: 'abc' }, 'authorization', 'Authorization'],
+      ['basic', { type: 'basic', username: 'u', password: 'p' }, 'AUTHORIZATION', 'Authorization'],
+      [
+        'api-key',
+        { type: 'api-key', key: 'X-Api-Key', value: 'k', location: 'header' },
+        'x-api-key',
+        'X-Api-Key'
+      ]
+    ])(
+      'removes a case-variant record key for a %s managed header',
+      (_l, auth, variant, managed) => {
+        const req: HttpRequest = {
+          ...baseRequest,
+          headers: { [variant]: 'from-script', Accept: 'application/json' },
+          headerList: [
+            { name: variant, value: 'from-script' },
+            { name: 'Accept', value: 'application/json' }
+          ]
+        }
+        const result = applyAuth(req, auth)
+        expect(
+          Object.keys(result.headers).filter((k) => k.toLowerCase() === managed.toLowerCase())
+        ).toEqual([managed])
+        expect(result.headers.Accept).toBe('application/json')
+      }
+    )
+
+    it('removes a case-variant record key when the request has no header list', () => {
+      const req: HttpRequest = { ...baseRequest, headers: { authorization: 'Bearer stale' } }
+      const result = applyAuth(req, { type: 'bearer', token: 'abc' })
+      expect(result.headers).toEqual({ Authorization: 'Bearer abc' })
+    })
+
     it('preserves unrelated duplicate headers', () => {
       const req: HttpRequest = {
         ...baseRequest,

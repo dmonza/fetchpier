@@ -164,6 +164,27 @@ export async function drainLibJar(
   )
 }
 
+/** The ECMAScript Date range: ±8.64e15 ms around the epoch. */
+const MAX_TIME_MS = 8.64e15
+
+/**
+ * The absolute expiry a relative `Max-Age` resolves to. A delta of zero or less
+ * is already expired: it reports the base instant (the moment of receipt), a
+ * date every surface can show — RFC 6265 §5.2.2's "earliest representable date"
+ * would render as the year -271821 for the common logout cookie. An expiry past
+ * the last representable date is replaced by that date (§5.2.2). The parser
+ * accepts any integer, so without the clamp a spec-legal value makes
+ * `toISOString` throw — and snapshots are formatted inside the transport's
+ * cookie interceptor and execute's post-response block, where a throw fails the
+ * whole send. `null` only when the base instant itself is unusable.
+ */
+function expiryFromMaxAge(baseMs: number, maxAge: number): string | null {
+  if (!Number.isFinite(baseMs)) return null
+  if (maxAge <= 0) return new Date(baseMs).toISOString()
+  const ms = baseMs + maxAge * 1000
+  return new Date(Number.isFinite(ms) && ms < MAX_TIME_MS ? ms : MAX_TIME_MS).toISOString()
+}
+
 /**
  * A cookie as one response offered it → the snapshot the adapters render.
  *
@@ -196,7 +217,7 @@ export function snapshotFromSetCookie(
 
   let expires: string | null = null
   if (typeof lc.maxAge === 'number') {
-    expires = new Date(receivedAt.getTime() + lc.maxAge * 1000).toISOString()
+    expires = expiryFromMaxAge(receivedAt.getTime(), lc.maxAge)
   } else if (lc.expires && lc.expires !== 'Infinity') {
     expires = lc.expires.toISOString()
   }
@@ -225,7 +246,7 @@ export function snapshotFromRecord(c: Cookie, hopUrl: string): CookieSnapshot {
     path: c.path,
     expires:
       c.maxAge !== null
-        ? new Date(Date.parse(c.updatedAt) + c.maxAge * 1000).toISOString()
+        ? (expiryFromMaxAge(Date.parse(c.updatedAt), c.maxAge) ?? c.expires)
         : c.expires,
     secure: c.secure,
     httpOnly: c.httpOnly,

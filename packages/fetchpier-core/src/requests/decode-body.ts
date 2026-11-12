@@ -35,10 +35,14 @@ const DECODERS: Record<string, Decoder> = {
   'x-gzip': (b, max) => gunzipSync(b, { maxOutputLength: max }),
   // `deflate` is specified as zlib-wrapped, but servers routinely send raw
   // deflate; accept both rather than fail a body every other client reads.
+  // Only a zlib header/data error means "not zlib-wrapped": anything else (the
+  // output cap above all) is the real failure and must not be masked by the
+  // raw retry's own error.
   deflate: (b, max) => {
     try {
       return inflateSync(b, { maxOutputLength: max })
-    } catch {
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== 'Z_DATA_ERROR') throw err
       return inflateRawSync(b, { maxOutputLength: max })
     }
   },

@@ -1279,7 +1279,8 @@
     "errors": {
       "nameRequired": "Name is required",
       "nameInvalid": "Name contains invalid characters",
-      "domainRequired": "Domain is required"
+      "domainRequired": "Domain is required",
+      "jarUnreadable": "This environment's cookie file could not be read (it may contain invalid JSON), so nothing was changed. Fix the file, or use Clear all to start over."
     }
   },
   "common": {

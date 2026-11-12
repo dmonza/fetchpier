@@ -6,7 +6,8 @@ import {
   encodeQueryComponentPreservingMasks,
   encodeTemplateComponent,
   splitFormBody,
-  splitUrlAndParams
+  splitUrlAndParams,
+  splitUrlFragment
 } from './query-string'
 
 function param(key: string, value: string, enabled = true): KeyValuePair {
@@ -168,6 +169,63 @@ describe('splitUrlAndParams (moved to query-string, token-aware)', () => {
       { key: 'a', value: 'hello world' },
       { key: 'b', value: 'x&y' }
     ])
+  })
+})
+
+// FMT-01: a fragment is not part of the query. It is split off first (token-aware)
+// and kept on the base, so the URL text round-trips and no param ever carries it.
+describe('URL fragment (FMT-01)', () => {
+  it.each([
+    ['none', 'https://h/items?a=1', 'https://h/items?a=1', ''],
+    ['after the query', 'https://h/items?a=1#top', 'https://h/items?a=1', '#top'],
+    ['with no query', 'https://h/items#top', 'https://h/items', '#top'],
+    ['holding a ? and &', 'https://h/items#a?b=1&c', 'https://h/items', '#a?b=1&c'],
+    ['empty', 'https://h/items?a=1#', 'https://h/items?a=1', '#'],
+    [
+      'after a token holding #',
+      'https://h/{{p#1}}?a={{x#y}}#f',
+      'https://h/{{p#1}}?a={{x#y}}',
+      '#f'
+    ],
+    ['only a token holding #', 'https://h/x?a={{x#y}}', 'https://h/x?a={{x#y}}', '']
+  ])('splitUrlFragment: %s', (_label, raw, url, fragment) => {
+    expect(splitUrlFragment(raw)).toEqual({ url, fragment })
+  })
+
+  it.each([
+    ['after the query', 'https://h/items?page=2#top', [['page', '2']], 'https://h/items#top'],
+    ['after a bare ?', 'https://h/items?#frag', [['', '']], 'https://h/items#frag'],
+    ['holding a ? and &', 'https://h/items#a?b=1&c', [], 'https://h/items#a?b=1&c'],
+    ['splitting a later pair', 'https://h/x?a=1#f&b=2', [['a', '1']], 'https://h/x#f&b=2'],
+    ['after a token holding #', 'https://h/x?a={{x#y}}#f', [['a', '{{x#y}}']], 'https://h/x#f']
+  ])('splitUrlAndParams keeps a fragment %s out of the params', (_label, raw, pairs, base) => {
+    const { baseUrl, params } = splitUrlAndParams(raw)
+    expect(baseUrl).toBe(base)
+    expect(params.map((p) => [p.key, p.value])).toEqual(pairs)
+  })
+
+  it('assembleQuery puts the query before the fragment of the base, encoding on or off', () => {
+    const params = [param('page', '2'), param('q', 'a b')]
+    expect(assembleQuery('https://h/items#top', params, true)).toBe(
+      'https://h/items?page=2&q=a%20b#top'
+    )
+    expect(assembleQuery('https://h/items#top', params, false)).toBe(
+      'https://h/items?page=2&q=a b#top'
+    )
+    // A `?` inside the fragment is not a query: the separator is still `?`.
+    expect(assembleQuery('https://h/items#a?b', [param('page', '2')], true)).toBe(
+      'https://h/items?page=2#a?b'
+    )
+    // An api-key query already on the base takes `&`, before the fragment.
+    expect(assembleQuery('https://h/items?k=v#top', [param('page', '2')], true)).toBe(
+      'https://h/items?k=v&page=2#top'
+    )
+  })
+
+  it('split → assemble gives the URL back', () => {
+    const raw = 'https://h/items?page=2&q=x#top'
+    const { baseUrl, params } = splitUrlAndParams(raw)
+    expect(assembleQuery(baseUrl, params, true)).toBe(raw)
   })
 })
 

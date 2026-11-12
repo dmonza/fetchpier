@@ -6,6 +6,7 @@ import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
 import { useCookieStore } from '../../stores/cookies'
 import type { Cookie, CookieSameSite } from '../../../shared/types'
+import { cookieErrorText } from './cookie-error'
 
 interface Props {
   cookie: Cookie | null
@@ -103,7 +104,7 @@ export function CookieForm({ cookie, onClose }: Props): React.JSX.Element {
       }
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(cookieErrorText(err, t))
     }
   }
 

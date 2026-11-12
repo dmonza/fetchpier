@@ -186,7 +186,14 @@ const ALLOWED_GLOBALS: ReadonlySet<string> = new Set([
 
 import { AssertionError, createExpect, thrownMessage } from './mini-chai'
 import { parseXmlSafe, MAX_XML_BYTES, type Xml2JsonOptions } from './xml-parser'
-import type { FpApi, FpMultipartBody, FpMultipartPart, FpRequest, FpResponse } from './fp-api'
+import type {
+  FpApi,
+  FpMultipartBody,
+  FpMultipartPart,
+  FpMultipartParts,
+  FpRequest,
+  FpResponse
+} from './fp-api'
 import type { MultipartPart } from '@shared/types'
 import { lookupMimeType } from '../requests/binary-store'
 
@@ -465,7 +472,8 @@ function wrapPart(part: MultipartPart, isPre: boolean): FpMultipartPart {
       configurable: true
     })
   }
-  return wrapper as unknown as FpMultipartPart
+  // The getters/setters are host functions: scrub them like the rest of `fp`.
+  return freezeHostSurface(wrapper) as unknown as FpMultipartPart
 }
 
 /**
@@ -634,6 +642,21 @@ function createMultipartBody(
     getPrototypeOf() {
       return null
     },
+    // A descriptor read (`Object.getOwnPropertyDescriptor(parts, '0')`) gets the
+    // same wrapper the `get` trap returns, never the raw host part.
+    getOwnPropertyDescriptor(target, prop) {
+      if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+        const idx = Number(prop)
+        if (idx >= target.length) return undefined
+        return {
+          value: wrapPart(target[idx], isPre),
+          writable: true,
+          enumerable: true,
+          configurable: true
+        }
+      }
+      return Reflect.getOwnPropertyDescriptor(target, prop)
+    },
     has(target, prop) {
       if (typeof prop === 'string' && /^\d+$/.test(prop)) {
         return Number(prop) < target.length
@@ -648,7 +671,7 @@ function createMultipartBody(
     }
   }
 
-  const partsProxy = new Proxy(storage, partsHandler) as unknown as FpMultipartPart[]
+  const partsProxy = new Proxy(storage, partsHandler) as unknown as FpMultipartParts
 
   const body: FpMultipartBody = Object.create(null)
   Object.defineProperty(body, 'parts', {
@@ -661,7 +684,8 @@ function createMultipartBody(
     enumerable: true,
     configurable: true
   })
-  return body
+  // Scrubs the `parts` getter/setter; the proxy it returns is not walked.
+  return freezeHostSurface(body)
 }
 
 // ── Sandbox runner ──────────────────────────────────────────────────────────
@@ -678,7 +702,7 @@ export const SCRIPT_WRAPPER_HEADER_LINES = 1
  * that runs to the end of the input (an unclosed bracket) on this line, which
  * is not a line of the user's script.
  */
-export const SCRIPT_WRAPPER_FOOTER = '}).call(void 0);'
+export const SCRIPT_WRAPPER_FOOTER = '}).call(void 0); }).call(void 0);'
 
 export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   const { phase, script, request, response, environment, variables, timeoutMs = 5000 } = input
@@ -926,9 +950,11 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   // ── Environment proxy ──────────────────────────────────────────────────
   const envStore: Record<string, string> = { ...environment }
   const envChanges: EnvironmentChanges = { set: {}, removed: [] }
+  // Own names only: the store inherits `Object.prototype`, so a bare lookup
+  // would answer `get('constructor')` with the host `Object` constructor.
   const envProxy = {
     get(name: string): string | undefined {
-      return envStore[name]
+      return Object.hasOwn(envStore, name) ? envStore[name] : undefined
     },
     set(name: string, value: string): void {
       // REQ-0087: the whole `$` prefix is the system dynamic-variable namespace.
@@ -967,7 +993,8 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   const varsStore: Record<string, unknown> = { ...variables }
   const variablesProxy = {
     get(name: string): unknown {
-      return varsStore[name]
+      // Own names only, as `fp.environment.get`.
+      return Object.hasOwn(varsStore, name) ? varsStore[name] : undefined
     },
     set(name: string, value: unknown): void {
       varsStore[name] = value
@@ -1063,11 +1090,15 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
 
   // Wrap the user script in an IIFE whose parameters shadow every forbidden
   // global with `undefined`. This works even for non-configurable globals like
-  // `Promise` and `SharedArrayBuffer` that `delete` can't remove.
+  // `Promise` and `SharedArrayBuffer` that `delete` can't remove. The script
+  // itself runs as the body of an inner function, so a top-level `let` /
+  // `const` of one of those names shadows the parameter instead of being an
+  // early "already declared" SyntaxError (a parameter and a lexical
+  // declaration cannot share one function scope).
   // The header takes SCRIPT_WRAPPER_HEADER_LINES lines, so line N of the
   // wrapped script is line N - 1 of the user's; keep both constants in sync.
   const shadowParams = FORBIDDEN_GLOBALS.join(', ')
-  const wrappedScript = `(function(${shadowParams}) { "use strict";\n${script}\n${SCRIPT_WRAPPER_FOOTER}`
+  const wrappedScript = `(function(${shadowParams}) { "use strict"; return (function() {\n${script}\n${SCRIPT_WRAPPER_FOOTER}`
 
   try {
     vm.runInContext(wrappedScript, context, {

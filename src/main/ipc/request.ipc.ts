@@ -16,7 +16,7 @@ import { DEFAULT_WORKSPACE_HTTP_SETTINGS } from '../config/defaults'
 import { requireActiveWorkspaceHandle } from '../state/active-workspace'
 import { getSendEnvironmentId, setSendEnvironmentId } from '../state/send-environment'
 import { resolveTlsForUrl } from '../tls/store'
-import { lockAllSecrets } from '../secrets/service'
+import { resetSecretsOnWorkspaceSwitch } from '../secrets/service'
 import { getWorkspaceKey } from '../secrets/keystore'
 import { normalizeLocalLayer } from '../secrets/local-values'
 
@@ -95,9 +95,9 @@ function broadcastLocalValuesChanged(
 let activeWorkspacePath: string | null = null
 
 export function setActiveWorkspaceForHttp(workspacePath: string | null): void {
-  // REQ-0070: switching/closing the workspace locks secrets (drops live keys,
-  // resets the reveal grace window). The persistent keystore re-unlocks lazily.
-  if (workspacePath !== activeWorkspacePath) lockAllSecrets()
+  // Switching/closing the workspace resets the reveal grace window; session-only
+  // keys stay until quit (see resetSecretsOnWorkspaceSwitch).
+  if (workspacePath !== activeWorkspacePath) resetSecretsOnWorkspaceSwitch()
   activeWorkspacePath = workspacePath
   if (workspacePath) {
     // Prime the cache so http:send stays synchronous-friendly.

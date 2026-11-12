@@ -113,7 +113,16 @@ describe('sendRequest', () => {
     for (const [code, text] of [
       [201, 'Created'],
       [404, 'Not Found'],
-      [500, 'Internal Server Error']
+      [500, 'Internal Server Error'],
+      // ENG-17: standard codes the client once lacked.
+      [203, 'Non-Authoritative Information'],
+      [206, 'Partial Content'],
+      [303, 'See Other'],
+      [412, 'Precondition Failed'],
+      [415, 'Unsupported Media Type'],
+      [451, 'Unavailable For Legal Reasons'],
+      [501, 'Not Implemented'],
+      [505, 'HTTP Version Not Supported']
     ] as const) {
       mockRequest.mockResolvedValueOnce(makeResponse(code, {}, ''))
       const result = await sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
