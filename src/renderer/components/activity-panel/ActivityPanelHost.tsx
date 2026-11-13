@@ -1,5 +1,9 @@
 import { lazy, useCallback, useEffect, useMemo, useRef } from 'react'
-import { computeDefaultHeight, useActivityPanelStore } from '../../stores/activityPanel'
+import {
+  clampHeight,
+  computeDefaultHeight,
+  useActivityPanelStore
+} from '../../stores/activityPanel'
 import { LazyBoundary } from '../ui/LazyBoundary'
 
 // Code-split off the renderer cold path (PLAN-0121): the activity panel is opt-in
@@ -24,10 +28,13 @@ export function ActivityPanelHost(): React.JSX.Element | null {
   const setHeight = useActivityPanelStore((s) => s.setHeight)
 
   const isVisible = isOpen && !isDetached
+  // Clamped on read too: the resize listener below only runs while the panel is
+  // visible, so a window that shrank while it was closed leaves a stale height.
   const effectiveHeight = useMemo(() => {
     if (!isVisible) return 0
-    if (heightPx && Number.isFinite(heightPx)) return heightPx
-    return computeDefaultHeight(typeof window !== 'undefined' ? window.innerHeight : 800)
+    const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800
+    if (heightPx && Number.isFinite(heightPx)) return clampHeight(heightPx, windowHeight)
+    return computeDefaultHeight(windowHeight)
   }, [isVisible, heightPx])
 
   const dragState = useRef<{ startY: number; startHeight: number } | null>(null)

@@ -396,3 +396,138 @@ describe('historyEntryToActivityLog — binary response placeholder byte count',
     )
   })
 })
+
+// HIS-14: the UTF-8 probe runs on the bytes in the client; its hint travels on
+// the response. The body string alone (U+FFFD for every invalid byte) always
+// re-encodes as valid UTF-8.
+describe('historyEntryToActivityLog — binary hint from the client probe', () => {
+  // `Buffer.toString('utf-8')` of msgpack bytes, as the client produces it.
+  const msgpackText = Buffer.from([0x81, 0xa1, 0x61, 0xcb, 0x3f, 0xf8, 0xff, 0xfe, 0x92]).toString(
+    'utf-8'
+  )
+  const msgpack = (extra: Partial<HistoryEntry['response']>) =>
+    baseEntry({
+      response: {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'Content-Type': 'application/msgpack' },
+        body: msgpackText,
+        timingMs: 1,
+        sizeBytes: 9,
+        compressedBytes: 9,
+        decompressedBytes: 9,
+        decodingStatus: 'not-required',
+        ...extra
+      }
+    })
+
+  it('records a non-UTF-8 body with an unlisted content type as a placeholder', () => {
+    const file = historyEntryToActivityLog(msgpack({ binaryHint: true }))
+    expect(file.responseRaw).toContain('[binary body, 9 bytes, content-type: application/msgpack]')
+    expect(file.responseRaw).not.toContain('�')
+  })
+
+  it('applies the hint to a decoded body too, with the decompressed count', () => {
+    const file = historyEntryToActivityLog(
+      msgpack({
+        headers: { 'Content-Type': 'application/msgpack', 'Content-Encoding': 'gzip' },
+        compressedBytes: 5,
+        decodingStatus: 'decoded',
+        binaryHint: true
+      })
+    )
+    expect(file.responseRaw).toContain('[binary body, 9 bytes, content-type: application/msgpack')
+  })
+
+  it('keeps a text body as text when the probe found UTF-8 (no hint)', () => {
+    const file = historyEntryToActivityLog(
+      msgpack({ headers: { 'Content-Type': 'text/plain' }, body: 'Año ✓' })
+    )
+    expect(file.responseRaw).toContain('Año ✓')
+  })
+})
+
+// HIS-10: one `Set-Cookie:` line per cookie, from the response's raw list.
+describe('historyEntryToActivityLog — Set-Cookie lines', () => {
+  const cookies = ['a=1; Path=/', 'b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT']
+  const withCookies = (extra: Partial<HistoryEntry['response']>) =>
+    baseEntry({
+      response: {
+        status: 200,
+        statusText: 'OK',
+        headers: {
+          'content-type': 'text/plain',
+          'set-cookie': cookies.join(', '),
+          'x-after': '1'
+        },
+        body: 'ok',
+        timingMs: 1,
+        sizeBytes: 2,
+        ...extra
+      }
+    })
+
+  it('writes each cookie on its own line, in place of the joined header', () => {
+    const lines = historyEntryToActivityLog(withCookies({ setCookie: cookies }))
+      .responseRaw.split('\n')
+      .slice(1, 5)
+    expect(lines).toEqual([
+      'content-type: text/plain',
+      'set-cookie: a=1; Path=/',
+      'set-cookie: b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT',
+      'x-after: 1'
+    ])
+  })
+
+  it('writes the joined line for a response without the raw list (older callers)', () => {
+    const raw = historyEntryToActivityLog(withCookies({})).responseRaw
+    expect(raw).toContain(`set-cookie: ${cookies.join(', ')}\n`)
+  })
+
+  it('round-trips both cookies through the reader', async () => {
+    const { serializeActivityLog } = await import('../activity-log')
+    const { historyEntryFromRaw } = await import('@shared/lib/activity-log')
+    const text = serializeActivityLog(
+      historyEntryToActivityLog(withCookies({ setCookie: cookies }))
+    )
+    expect(historyEntryFromRaw(text).response.setCookie).toEqual(cookies)
+  })
+})
+
+// HIS-15: logs and assertions in execution order, by the sandbox's sequence.
+describe('historyEntryToActivityLog — script results order', () => {
+  const block = (post: NonNullable<HistoryEntry['scriptResults']>['postResponse']) => {
+    const file = historyEntryToActivityLog(baseEntry({ scriptResults: { postResponse: post } }))
+    return file.tailBlocks[0]!.lines
+  }
+
+  it('interleaves logs and tests by sequence, the script error last', () => {
+    expect(
+      block({
+        success: false,
+        logs: [
+          { level: 'log', args: ['before'], timestamp: '', seq: 0 },
+          { level: 'warn', args: ['after'], timestamp: '', seq: 2 }
+        ],
+        testResults: [
+          { name: 'status', passed: true, seq: 1 },
+          { name: 'body', passed: false, error: 'nope', seq: 3 }
+        ],
+        error: { message: 'boom' }
+      })
+    ).toEqual(['log: before', 'pass: status', 'warn: after', 'fail: body — nope', 'error: boom'])
+  })
+
+  it('keeps logs before tests when the results carry no sequence (older producers)', () => {
+    expect(
+      block({
+        success: true,
+        logs: [
+          { level: 'log', args: ['before'], timestamp: '' },
+          { level: 'log', args: ['after'], timestamp: '' }
+        ],
+        testResults: [{ name: 'status', passed: true }]
+      })
+    ).toEqual(['log: before', 'log: after', 'pass: status'])
+  })
+})

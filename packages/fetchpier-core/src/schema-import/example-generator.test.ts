@@ -325,6 +325,25 @@ describe('generateExampleFromJsonSchema', () => {
     expect(out).toEqual({ name: 'string', age: 0 })
   })
 
+  // IMP-19: `allOf: [Base]` with `properties` beside it means the same as
+  // `allOf: [Base, {properties}]`.
+  it('merges the schema own sibling properties after its allOf members', () => {
+    const { gen } = withRefs({
+      Base: { type: 'object', properties: { id: { type: 'integer' } } }
+    })
+    expect(
+      gen({ type: 'object', allOf: [ref('Base')], properties: { extra: { type: 'string' } } })
+    ).toEqual({ id: 0, extra: 'string' })
+  })
+
+  it('a sibling property declared in both places generates once, from the schema itself', () => {
+    const out = generateExampleFromJsonSchema({
+      allOf: [{ type: 'object', properties: { id: { type: 'integer' } } }],
+      properties: { id: { type: 'string', example: 'abc' } }
+    })
+    expect(out).toEqual({ id: 'abc' })
+  })
+
   it('falls through allOf when no sub-schema returns an object', () => {
     // allOf returns merged {} → continues to type fallback
     const out = generateExampleFromJsonSchema({

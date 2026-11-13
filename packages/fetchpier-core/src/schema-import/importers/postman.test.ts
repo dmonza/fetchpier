@@ -251,6 +251,78 @@ describe('importPostman — malformed and edge inputs', () => {
     expect(schema.operations[0].editorState.url).toBe('https://example.com/ping')
   })
 
+  // IMP-24: the v2.x schema allows `header` to be a plain string.
+  it('parses a string header line by line and keeps the rest of the collection', () => {
+    const payload = JSON.stringify({
+      info: { name: 'X', schema: POSTMAN_V21_SCHEMA },
+      item: [
+        {
+          name: 'r1',
+          request: {
+            method: 'GET',
+            url: 'https://example.com/a',
+            header: 'Accept: application/json\r\nX-Trace: a:b \n\nno colon here\n: empty name\n'
+          }
+        },
+        { name: 'r2', request: { method: 'GET', url: 'https://example.com/b' } }
+      ]
+    })
+    const { schema, warnings } = importPostman(payload)
+    expect(schema.operations.map((o) => o.name)).toEqual(['r1', 'r2'])
+    expect(
+      schema.operations[0].editorState.headers.map((h) => [h.key, h.value, h.enabled])
+    ).toEqual([
+      ['Accept', 'application/json', true],
+      ['X-Trace', 'a:b', true]
+    ])
+    expect(warnings.filter((w) => w.kind === 'skipped-operation')).toEqual([])
+  })
+
+  it.each([
+    ['an object', { key: 'A', value: '1' }],
+    ['a number', 42]
+  ])('a header given as %s is no headers, not a dropped request', (_label, header) => {
+    const payload = JSON.stringify({
+      info: { name: 'X', schema: POSTMAN_V21_SCHEMA },
+      item: [{ name: 'r1', request: { method: 'GET', url: 'https://example.com/a', header } }]
+    })
+    const { schema } = importPostman(payload)
+    expect(schema.operations).toHaveLength(1)
+    expect(schema.operations[0].editorState.headers).toEqual([])
+  })
+
+  // IMP-25: Postman semantics — a disabled variable is not active; values are text.
+  it('skips disabled variables and turns non-string values into text', () => {
+    const payload = JSON.stringify({
+      info: { name: 'X', schema: POSTMAN_V21_SCHEMA },
+      variable: [
+        { key: 'off', value: 'x', disabled: true },
+        { key: 'port', value: 8080 },
+        { key: 'flag', value: false },
+        { key: 'nothing', value: null },
+        { key: 'missing' },
+        { key: 'on', value: 'y', disabled: false }
+      ],
+      item: [
+        {
+          name: 'f',
+          variable: [{ key: 'off', value: 'from-folder' }],
+          item: []
+        }
+      ]
+    })
+    const { schema } = importPostman(payload)
+    expect(schema.envVariables).toEqual({
+      port: '8080',
+      flag: 'false',
+      nothing: '',
+      missing: '',
+      on: 'y',
+      // A disabled root variable does not claim the key: the enabled folder one is used.
+      off: 'from-folder'
+    })
+  })
+
   it('skips items with no request at all', () => {
     const payload = JSON.stringify({
       info: { name: 'X', schema: POSTMAN_V21_SCHEMA },

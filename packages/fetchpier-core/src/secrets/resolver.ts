@@ -43,7 +43,13 @@ export function collectReferencedVariableNames(request: HttpRequest): Set<string
     addRefs(p.key, names)
     addRefs(p.value, names)
   }
-  for (const [k, v] of Object.entries(request.headers ?? {})) {
+  // SEC-02: the ordered `headerList` is authoritative for the wire (mirrors
+  // `resolveRequestVariables`); the last-wins record drops an earlier same-name
+  // header, so it is only the fallback when no list travels.
+  const headerPairs: Array<[string, string]> = request.headerList
+    ? request.headerList.map((h) => [h.name, h.value])
+    : Object.entries(request.headers ?? {})
+  for (const [k, v] of headerPairs) {
     addRefs(k, names)
     addRefs(v, names)
   }

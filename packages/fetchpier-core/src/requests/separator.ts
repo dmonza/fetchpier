@@ -7,8 +7,11 @@
  * **not** split: when in doubt the `###` line stays in the body.
  */
 
-/** A leading method token: a word, optionally hyphenated (covers custom verbs). */
-const METHOD_TOKEN = /^[A-Za-z][A-Za-z0-9-]*$/
+/**
+ * A leading method token: a word, optionally hyphenated (covers custom verbs).
+ * Shared with the activity-log readers, which own it (the renderer bundles them).
+ */
+import { METHOD_TOKEN } from '../activity-log/method-token'
 
 /** A `###` line (optional leading whitespace, optional trailing label). */
 const SEPARATOR_LINE = /^[ \t]*###/

@@ -220,8 +220,9 @@ with the `Content-Type` of its file type unless the request sets one.
 **Default headers.** When a request does not set them, the CLI sends
 `User-Agent: Fetchpier-CLI/<version>` and `Accept-Encoding: gzip, deflate, br`.
 Compressed responses (`gzip`, `deflate`, `br`) are decoded; the JSON report
-carries `compressedBytes`, `decompressedBytes` and `decodingStatus`. A body
-that cannot be decoded is kept as received, with a warning, and
+carries `compressedBytes`, `decompressedBytes` and `decodingStatus`, plus
+`binaryHint: true` when the body bytes are not UTF-8 (`-vvv` then prints a
+binary placeholder instead of the bytes). A body that cannot be decoded is kept as received, with a warning, and
 `fp.response.json()` fails with the real cause.
 
 A request that received any response — including a 4xx or 5xx — passes unless

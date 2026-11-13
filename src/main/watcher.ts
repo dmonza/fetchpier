@@ -34,11 +34,28 @@ let recovering = false
 
 let rescanTimer: ReturnType<typeof setTimeout> | null = null
 
+/** Pending trailing tree read for a burst of structural watcher events. */
+let structuralTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Tree reads run concurrently and can finish out of order. Each read takes the
+ * next sequence number; a result older than the last one broadcast is dropped,
+ * so a slow early read never replaces a newer tree on screen.
+ */
+let treeReadSeq = 0
+let broadcastSeq = 0
+
 /** Delays before each re-establishment attempt (REQ-0113 Q2): immediate, 1 s, 5 s. */
 const RECOVERY_DELAYS_MS = [0, 1_000, 5_000]
 
 /** Focus can fire in bursts (alt-tab, dialogs); collapse them into one read. */
 const RESCAN_DEBOUNCE_MS = 300
+
+/**
+ * A bulk change (schema import, branch switch, folder copy or delete) fires one
+ * structural event per entry; collapse the burst into one trailing read.
+ */
+const STRUCTURAL_DEBOUNCE_MS = 150
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -54,10 +71,15 @@ function broadcast(channel: string, payload: unknown): void {
  * Re-read the request tree and broadcast it. Idempotent and safe to call at any
  * time, which is what makes the focus re-scan a legitimate recovery lever.
  * A failed read leaves the previously broadcast tree on screen (REQ-0113 §7.2).
+ * A read that finishes after a newer one was broadcast, or after the session
+ * moved to another workspace, is dropped.
  */
 async function readAndBroadcastTree(workspacePath: string): Promise<void> {
+  const seq = ++treeReadSeq
   try {
     const tree = await workspace.openWorkspace(workspacePath).tree.read()
+    if (seq < broadcastSeq || currentWorkspace !== workspacePath) return
+    broadcastSeq = seq
     broadcast('filesystem:changed', tree)
   } catch (err) {
     console.error('[watcher] Failed to read tree after change:', err)
@@ -147,9 +169,14 @@ async function establishWatcher(workspacePath: string): Promise<boolean> {
   })
 
   // Structural changes (add/remove/move of files & folders) rebuild the whole
-  // tree; open-tab reconciliation reads add/remove/move from the new tree.
+  // tree; open-tab reconciliation reads add/remove/move from the new tree. A
+  // burst is debounced into one trailing read (cancelled when the watcher closes).
   const broadcastTree = (): void => {
-    void readAndBroadcastTree(workspacePath)
+    if (structuralTimer) clearTimeout(structuralTimer)
+    structuralTimer = setTimeout(() => {
+      structuralTimer = null
+      void readAndBroadcastTree(workspacePath)
+    }, STRUCTURAL_DEBOUNCE_MS)
   }
 
   // A content edit to an existing request file — the single signal the open-tab
@@ -282,8 +309,15 @@ export async function stopWatcher(): Promise<void> {
   await closeWatcher()
 }
 
-/** Closes the live watcher, if any, and waits for its shutdown to settle. */
+/**
+ * Closes the live watcher, if any, and waits for its shutdown to settle. A
+ * pending structural read belongs to that watcher and is cancelled with it.
+ */
 async function closeWatcher(): Promise<void> {
+  if (structuralTimer) {
+    clearTimeout(structuralTimer)
+    structuralTimer = null
+  }
   if (watcher) {
     const closing = watcher
     watcher = null

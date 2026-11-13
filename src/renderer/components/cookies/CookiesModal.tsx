@@ -284,7 +284,11 @@ export function CookiesModal({
                               <td className="truncate px-2 py-1">{formatExpires(c, t)}</td>
                               <td className="px-2 py-1">
                                 <Badge variant={c.source === 'manual' ? 'outline' : 'muted'}>
-                                  {c.source}
+                                  {t(
+                                    c.source === 'manual'
+                                      ? 'cookies.sourceManual'
+                                      : 'cookies.sourceResponse'
+                                  )}
                                 </Badge>
                               </td>
                               <td className="px-2 py-1 text-right">

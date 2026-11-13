@@ -67,6 +67,33 @@ describe('activityPanel store', () => {
     expect(store.getState().heightPx).toBe(420)
   })
 
+  it('hydrate() clamps a stored height taller than the room the window leaves (HIS-19)', () => {
+    // innerHeight is 1000 → max is 1000 - 100 reserved chrome.
+    store.getState().hydrate({ heightPx: 1300 })
+    expect(store.getState().heightPx).toBe(900)
+  })
+
+  it('hydrate() raises a stored height below the minimum to the minimum (HIS-19)', () => {
+    store.getState().hydrate({ heightPx: 50 })
+    expect(store.getState().heightPx).toBe(200)
+  })
+
+  it('hydrate() keeps a stored height exactly at the maximum (HIS-19 boundary)', () => {
+    store.getState().hydrate({ heightPx: 900 })
+    expect(store.getState().heightPx).toBe(900)
+  })
+
+  it('hydrate() does not persist the clamped height back (HIS-19)', () => {
+    vi.useFakeTimers()
+    try {
+      store.getState().hydrate({ heightPx: 1300 })
+      vi.advanceTimersByTime(1000)
+      expect(api.appSettings.set).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('hydrate() with missing settings leaves heightPx null', () => {
     store.getState().hydrate(undefined)
     expect(store.getState().heightPx).toBeNull()

@@ -143,6 +143,19 @@ describe('CookiesModal — an unreadable jar', () => {
   })
 })
 
+// UI-06: the Source column shows a translated label, never the raw enum value.
+describe('CookiesModal — the cookie source badge is translated', () => {
+  it.each([
+    ['response', 'cookies.sourceResponse'],
+    ['manual', 'cookies.sourceManual']
+  ] as const)('a %s cookie is labelled %s', async (source, key) => {
+    const row = await renderAt(0, makeCookie({ source }))
+    const cells = [...row.querySelectorAll('td')].map((td) => td.textContent)
+    expect(cells).toContain(key)
+    expect(cells).not.toContain(source)
+  })
+})
+
 // UI-02: the panel applies the jar's rule — a Max-Age lifetime runs from the
 // last time the cookie was received (updatedAt), not from its first capture.
 describe('CookiesModal — Max-Age measured from the last receipt', () => {

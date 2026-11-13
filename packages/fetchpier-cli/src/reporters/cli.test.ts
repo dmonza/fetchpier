@@ -537,6 +537,24 @@ describe('CliReporter — CLI hardening', () => {
     expect(out).not.toContain('PNG')
   })
 
+  it('-vvv prints a non-UTF-8 body of an unlisted type as the placeholder, from the binary hint (HIS-14)', () => {
+    const msgpack = Buffer.from([0x81, 0xa1, 0x61, 0xcb, 0x3f, 0xf8, 0xff, 0xfe]).toString('utf-8')
+    const response = {
+      ...okUnit.response!,
+      headers: { 'Content-Type': 'application/msgpack' },
+      body: msgpack
+    }
+    const hinted = single(
+      { ...okUnit, response: { ...response, binaryHint: true } },
+      { verbosity: 3 }
+    )
+    expect(hinted).toMatch(/<binary body: \d+B, application\/msgpack — use --reporter-json/)
+    expect(hinted).not.toContain('�')
+    // Without the hint the lossy text is all there is to judge.
+    const unhinted = single({ ...okUnit, response }, { verbosity: 3 })
+    expect(unhinted).not.toContain('<binary body')
+  })
+
   it('-vvv prints a decoded compressed text body as text despite its Content-Encoding header', () => {
     const u: RequestUnit = {
       ...okUnit,

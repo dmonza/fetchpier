@@ -62,3 +62,33 @@ describe('toRequestUnit — the script error line is the line in the script', ()
     expect(line('Error: x 1:2:3\n    at new Script (node:vm:117:7)')).toBeUndefined()
   })
 })
+
+describe('toRequestUnit — binary hint (HIS-14)', () => {
+  const unitWith = (binaryHint?: boolean) =>
+    toRequestUnit({
+      path: 'requests/a.http',
+      resolved: { method: 'GET', url: 'https://api.example.com/', headers: {} },
+      result: {
+        response: {
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          body: '�',
+          timingMs: 1,
+          sizeBytes: 1,
+          ...(binaryHint !== undefined ? { binaryHint } : {})
+        }
+      } as ExecutedRequestResult,
+      durationMs: 1,
+      showSecrets: false
+    })
+
+  it('carries the client probe hint onto the unit response', () => {
+    expect(unitWith(true).response?.binaryHint).toBe(true)
+  })
+
+  it('adds no key when the body probed as UTF-8', () => {
+    expect(unitWith().response).not.toHaveProperty('binaryHint')
+    expect(unitWith(false).response).not.toHaveProperty('binaryHint')
+  })
+})

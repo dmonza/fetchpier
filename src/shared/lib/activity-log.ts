@@ -14,6 +14,7 @@
 // as plain text (binary bodies show the placeholder line as the body).
 
 import {
+  METHOD_TOKEN,
   parseActivityLog as _parseActivityLog,
   type ActivityLogFile
 } from '@fetchpier/core/activity-log'
@@ -81,9 +82,15 @@ function parseSettingsBlock(lines: string[]): WorkspaceHttpSettings | undefined 
   return undefined
 }
 
+/**
+ * Split a raw HTTP message. A repeated header name (any casing) accumulates
+ * into its first key, joined with `", "` as a live response's record is; the
+ * `Set-Cookie` lines are also kept one per cookie, since that join is ambiguous.
+ */
 function parseHttpMessage(raw: string): {
   firstLine: string
   headers: Record<string, string>
+  setCookie: string[]
   body: string
 } {
   const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -91,6 +98,8 @@ function parseHttpMessage(raw: string): {
   const firstLine = lines[0] ?? ''
   let i = 1
   const headers: Record<string, string> = {}
+  const keyByLower = new Map<string, string>()
+  const setCookie: string[] = []
   for (; i < lines.length; i++) {
     const line = lines[i]!
     if (line === '') {
@@ -102,12 +111,27 @@ function parseHttpMessage(raw: string): {
     const k = line.slice(0, colon).trim()
     let v = line.slice(colon + 1)
     if (v.startsWith(' ')) v = v.slice(1)
-    headers[k] = v
+    const lower = k.toLowerCase()
+    if (lower === 'set-cookie') setCookie.push(v)
+    const existing = keyByLower.get(lower)
+    if (existing === undefined) {
+      keyByLower.set(lower, k)
+      headers[k] = v
+    } else {
+      headers[existing] = `${headers[existing]}, ${v}`
+    }
   }
   const bodyLines = lines.slice(i)
   let body = bodyLines.join('\n')
   if (body.endsWith('\n')) body = body.slice(0, -1)
-  return { firstLine, headers, body }
+  return { firstLine, headers, setCookie, body }
+}
+
+/** `METHOD URL …` with the `.http` parser's method grammar, or null. */
+function parseRequestLine(line: string): { method: string; url: string } | null {
+  const m = line.match(/^(\S+)\s+(\S+)/)
+  if (!m || !METHOD_TOKEN.test(m[1]!)) return null
+  return { method: m[1]!.toUpperCase(), url: m[2]! }
 }
 
 const LOG_LEVELS = new Set<ScriptLog['level']>(['log', 'warn', 'error'])
@@ -246,9 +270,9 @@ export function activityLogToHistoryEntry(file: ActivityLogFile): HistoryEntry {
   const req = parseHttpMessage(file.requestRaw)
   const resp = parseHttpMessage(file.responseRaw)
 
-  const reqM = req.firstLine.match(/^([A-Za-z]+)\s+(\S+)/)
-  const method = reqM ? reqM[1]!.toUpperCase() : ''
-  const url = findDirective(file, 'path-raw') ?? (reqM ? reqM[2]! : '')
+  const reqLine = parseRequestLine(req.firstLine)
+  const method = reqLine ? reqLine.method : ''
+  const url = findDirective(file, 'path-raw') ?? (reqLine ? reqLine.url : '')
 
   const stM = resp.firstLine.match(/^HTTP\/\S+\s+(\d{3})(?:\s+(.*))?$/)
   const status = stM ? Number(stM[1]) : 0
@@ -287,6 +311,7 @@ export function activityLogToHistoryEntry(file: ActivityLogFile): HistoryEntry {
     status,
     statusText,
     headers: resp.headers,
+    ...(resp.setCookie.length > 0 ? { setCookie: resp.setCookie } : {}),
     body: resp.body,
     timingMs: durationMs,
     sizeBytes: responseSizeBytes(resp.body)

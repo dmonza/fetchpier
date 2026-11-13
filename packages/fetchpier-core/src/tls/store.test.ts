@@ -92,6 +92,48 @@ describe('updateClient — in-place metadata editing', () => {
     ).rejects.toBeInstanceOf(TlsImportError)
     // The original host is untouched on failure.
     expect(current().clientCertificates[0].host).toBe('badssl.com')
+    await expect(
+      store.updateClient({ scope: 'workspace', id: 'cc-1', patch: { host: '' } })
+    ).rejects.toMatchObject({ code: 'TLS_HOST_REQUIRED' })
+  })
+
+  // TLS-09 — the pattern is stored in the form the matcher compares.
+  it.each([
+    ['::1', '[::1]'],
+    ['[fd00:0:0::10]', '[fd00::10]'],
+    ['bücher.example', 'xn--bcher-kva.example'],
+    ['*.Bücher.example', '*.xn--bcher-kva.example']
+  ])('stores the host %j as %j', async (host, stored) => {
+    await store.updateClient({ scope: 'workspace', id: 'cc-1', patch: { host } })
+    expect(current().clientCertificates[0].host).toBe(stored)
+  })
+
+  it('rejects a host pattern that is no host and keeps the entry', async () => {
+    for (const host of ['api.example.com:8443', 'example.com/path', 'a b.com']) {
+      await expect(
+        store.updateClient({ scope: 'workspace', id: 'cc-1', patch: { host } })
+      ).rejects.toMatchObject({ code: 'TLS_HOST_INVALID' })
+    }
+    expect(current().clientCertificates[0].host).toBe('badssl.com')
+  })
+
+  // TLS-10 — the port rule of the CLI's --tls-config validator.
+  it.each([1, 443, 65535])('accepts port %d', async (port) => {
+    const updated = await store.updateClient({ scope: 'workspace', id: 'cc-1', patch: { port } })
+    expect(updated.port).toBe(port)
+  })
+
+  it('rejects a port that is not an integer from 1 to 65535 and keeps the entry', async () => {
+    for (const port of [0, -1, 65536, 70000, 443.5, Number.NaN, '443']) {
+      await expect(
+        store.updateClient({
+          scope: 'workspace',
+          id: 'cc-1',
+          patch: { port: port as number }
+        })
+      ).rejects.toMatchObject({ code: 'TLS_PORT_INVALID' })
+    }
+    expect(current().clientCertificates[0].port).toBeNull()
   })
 
   it('sets port to null (any port) when patched with null', async () => {
@@ -145,6 +187,23 @@ describe('app-global passphrase is literal-only (REQ-0089)', () => {
         passphrase: '{{cert_pass}}'
       })
     ).rejects.toMatchObject({ code: 'CLIENT_CERT_PASSPHRASE_VARIABLE_NOT_ALLOWED' })
+  })
+
+  it('rejects addClient with an invalid host or port before reading any file (TLS-09/10)', async () => {
+    const { store } = makeStore([])
+    const add = (host: string, port: number | null): Promise<ClientCertEntry> =>
+      store.addClient({
+        scope: 'workspace',
+        host,
+        port,
+        type: 'pfx',
+        sourcePaths: { pfxPath: '/does/not/exist.pfx' }
+      })
+    await expect(add('api.example.com:8443', null)).rejects.toMatchObject({
+      code: 'TLS_HOST_INVALID'
+    })
+    await expect(add('api.example.com', 70000)).rejects.toMatchObject({ code: 'TLS_PORT_INVALID' })
+    await expect(add('  ', null)).rejects.toMatchObject({ code: 'TLS_HOST_REQUIRED' })
   })
 
   it('rejects updateClient on app scope with a {{variable}} passphrase', async () => {
@@ -358,6 +417,59 @@ describe('remove — files shared by several entries', () => {
     expect(current().clientCertificates.map((c) => c.id)).toEqual([on443.id])
     expect(await exists(join(certsDir, on443.certFile!))).toBe(true)
     expect(await exists(join(certsDir, on443.keyFile!))).toBe(true)
+  })
+
+  it('stores a bare IPv6 host bracketed, with its files written (TLS-09)', async () => {
+    const { store, current } = makeAppStore(certsDir)
+    const added = await store.addClient({
+      scope: 'app',
+      host: '::1',
+      port: 8443,
+      type: 'pem',
+      sourcePaths: { certPath: certSource, keyPath: keySource }
+    })
+    expect(added.host).toBe('[::1]')
+    expect(current().clientCertificates[0].host).toBe('[::1]')
+    expect(await exists(join(certsDir, added.certFile!))).toBe(true)
+  })
+
+  // TLS-11 — the metadata is written first: a failed write leaves the entry and
+  // the files it points at as they were.
+  it('keeps the files of an entry whose removal could not be saved', async () => {
+    let appTls: TlsScopeSettings | undefined
+    let failWrites = false
+    const store = createTlsStore({
+      appCertsDir: () => certsDir,
+      getWorkspacePath: () => null,
+      readAppTls: () => appTls,
+      writeAppTls: (next) => {
+        if (failWrites) throw new Error('EACCES: permission denied')
+        appTls = next
+        return next
+      },
+      readWorkspaceTls: async () => undefined,
+      writeWorkspaceTls: async (_ws, next) => next
+    })
+    const ca = await store.addCA({ scope: 'app', sourcePath: caSource })
+    const cc = await store.addClient({
+      scope: 'app',
+      host: 'api.example.com',
+      type: 'pem',
+      sourcePaths: { certPath: certSource, keyPath: keySource }
+    })
+    failWrites = true
+
+    await expect(store.remove({ scope: 'app', id: ca.id, kind: 'ca' })).rejects.toThrow(
+      /permission denied/
+    )
+    await expect(store.remove({ scope: 'app', id: cc.id, kind: 'client' })).rejects.toThrow(
+      /permission denied/
+    )
+    expect(appTls?.caCertificates.map((c) => c.id)).toEqual([ca.id])
+    expect(appTls?.clientCertificates.map((c) => c.id)).toEqual([cc.id])
+    expect(await exists(join(certsDir, ca.file))).toBe(true)
+    expect(await exists(join(certsDir, cc.certFile!))).toBe(true)
+    expect(await exists(join(certsDir, cc.keyFile!))).toBe(true)
   })
 })
 

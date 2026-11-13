@@ -183,6 +183,37 @@ describe('listEnvironments — folder in hand, no migration (CA-02, CA-20)', () 
     expect(await fs.readFile(configOf(ws, 'preprod'))).toEqual(after)
   })
 
+  // WSP-04: a folder made by hand need not be in derived form (`_`, `.`, a
+  // space). Once its name equals the folder there is nothing left to repair.
+  it.each([['prod_eu'], ['qa.v2'], ['My Env']])(
+    'never rewrites a hand-made folder "%s" whose name already equals it',
+    async (folder) => {
+      const ws = newWorkspace()
+      await seed(ws, folder, { id: 'x1', name: folder })
+      const rename = vi.spyOn(fs, 'rename')
+
+      const first = await listEnvironments(ws)
+      await listEnvironments(ws)
+
+      expect(first[0].name).toBe(folder)
+      expect(rename).not.toHaveBeenCalled()
+    }
+  )
+
+  it('repairs a hand-renamed, non-derived folder once and then leaves it alone', async () => {
+    const ws = newWorkspace()
+    await seed(ws, 'prod_eu', { id: 'x1', name: 'Staging' })
+    const rename = vi.spyOn(fs, 'rename')
+
+    await listEnvironments(ws)
+    expect(rename).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(await fs.readFile(configOf(ws, 'prod_eu'), 'utf-8')).name).toBe('prod_eu')
+
+    await listEnvironments(ws)
+    await listEnvironments(ws)
+    expect(rename).toHaveBeenCalledTimes(1)
+  })
+
   it('does not repair a display name that merely carries characters the folder cannot hold', async () => {
     const ws = newWorkspace()
     await seed(ws, 'produccion', { id: 'x1', name: 'Producción' })

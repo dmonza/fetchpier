@@ -39,7 +39,8 @@ import { computeReferences } from './references'
 import {
   clearLocalValue,
   propagateSecrecyTransition,
-  reWrapLocalValuesForRotation
+  reWrapLocalValuesForRotation,
+  withLocalValuesLocks
 } from './local-values'
 import { getRecentWorkspacePaths } from '../state/recent-workspaces'
 import { resetGrace, runRevealGate } from './reveal-gate'
@@ -417,8 +418,6 @@ async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResul
   const manifest = await secrets.buildManifest(newKey)
   const newKeyId = manifest.encryption.keyId
 
-  // Re-encrypt everything in memory; collect (finalPath, tmpPath, content).
-  const writes: Array<{ finalPath: string; tmpPath: string; content: string }> = []
   const stamp = `${process.pid}-${Date.now()}`
 
   // An environment whose `config.json` exists but cannot be read would keep its
@@ -435,6 +434,32 @@ async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResul
     )
   }
 
+  // Every environment's `localvalues.json` is re-read below and replaced by the
+  // batch: hold their locks from the read until the batch has renamed, so a
+  // script or editor write landing in between is not overwritten (SEC-03).
+  await withLocalValuesLocks(
+    workspacePath,
+    environments.map((e) => e.id),
+    () => buildAndWriteRotation(ws, environments, oldKey, newKey, newKeyId, stamp, manifest)
+  )
+
+  await storeWorkspaceKey(manifest.encryption.keyId, newKey, workspaceHint(workspacePath))
+  return { key: secrets.formatKey(newKey), keyId: manifest.encryption.keyId }
+}
+
+/** The rotation's re-encryption and its atomic batch; the caller holds the local-values locks. */
+async function buildAndWriteRotation(
+  ws: ReturnType<typeof workspace.openWorkspace>,
+  environments: Awaited<
+    ReturnType<ReturnType<typeof workspace.openWorkspace>['environments']['listWithErrors']>
+  >['environments'],
+  oldKey: Uint8Array,
+  newKey: Uint8Array,
+  newKeyId: string,
+  stamp: string,
+  manifest: Awaited<ReturnType<typeof secrets.buildManifest>>
+): Promise<void> {
+  const writes: Array<{ finalPath: string; tmpPath: string; content: string }> = []
   for (const env of environments) {
     // The listing already carries the folder each config was found in, so the path
     // is built from that rather than from the opaque identifier.
@@ -470,7 +495,7 @@ async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResul
     // corrupt local value aborts the whole rotation before any rename, naming
     // the variable.
     const localWrite = await reWrapLocalValuesForRotation(
-      workspacePath,
+      ws.path,
       env.id,
       oldKey,
       newKey,
@@ -491,9 +516,6 @@ async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResul
   // adapter performs no direct workspace fs (REQ Core-owned workspace handle). The
   // crypto (decrypt/encrypt above) stays here; only the batch I/O moved.
   await workspace.atomicWriteBatch(writes)
-
-  await storeWorkspaceKey(manifest.encryption.keyId, newKey, workspaceHint(workspacePath))
-  return { key: secrets.formatKey(newKey), keyId: manifest.encryption.keyId }
 }
 
 // ── REQ-0073: Workspace keys management surface ──────────────────────────────

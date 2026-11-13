@@ -74,12 +74,18 @@ describe('readPemCertFile', () => {
   it('rejects a file with no PEM CERTIFICATE block', async () => {
     const p = await writeFixture('garbage.pem', 'not a cert\n')
     await expect(readPemCertFile(p)).rejects.toBeInstanceOf(TlsImportError)
+    // TLS-12: a stable code, led by its token so it survives the IPC wrapping.
+    await expect(readPemCertFile(p)).rejects.toMatchObject({
+      code: 'TLS_CERT_NOT_PEM',
+      message: expect.stringMatching(/^TLS_CERT_NOT_PEM: /)
+    })
   })
 
   it('rejects a file with malformed PEM data inside the block', async () => {
     const malformed = '-----BEGIN CERTIFICATE-----\nnot-base64-at-all\n-----END CERTIFICATE-----\n'
     const p = await writeFixture('malformed.pem', malformed)
     await expect(readPemCertFile(p)).rejects.toBeInstanceOf(TlsImportError)
+    await expect(readPemCertFile(p)).rejects.toMatchObject({ code: 'TLS_CERT_INVALID' })
   })
 })
 
@@ -93,6 +99,15 @@ describe('readPemKeyFile', () => {
   it('rejects a file with no PRIVATE KEY block', async () => {
     const p = await writeFixture('garbage.key', 'definitely not a key')
     await expect(readPemKeyFile(p)).rejects.toBeInstanceOf(TlsImportError)
+    await expect(readPemKeyFile(p)).rejects.toMatchObject({ code: 'TLS_KEY_NOT_PEM' })
+  })
+
+  it('rejects an unencrypted key block that does not parse (TLS-12 code)', async () => {
+    const p = await writeFixture(
+      'broken.key',
+      '-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n'
+    )
+    await expect(readPemKeyFile(p)).rejects.toMatchObject({ code: 'TLS_KEY_INVALID' })
   })
 
   it('accepts a passphrase-protected key without trying the passphrase', async () => {
@@ -122,11 +137,13 @@ describe('readPfxFile', () => {
   it('rejects an empty file', async () => {
     const p = await writeFixture('empty.pfx', Buffer.alloc(0))
     await expect(readPfxFile(p)).rejects.toBeInstanceOf(TlsImportError)
+    await expect(readPfxFile(p)).rejects.toMatchObject({ code: 'TLS_PFX_TRUNCATED' })
   })
 
   it('rejects a file that does not start with 0x30', async () => {
     const p = await writeFixture('badmagic.pfx', Buffer.from([0xff, 0xff, 0xff]))
     await expect(readPfxFile(p)).rejects.toBeInstanceOf(TlsImportError)
+    await expect(readPfxFile(p)).rejects.toMatchObject({ code: 'TLS_PFX_NOT_PKCS12' })
   })
 })
 

@@ -1115,3 +1115,195 @@ describe('importOpenApi — security schemes (IMP-07)', () => {
     expect(authWarnings(r)).toHaveLength(1)
   })
 })
+
+describe('importOpenApi — reserved header parameters (IMP-17)', () => {
+  const headerRows = (r: Imported, name: string): Array<[string, string, boolean]> =>
+    op(r, name).editorState.headers.map((h) => [h.key, h.value, h.enabled])
+
+  it('ignores OAS3 header parameters named Accept, Content-Type or Authorization, any case', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/users': {
+          post: {
+            operationId: 'createUser',
+            parameters: [
+              { name: 'Content-Type', in: 'header', required: true, schema: { type: 'string' } },
+              { name: 'accept', in: 'header', schema: { type: 'string' } },
+              { name: 'AUTHORIZATION', in: 'header', schema: { type: 'string' } },
+              { name: 'X-Trace', in: 'header', schema: { type: 'string' } }
+            ],
+            requestBody: jsonBody({ type: 'object' }),
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(headerRows(r, 'createUser')).toEqual([
+      ['X-Trace', 'string', true],
+      ['Content-Type', 'application/json', true]
+    ])
+  })
+
+  it('Swagger 2.0: a declared Content-Type header is kept and the body adds none', async () => {
+    const r = await importOpenApi(
+      JSON.stringify({
+        swagger: '2.0',
+        info: { title: 'S', version: '1' },
+        host: 'api.example.com',
+        paths: {
+          '/pets': {
+            post: {
+              operationId: 'addPet',
+              parameters: [
+                {
+                  name: 'content-type',
+                  in: 'header',
+                  type: 'string',
+                  enum: ['application/json']
+                },
+                { name: 'body', in: 'body', schema: { type: 'object' } }
+              ],
+              responses: ok
+            }
+          }
+        }
+      })
+    )
+    expect(headerRows(r, 'addPet')).toEqual([['content-type', 'application/json', true]])
+  })
+
+  it('Swagger 2.0: a disabled Content-Type header does not stop the body Content-Type', async () => {
+    const r = await importOpenApi(
+      JSON.stringify({
+        swagger: '2.0',
+        info: { title: 'S', version: '1' },
+        host: 'api.example.com',
+        paths: {
+          '/pets': {
+            post: {
+              operationId: 'addPet',
+              parameters: [
+                { name: 'Content-Type', in: 'header', type: 'string', required: false },
+                { name: 'body', in: 'body', schema: { type: 'object' } }
+              ],
+              responses: ok
+            }
+          }
+        }
+      })
+    )
+    expect(headerRows(r, 'addPet')).toEqual([
+      ['Content-Type', 'string', false],
+      ['Content-Type', 'application/json', true]
+    ])
+  })
+})
+
+describe('importOpenApi — parameter sample values (IMP-18)', () => {
+  const valueOf = (r: Imported, name: string, key: string): string | undefined =>
+    op(r, name).editorState.params.find((p) => p.key === key)?.value
+
+  it.each([
+    ['the schema example', { type: 'string', example: 'ex', default: 'def', enum: ['a'] }, 'ex'],
+    ['the schema default', { type: 'string', default: 'def', enum: ['a'] }, 'def'],
+    ['the first enum member', { type: 'string', enum: ['asc', 'desc'] }, 'asc'],
+    ['a numeric default as text', { type: 'integer', default: 20 }, '20'],
+    ['a false boolean default', { type: 'boolean', default: false, enum: [true] }, 'false'],
+    ['the type placeholder', { type: 'integer' }, '0']
+  ])('a query parameter takes %s', async (_label, schema, expected) => {
+    const r = await importOpenApi(
+      v3({
+        '/p': {
+          get: {
+            operationId: 'getP',
+            parameters: [{ name: 'q', in: 'query', schema }],
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(valueOf(r, 'getP', 'q')).toBe(expected)
+  })
+
+  it('a referenced enum schema gives its first member, in the query and in the path', async () => {
+    const r = await importOpenApi(
+      v3(
+        {
+          '/products/{order}': {
+            get: {
+              operationId: 'getProducts',
+              parameters: [
+                { name: 'order', in: 'path', required: true, schema: schemaRef('SortOrder') },
+                { name: 'sort', in: 'query', schema: schemaRef('SortOrder') }
+              ],
+              responses: ok
+            }
+          }
+        },
+        { schemas: { SortOrder: { type: 'string', enum: ['asc', 'desc'] } } }
+      )
+    )
+    expect(valueOf(r, 'getProducts', 'sort')).toBe('asc')
+    expect(op(r, 'getProducts').editorState.url).toBe('https://api.example.com/products/asc')
+  })
+
+  it('the parameter example still wins over the schema', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/p': {
+          get: {
+            operationId: 'getP',
+            parameters: [
+              { name: 'q', in: 'query', example: 'mine', schema: { type: 'string', enum: ['a'] } }
+            ],
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(valueOf(r, 'getP', 'q')).toBe('mine')
+  })
+
+  it('Swagger 2.0 parameter-level default, then enum, before the type placeholder', async () => {
+    const r = await importOpenApi(
+      JSON.stringify({
+        swagger: '2.0',
+        info: { title: 'S', version: '1' },
+        host: 'api.example.com',
+        paths: {
+          '/pets/{petId}': {
+            post: {
+              operationId: 'updatePetForm',
+              consumes: ['application/x-www-form-urlencoded'],
+              parameters: [
+                { name: 'petId', in: 'path', required: true, type: 'string', default: 'p1' },
+                { name: 'status', in: 'formData', type: 'string', enum: ['available', 'sold'] },
+                { name: 'limit', in: 'query', type: 'integer', default: 10, enum: [5, 10] }
+              ],
+              responses: ok
+            }
+          }
+        }
+      })
+    )
+    const update = op(r, 'updatePetForm')
+    expect(update.editorState.url).toBe('https://api.example.com/pets/p1')
+    expect(valueOf(r, 'updatePetForm', 'limit')).toBe('10')
+    expect(update.editorState.formFields.find((f) => f.key === 'status')?.value).toBe('available')
+  })
+
+  it('an unresolvable path schema still falls back to the type placeholder, never a marker', async () => {
+    const r = await importOpenApi(
+      v3({
+        '/p/{id}': {
+          get: {
+            operationId: 'getP',
+            parameters: [{ name: 'id', in: 'path', required: true, schema: schemaRef('Nope') }],
+            responses: ok
+          }
+        }
+      })
+    )
+    expect(op(r, 'getP').editorState.url).toBe('https://api.example.com/p/string')
+  })
+})

@@ -3,7 +3,8 @@
 // over `requestRaw`/`responseRaw` (REQ-0069 §6.2).
 //
 // When the section is configured with `jsonFormatToggle: true` AND the
-// payload's `Content-Type` starts with `application/json`, a `[Format]/[Raw]`
+// payload's `Content-Type` is JSON (`application/json` or any `+json` type,
+// parameters ignored), a `[Format]/[Raw]`
 // button toggles a local state and pretty-prints the **body** only, leaving
 // the request/status line and headers untouched. Per-row local state — no
 // store involvement, never persisted (REQ §6.2).
@@ -52,6 +53,16 @@ function getHeader(head: string, name: string): string | null {
   return null
 }
 
+/**
+ * `application/json`, or any RFC 6839 `+json` structured-syntax type
+ * (`application/problem+json`, `application/vnd.api+json`, …). Parameters
+ * after `;` are ignored, the comparison is case-insensitive.
+ */
+function isJsonMediaType(contentType: string): boolean {
+  const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase()
+  return mediaType === 'application/json' || mediaType.endsWith('+json')
+}
+
 function ReadOnlyMonospace({ value }: { value: string }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   useCodeMirror(ref, { value, language: 'text', onChange: () => {}, readOnly: true })
@@ -63,7 +74,7 @@ export function RawHttpSection({ file, spec }: Props): React.JSX.Element {
   const raw = spec.which === 'request' ? file.requestRaw : file.responseRaw
   const { head, body, sep } = useMemo(() => splitHttpBlock(raw), [raw])
   const contentType = useMemo(() => getHeader(head, 'content-type') ?? '', [head])
-  const isJson = contentType.toLowerCase().startsWith('application/json')
+  const isJson = isJsonMediaType(contentType)
   const canFormat = Boolean(spec.jsonFormatToggle) && isJson
 
   const [isOpen, setIsOpen] = useState(false)

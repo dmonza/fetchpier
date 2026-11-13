@@ -1060,11 +1060,19 @@ export async function execute(
   const maskedHeaders = Object.fromEntries(
     Object.entries(received.headers).map(([k, v]) => [k, responseMask(v)])
   )
+  // The raw `Set-Cookie` list is what the run file writes, one line each.
+  const maskedSetCookie = received.setCookie?.map(responseMask)
   const responseChanged =
     maskedBody !== received.body ||
-    Object.entries(maskedHeaders).some(([k, v]) => v !== received.headers[k])
+    Object.entries(maskedHeaders).some(([k, v]) => v !== received.headers[k]) ||
+    (maskedSetCookie ?? []).some((v, i) => v !== received.setCookie![i])
   const maskedResponse = responseChanged
-    ? { ...received, body: maskedBody, headers: maskedHeaders }
+    ? {
+        ...received,
+        body: maskedBody,
+        headers: maskedHeaders,
+        ...(maskedSetCookie ? { setCookie: maskedSetCookie } : {})
+      }
     : received
 
   return {

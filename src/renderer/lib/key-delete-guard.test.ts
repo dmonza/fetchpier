@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { keyDeleteToken, isKeyDeleteBlocked, canConfirmKeyDelete } from './key-delete-guard'
+import {
+  keyDeleteToken,
+  isKeyDeleteBlocked,
+  canConfirmKeyDelete,
+  keyInUseNames
+} from './key-delete-guard'
 
 // REQ write-safety / CA-05 + CA-06 — the guarded key-delete decision.
 
@@ -24,6 +29,25 @@ describe('isKeyDeleteBlocked (CA-05)', () => {
   it('does not block on an empty or absent reference', () => {
     expect(isKeyDeleteBlocked([])).toBe(false)
     expect(isKeyDeleteBlocked(undefined)).toBe(false)
+  })
+})
+
+describe('keyInUseNames (SEC-12)', () => {
+  it('reads the names from a KEY_IN_USE refusal, with or without the IPC prefix', () => {
+    expect(keyInUseNames(new Error('KEY_IN_USE: acme-api'))).toEqual(['acme-api'])
+    expect(
+      keyInUseNames(
+        new Error(
+          "Error invoking remote method 'secrets:deleteKey': Error: KEY_IN_USE: acme-api, billing"
+        )
+      )
+    ).toEqual(['acme-api', 'billing'])
+  })
+  it('is null for any other failure, a refusal with no names, or a non-error', () => {
+    expect(keyInUseNames(new Error('EACCES: permission denied'))).toBeNull()
+    expect(keyInUseNames(new Error('KEY_IN_USE: '))).toBeNull()
+    expect(keyInUseNames('KEY_IN_USE: acme-api')).toEqual(['acme-api'])
+    expect(keyInUseNames(undefined)).toBeNull()
   })
 })
 

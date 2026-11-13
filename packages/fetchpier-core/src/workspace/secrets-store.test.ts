@@ -21,6 +21,28 @@ describe('readManifest / writeManifest', () => {
     expect(await readManifest(ws)).toBeNull()
   })
 
+  it('returns null when `.fetchpier` is a file (no manifest can exist there)', async () => {
+    await fs.writeFile(join(ws, '.fetchpier'), 'not a folder')
+    expect(await readManifest(ws)).toBeNull()
+  })
+
+  // SEC-13: only a missing file means "no secrets"; a present manifest that
+  // cannot be read is an error, never a workspace that uses no key.
+  it('throws WORKSPACE_INVALID when the manifest exists but cannot be read', async () => {
+    await fs.mkdir(secretsManifestPath(ws), { recursive: true }) // EISDIR
+    await expect(readManifest(ws)).rejects.toMatchObject({
+      code: 'WORKSPACE_INVALID',
+      message: expect.stringContaining('secrets.json')
+    })
+  })
+
+  it.each(['EACCES', 'EPERM', 'EBUSY', 'EIO'])('throws on a %s read error', async (code) => {
+    vi.spyOn(fs, 'readFile').mockRejectedValueOnce(
+      Object.assign(new Error(`${code}: simulated`), { code })
+    )
+    await expect(readManifest(ws)).rejects.toMatchObject({ code: 'WORKSPACE_INVALID' })
+  })
+
   it('round-trips a manifest', async () => {
     const key = await generateWorkspaceKey()
     const manifest = await buildManifest(key)

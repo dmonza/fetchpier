@@ -45,6 +45,33 @@ describe('createSecretMasker', () => {
     expect(m.logRender(foreign)).toBe(foreign)
   })
 
+  // SEC-11: a name may hold ':' (the token grammar allows it); the match anchors
+  // on the final `:<nonce>}` so the whole name is captured.
+  describe('names containing a colon', () => {
+    const colon = (): ReturnType<typeof createSecretMasker> =>
+      createSecretMasker({ nonce, plaintextByName: { 'api:key': 'K1', key: 'K2', 'a:b:c': 'K3' } })
+
+    it('renders the plaintext on the wire and the named mask in logs', () => {
+      const m = colon()
+      const text = `X ${m.markerVariables['api:key']} Y ${m.markerVariables.key}/${m.markerVariables['a:b:c']}`
+      expect(m.wireRender(text)).toBe('X K1 Y K2/K3')
+      expect(m.logRender(text)).toBe('X {secret:api:key} Y {secret:key}/{secret:a:b:c}')
+    })
+
+    it('leaves a foreign-nonce marker with a colon name untouched', () => {
+      const m = colon()
+      const foreign = '{$secret:api:key:deadbeef}'
+      expect(m.wireRender(foreign)).toBe(foreign)
+      expect(m.logRender(foreign)).toBe(foreign)
+    })
+
+    it('keeps a this-nonce marker for a name it does not hold on the wire', () => {
+      const m = colon()
+      const unknown = `{$secret:api:other:${nonce}}`
+      expect(m.wireRender(unknown)).toBe(unknown)
+    })
+  })
+
   // CA-16 (response echoes masked by substring) lives in `requests/execute`: the
   // engine masks the response with the same value set as script output
   // (`createValueMask`, which also owns the empty-value rule).

@@ -278,7 +278,35 @@ describe('runFpScript — post-response', () => {
       environment: {},
       variables: {}
     })
-    expect(outcome.result.testResults).toEqual([{ name: 'status 200', passed: true }])
+    expect(outcome.result.testResults).toEqual([{ name: 'status 200', passed: true, seq: 0 }])
+  })
+
+  it('numbers logs and test results with one shared sequence, in execution order (HIS-15)', () => {
+    const outcome = runFpScript({
+      phase: 'post-response',
+      script: [
+        `console.log("before")`,
+        `fp.test("status", () => { console.warn("inside"); fp.expect(1).to.equal(1); })`,
+        `fp.log("after")`,
+        `fp.test("second", () => { fp.expect(1).to.equal(2); })`
+      ].join('\n'),
+      request: baseRequest(),
+      response: baseResponse,
+      environment: {},
+      variables: {}
+    })
+    const logs = outcome.result.logs.map((l) => [l.args[0], l.seq])
+    const tests = outcome.result.testResults.map((t) => [t.name, t.seq])
+    // A log inside a test body runs before the test's result is recorded.
+    expect(logs).toEqual([
+      ['before', 0],
+      ['inside', 1],
+      ['after', 3]
+    ])
+    expect(tests).toEqual([
+      ['status', 2],
+      ['second', 4]
+    ])
   })
 
   it('fp.test + fp.expect: failing test records error', () => {
@@ -383,7 +411,12 @@ describe('fp.test / fp.expect with values from the script realm', () => {
       response: baseResponse,
       environment: {},
       variables: {}
-    }).result.testResults
+    }).result.testResults.map((t) => {
+      // The execution sequence is covered on its own (HIS-15).
+      const rest = { ...t }
+      delete rest.seq
+      return rest
+    })
   }
 
   it('throw(RegExp) matches the message of a script Error, literal or constructed', () => {

@@ -227,7 +227,7 @@ export class CliReporter implements Reporter {
   private printRequestDetails(unit: RequestUnit, indent: string): void {
     if (this.verbosity >= 2) this.printHeaders(unit.request.headers, indent)
     if (this.verbosity >= 3 && unit.request.body !== undefined && unit.request.body !== '') {
-      this.printBody(unit.request.body, unit.request.headers, false, indent)
+      this.printBody(unit.request.body, unit.request.headers, false, false, indent)
     }
   }
 
@@ -239,6 +239,7 @@ export class CliReporter implements Reporter {
         unit.response.body,
         unit.response.headers,
         unit.response.decodingStatus === 'decoded',
+        unit.response.binaryHint === true,
         indent
       )
     }
@@ -252,11 +253,13 @@ export class CliReporter implements Reporter {
     body: string,
     headers: Record<string, string>,
     decoded: boolean,
+    binaryHint: boolean,
     indent: string
   ): void {
     // Binary is never dumped to the terminal (the activity log's rule, with a
-    // decoded body judged by its content): one line saying what it is instead.
-    if (activityLog.detectBinaryBody({ headers, body, decoded }).isBinary) {
+    // decoded body judged by its content, and the engine's probe of the bytes
+    // standing in for the lossy text's): one line saying what it is instead.
+    if (activityLog.detectBinaryBody({ headers, body, decoded, binaryHint }).isBinary) {
       const type =
         Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] ??
         'application/octet-stream'

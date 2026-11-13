@@ -103,23 +103,32 @@ async function fetchSchemaText(rawUrl: string, transport: SchemaFetchTransport):
   // that redirects, so redirects are followed whatever the workspace says,
   // bounded by the default limit.
   const settings = transport.settings ?? DEFAULT_WORKSPACE_HTTP_SETTINGS
-  const response = await sendRequest(
-    { method: 'GET', url, headers: {} },
-    {
-      settings: {
-        ...settings,
-        followRedirects: true,
-        maxRedirects: DEFAULT_WORKSPACE_HTTP_SETTINGS.maxRedirects
-      },
-      ...(transport.proxy ? { proxy: transport.proxy } : {}),
-      ...(transport.tls ? { tls: transport.tls } : {}),
-      ...(transport.userAgent ? { userAgent: transport.userAgent } : {})
-    }
-  )
+  let response: Awaited<ReturnType<typeof sendRequest>>
+  try {
+    response = await sendRequest(
+      { method: 'GET', url, headers: {} },
+      {
+        settings: {
+          ...settings,
+          followRedirects: true,
+          maxRedirects: DEFAULT_WORKSPACE_HTTP_SETTINGS.maxRedirects
+        },
+        ...(transport.proxy ? { proxy: transport.proxy } : {}),
+        ...(transport.tls ? { tls: transport.tls } : {}),
+        ...(transport.userAgent ? { userAgent: transport.userAgent } : {})
+      }
+    )
+  } catch (err) {
+    throw new Error(`FETCH_FAILED: ${errorMessage(err)}`, { cause: err })
+  }
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Failed to fetch schema: HTTP ${response.status}`)
+    throw new Error(`FETCH_FAILED: HTTP ${response.status}`)
   }
   return response.body
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 async function loadSourceText(
@@ -177,7 +186,7 @@ export async function importSchema(
   if (req.format === 'auto') {
     const detected = detectFormat(raw)
     if (!detected) {
-      throw new Error('Could not auto-detect schema format')
+      throw new Error('FORMAT_UNDETECTED: could not auto-detect the schema format')
     }
     effectiveFormat = detected
   } else {
@@ -185,7 +194,15 @@ export async function importSchema(
   }
 
   onProgress?.('generating', 0, 1)
-  const { schema, warnings: parseWarnings } = await runImporter(effectiveFormat, raw)
+  // Every importer failure (malformed JSON/YAML/XML/SDL, an unsupported
+  // document) leads with one code; the parser's own text follows as the detail.
+  let imported: Awaited<ReturnType<typeof runImporter>>
+  try {
+    imported = await runImporter(effectiveFormat, raw)
+  } catch (err) {
+    throw new Error(`PARSE_FAILED: ${errorMessage(err)}`, { cause: err })
+  }
+  const { schema, warnings: parseWarnings } = imported
 
   const collectionName = req.collectionName?.trim() || schema.title || 'api-schema'
 

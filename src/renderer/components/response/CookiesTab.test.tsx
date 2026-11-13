@@ -6,7 +6,7 @@
  * no reason. The look of it — legibility of the mark in both themes at a narrow
  * width — stays a manual check in the plan, because no assertion captures it.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { CookieSnapshot, ExecutionWarning } from '../../../shared/types'
@@ -165,6 +165,66 @@ describe('COOKIE-009 — every column stays reachable', () => {
     for (const col of Array.from(cols)) {
       expect((col as HTMLElement).style.width).not.toBe('')
     }
+  })
+
+  describe('UI-04 — the fit follows a container that appears after an empty first mount', () => {
+    let observers: Array<{ cb: () => void; targets: Element[] }>
+    let width: number
+
+    beforeEach(() => {
+      observers = []
+      width = 600
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width)
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          private entry: { cb: () => void; targets: Element[] }
+          constructor(cb: () => void) {
+            this.entry = { cb, targets: [] }
+            observers.push(this.entry)
+          }
+          observe(el: Element): void {
+            this.entry.targets.push(el)
+          }
+          disconnect(): void {
+            this.entry.targets = []
+          }
+        }
+      )
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      vi.restoreAllMocks()
+    })
+
+    const tableWidth = (el: HTMLElement): string =>
+      el.querySelector<HTMLTableElement>('table')!.style.width
+
+    it('fits the tables to the container when data arrives without a remount', () => {
+      const el = render({ cookies: { sent: [], received: [] } })
+      expect(el.textContent).toContain('response.cookies.empty')
+      // Same mounted component, new props — a switch to a tab whose send has cookies.
+      act(() => root!.render(<CookiesTab cookies={{ sent: [], received: [cookie()] }} />))
+      expect(tableWidth(el)).toBe('600px')
+    })
+
+    it('re-fits on a later container resize', () => {
+      const el = render({ cookies: { sent: [], received: [] } })
+      act(() => root!.render(<CookiesTab cookies={{ sent: [], received: [cookie()] }} />))
+      width = 720
+      act(() => {
+        for (const o of observers) if (o.targets.length > 0) o.cb()
+      })
+      expect(tableWidth(el)).toBe('720px')
+    })
+
+    it('stops observing when the content goes back to the empty state', () => {
+      render({ cookies: { sent: [], received: [cookie()] } })
+      expect(observers.filter((o) => o.targets.length > 0)).toHaveLength(1)
+      act(() => root!.render(<CookiesTab cookies={{ sent: [], received: [] }} />))
+      expect(observers.filter((o) => o.targets.length > 0)).toHaveLength(0)
+    })
   })
 
   it('gives the boolean columns less width than the free-text ones', () => {

@@ -74,6 +74,43 @@ describe('ActivityPanelHost — resize drag listener cleanup', () => {
     expect(useActivityPanelStore.getState().heightPx).toBe(afterFirstMove)
   })
 
+  it('HIS-19: a stored height taller than the current window is clamped when the panel opens', async () => {
+    // The window shrank while the panel was closed: no resize listener ran, so
+    // the store still holds the old, taller height.
+    vi.stubGlobal('innerHeight', 600)
+    try {
+      ;({ container, root } = await mount(900))
+      const host = container.querySelector<HTMLDivElement>('[data-testid="activity-panel-host"]')!
+      // 600 - 100 px reserved chrome.
+      expect(host.style.height).toBe('500px')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('HIS-19: a drag starts from the clamped height, not the stale stored one', async () => {
+    vi.stubGlobal('innerHeight', 600)
+    try {
+      ;({ container, root } = await mount(900))
+      const handle = container.querySelector('[role="separator"]')!
+      act(() => {
+        handle.dispatchEvent(
+          new PointerEvent('pointerdown', { clientY: 500, bubbles: true, cancelable: true })
+        )
+      })
+      // Dragging down 100 px from the visible 500 px panel shrinks it to 400.
+      act(() => {
+        window.dispatchEvent(new PointerEvent('pointermove', { clientY: 600, bubbles: true }))
+      })
+      act(() => {
+        window.dispatchEvent(new PointerEvent('pointerup', { clientY: 600, bubbles: true }))
+      })
+      expect(useActivityPanelStore.getState().heightPx).toBe(400)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('pointerup still commits the height and removes the listener (unchanged behavior)', async () => {
     ;({ container, root } = await mount(400))
     const handle = container.querySelector('[role="separator"]')!

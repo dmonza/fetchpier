@@ -408,17 +408,24 @@ describe('SCHEMA-006 — URL import takes the same network path as a send', () =
     })
 
     it('stops an endless redirect chain at the bound and fails naming the status', async () => {
-      await expect(importUrl(`${origin}/hop/0`)).rejects.toThrow(
-        /^Failed to fetch schema: HTTP 302$/
-      )
+      await expect(importUrl(`${origin}/hop/0`)).rejects.toThrow(/^FETCH_FAILED: HTTP 302$/)
       expect(hops).toBe(11)
     })
 
     it('fails naming a non-2xx status', async () => {
-      await expect(importUrl(`${origin}/missing`)).rejects.toThrow(
-        /^Failed to fetch schema: HTTP 404$/
-      )
+      await expect(importUrl(`${origin}/missing`)).rejects.toThrow(/^FETCH_FAILED: HTTP 404$/)
     })
+  })
+
+  it('a connection failure leads with FETCH_FAILED and keeps its cause', async () => {
+    // A port that was just free: nothing listens on it.
+    const probe = net.createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+    const port = (probe.address() as net.AddressInfo).port
+    await new Promise<void>((resolve) => probe.close(() => resolve()))
+    await expect(importUrl(`http://127.0.0.1:${port}/openapi.json`)).rejects.toThrow(
+      /^FETCH_FAILED: .+/
+    )
   })
 
   it.each(['file:///etc/hosts', 'ftp://example.com/openapi.json', 'not a url'])(
@@ -473,6 +480,41 @@ describe('SCHEMA-006 — URL import takes the same network path as a send', () =
       expect(result.operationsCreated).toBe(1)
       expect(tlsFor).toHaveBeenCalledWith(url)
     })
+  })
+})
+
+// IMP-28: the renderer maps these leading codes to translated messages.
+describe('SCHEMA-007 — Import failures lead with a stable code', () => {
+  function importAs(text: string, format: 'auto' | 'postman' | 'openapi'): Promise<unknown> {
+    return importSchema(
+      {
+        source: { kind: 'text', value: text },
+        format,
+        targetFolder: path.join(workspace, 'requests'),
+        collectionName: 'c',
+        conflictStrategy: 'abort'
+      },
+      workspace
+    )
+  }
+
+  it('content no format matches → FORMAT_UNDETECTED', async () => {
+    await expect(importAs('just some words', 'auto')).rejects.toThrow(/^FORMAT_UNDETECTED/)
+  })
+
+  it.each([
+    ['malformed Postman JSON', '{ "info": ', 'postman'],
+    ['an OpenAPI document that is not YAML', 'openapi: [unclosed', 'openapi']
+  ] as const)('%s → PARSE_FAILED with the parser detail', async (_label, text, format) => {
+    await expect(importAs(text, format)).rejects.toThrow(/^PARSE_FAILED: .+/)
+  })
+
+  it('an existing collection under the abort strategy → TARGET_EXISTS, no absolute path', async () => {
+    await fs.mkdir(path.join(workspace, 'requests', 'c'), { recursive: true })
+    const doc = JSON.stringify({ openapi: '3.0.0', info: { title: 't', version: '1' }, paths: {} })
+    const err = (await importAs(doc, 'auto').catch((e: Error) => e)) as Error
+    expect(err.message).toMatch(/^TARGET_EXISTS: .*"c"/)
+    expect(err.message).not.toContain(workspace)
   })
 })
 

@@ -45,7 +45,41 @@ function effectivePort(url: URL): number {
   return 0
 }
 
-function hostMatches(pattern: string, host: string): boolean {
+/**
+ * A client-certificate host pattern in the form WHATWG gives a request URL's
+ * `hostname`, which is what the matcher compares it with: lower case, an IDN in
+ * punycode, an IPv6 address bracketed and compressed (`::1` → `[::1]`), an IPv4
+ * address in dotted-decimal. A `*.` wildcard keeps its prefix and normalizes the
+ * suffix. Returns `null` for a pattern that is no host: empty, unparseable, or
+ * carrying a port, a path, a query, a fragment or credentials.
+ */
+export function normalizeHostPattern(pattern: string): string | null {
+  const trimmed = pattern.trim()
+  const wildcard = trimmed.startsWith('*.')
+  const body = wildcard ? trimmed.slice(2) : trimmed
+  if (body === '' || /[\s/?#@\\]/.test(body)) return null
+  let host = body
+  if (host.startsWith('[')) {
+    // An IP literal ends at its bracket: nothing (a port) may follow it.
+    if (!host.endsWith(']')) return null
+  } else if (host.includes(':')) {
+    host = `[${host}]` // a bare IPv6 address; a `host:port` fails to parse here
+  }
+  // A wildcard names DNS labels, never an IP literal.
+  if (wildcard && host.startsWith('[')) return null
+  let parsed: URL
+  try {
+    parsed = new URL(`https://${host}`)
+  } catch {
+    return null
+  }
+  if (parsed.hostname === '' || parsed.port !== '') return null
+  return wildcard ? `*.${parsed.hostname}` : parsed.hostname
+}
+
+function hostMatches(rawPattern: string, host: string): boolean {
+  const pattern = normalizeHostPattern(rawPattern)
+  if (pattern === null) return false
   const lowerPattern = pattern.toLowerCase()
   const lowerHost = host.toLowerCase()
   if (lowerPattern === lowerHost) return true

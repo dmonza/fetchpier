@@ -4,5 +4,5 @@
 # type: bearer
 # token: 
 # @end-auth
-GET https://api.example.com/v1/orders?limit=0&status=string
+GET https://api.example.com/v1/orders?limit=0&status=open
 X-Trace-Id: trace-0001

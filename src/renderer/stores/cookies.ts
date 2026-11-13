@@ -23,16 +23,23 @@ export const useCookieStore = create<CookieStore>()((set, get) => ({
 
   loadForEnvironment: async (envId) => {
     set({ isLoading: true, environmentId: envId })
+    // Overlapping loads can resolve out of order: after every await, a reply
+    // for an environment that is no longer the active one is dropped, so the
+    // last switch wins rather than the last reply.
+    const stale = (): boolean => get().environmentId !== envId
     await window.api.cookies.setActiveEnvironment(envId)
+    if (stale()) return
     if (!envId) {
       set({ cookies: [], isLoading: false, loadError: null })
       return
     }
     try {
       const cookies = await window.api.cookies.list(envId)
+      if (stale()) return
       set({ cookies, isLoading: false, loadError: null })
     } catch (err) {
       console.error('[cookies] load failed:', err)
+      if (stale()) return
       set({
         cookies: [],
         isLoading: false,
@@ -46,7 +53,7 @@ export const useCookieStore = create<CookieStore>()((set, get) => ({
     if (!env) return
     await window.api.cookies.create(env, { ...cookie, source: 'manual' })
     const cookies = await window.api.cookies.list(env)
-    set({ cookies })
+    if (get().environmentId === env) set({ cookies })
   },
 
   update: async (id, changes) => {
@@ -54,7 +61,7 @@ export const useCookieStore = create<CookieStore>()((set, get) => ({
     if (!env) return
     await window.api.cookies.update(env, id, changes)
     const cookies = await window.api.cookies.list(env)
-    set({ cookies })
+    if (get().environmentId === env) set({ cookies })
   },
 
   remove: async (id) => {
@@ -62,7 +69,7 @@ export const useCookieStore = create<CookieStore>()((set, get) => ({
     if (!env) return
     await window.api.cookies.delete(env, id)
     const cookies = await window.api.cookies.list(env)
-    set({ cookies })
+    if (get().environmentId === env) set({ cookies })
   },
 
   clearAll: async () => {
@@ -84,7 +91,11 @@ if (typeof window !== 'undefined' && window.api?.cookies?.onChanged) {
         .list(envId)
         // A successful read means the jar is readable again (fixed by hand, or
         // replaced): the load failure no longer applies.
-        .then((cookies) => useCookieStore.setState({ cookies, loadError: null }))
+        .then((cookies) => {
+          // The active environment may have changed while the list was read.
+          if (useCookieStore.getState().environmentId !== envId) return
+          useCookieStore.setState({ cookies, loadError: null })
+        })
         .catch((err) => console.error('[cookies] refresh failed:', err))
     }
   })

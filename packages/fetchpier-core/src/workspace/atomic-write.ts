@@ -2,15 +2,90 @@
  * Atomic content writes — the target file is left either fully old or fully new
  * after any interruption (crash, kill, power loss, full disk), never truncated
  * or partial. Implemented as temp-file-plus-rename on the *same* directory, so
- * the rename is atomic on the workspace volume.
+ * the rename is atomic on the workspace volume. The temp file is flushed to
+ * disk (`fsync`) before the rename: a rename alone survives a crash, but after a
+ * power loss its metadata can reach the disk before the file's data, leaving an
+ * empty target. On POSIX the parent directory is flushed after the rename too,
+ * so the rename itself is durable (best-effort; Windows cannot open a directory
+ * for a flush, and its rename is journaled by the file system).
  *
  * Shared by the desktop adapter and the CLI: every workspace content writer
  * (request files, workspace settings, cookie jars, certificate metadata, app
  * settings, environment configs) routes its final write through this helper
  * instead of a direct truncate-then-write.
  */
-import { promises as fsp, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
+import {
+  promises as fsp,
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  writeFileSync,
+  renameSync,
+  unlinkSync
+} from 'node:fs'
 import { dirname, basename, join } from 'node:path'
+
+/** Write `data` to `path` and flush it to disk before returning. */
+async function writeAndFlush(path: string, data: string | Uint8Array): Promise<void> {
+  const fh = await fsp.open(path, 'w')
+  try {
+    await fh.writeFile(data)
+    await fh.sync()
+  } finally {
+    await fh.close()
+  }
+}
+
+/** Synchronous counterpart of {@link writeAndFlush}. */
+function writeAndFlushSync(path: string, data: string | Uint8Array): void {
+  const fd = openSync(path, 'w')
+  try {
+    writeFileSync(fd, data)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/**
+ * Flush a directory so a rename into it is durable. POSIX only: Windows cannot
+ * open a directory for a flush. Best-effort — the rename has already landed, so
+ * a file system that refuses the flush must not turn a completed save into a
+ * failure.
+ */
+async function flushDirectory(dir: string): Promise<void> {
+  if (process.platform === 'win32') return
+  let fh: Awaited<ReturnType<typeof fsp.open>> | undefined
+  try {
+    fh = await fsp.open(dir, 'r')
+    await fh.sync()
+  } catch {
+    // best-effort
+  } finally {
+    await fh?.close().catch(() => {})
+  }
+}
+
+/** Synchronous counterpart of {@link flushDirectory}. */
+function flushDirectorySync(dir: string): void {
+  if (process.platform === 'win32') return
+  let fd: number | undefined
+  try {
+    fd = openSync(dir, 'r')
+    fsyncSync(fd)
+  } catch {
+    // best-effort
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // best-effort
+      }
+    }
+  }
+}
 
 /**
  * A fresh, collision-resistant temp path next to the target (same directory →
@@ -81,12 +156,13 @@ export async function atomicWriteFile(filePath: string, data: string | Uint8Arra
   await fsp.mkdir(dirname(filePath), { recursive: true })
   const tmp = tempPathFor(filePath)
   try {
-    await fsp.writeFile(tmp, data)
+    await writeAndFlush(tmp, data)
     await renameWithRetry(tmp, filePath)
   } catch (err) {
     await fsp.unlink(tmp).catch(() => {})
     throw err
   }
+  await flushDirectory(dirname(filePath))
 }
 
 /**
@@ -94,7 +170,8 @@ export async function atomicWriteFile(filePath: string, data: string | Uint8Arra
  * them all into place. If any write fails, every temp is cleaned up and nothing
  * is renamed (the previous on-disk state is intact) — an all-or-nothing batch
  * across multiple files, used by the secrets-key rotation. Callers supply the
- * temp paths (collision-resistant, same directory as the target).
+ * temp paths (collision-resistant, same directory as the target). Every temp is
+ * flushed before the first rename, and each parent directory after the last.
  */
 export async function atomicWriteBatch(
   writes: Array<{ finalPath: string; tmpPath: string; content: string | Uint8Array }>
@@ -102,13 +179,14 @@ export async function atomicWriteBatch(
   try {
     for (const w of writes) {
       await fsp.mkdir(dirname(w.finalPath), { recursive: true })
-      await fsp.writeFile(w.tmpPath, w.content)
+      await writeAndFlush(w.tmpPath, w.content)
     }
   } catch (err) {
     await Promise.all(writes.map((w) => fsp.unlink(w.tmpPath).catch(() => {})))
     throw err
   }
   for (const w of writes) await renameWithRetry(w.tmpPath, w.finalPath)
+  for (const d of new Set(writes.map((w) => dirname(w.finalPath)))) await flushDirectory(d)
 }
 
 /**
@@ -119,7 +197,7 @@ export function atomicWriteFileSync(filePath: string, data: string | Uint8Array)
   mkdirSync(dirname(filePath), { recursive: true })
   const tmp = tempPathFor(filePath)
   try {
-    writeFileSync(tmp, data)
+    writeAndFlushSync(tmp, data)
     renameWithRetrySync(tmp, filePath)
   } catch (err) {
     try {
@@ -129,4 +207,5 @@ export function atomicWriteFileSync(filePath: string, data: string | Uint8Array)
     }
     throw err
   }
+  flushDirectorySync(dirname(filePath))
 }

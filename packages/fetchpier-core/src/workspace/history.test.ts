@@ -9,7 +9,16 @@ import { promises as fs } from 'node:fs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { clear, deleteForPath, get, list, save, updateSourceFile } from './history'
+import {
+  clear,
+  countForPath,
+  deleteForPath,
+  get,
+  list,
+  remove,
+  save,
+  updateSourceFile
+} from './history'
 import type { HistoryEntry } from '@shared/types'
 
 function uuid(seed: string): string {
@@ -332,5 +341,71 @@ describe('workspace.history (REQ-0068)', () => {
 
   it('get() throws for unknown ids', async () => {
     await expect(get(ws, 'never-saved')).rejects.toThrow(/not found/i)
+  })
+
+  it('lists runs whose method has a hyphen or a digit, as the .http parser accepts (HIS-16)', async () => {
+    await save(ws, buildEntry({ id: uuid('get'), request: { method: 'GET' } as never }))
+    await save(ws, buildEntry({ id: uuid('vc'), request: { method: 'VERSION-CONTROL' } as never }))
+    await save(ws, buildEntry({ id: uuid('m2'), request: { method: 'm2' } as never }))
+    const methods = (await list(ws)).map((i) => i.request.method).sort()
+    expect(methods).toEqual(['GET', 'M2', 'VERSION-CONTROL'])
+  })
+
+  describe('runs over the 5 MB full-read cap (HIS-20)', () => {
+    const big = (id: string, sourceFile = 'requests/col/big.http'): HistoryEntry =>
+      buildEntry({
+        id,
+        sourceFile,
+        response: { body: 'x'.repeat(6 * 1024 * 1024) } as never
+      })
+
+    it('countForPath() counts a large run beside a small one', async () => {
+      await save(ws, buildEntry({ id: uuid('small'), sourceFile: 'requests/col/big.http' }))
+      await save(ws, big(uuid('large')))
+      expect(await countForPath(ws, 'requests/col/big.http', false)).toBe(2)
+      expect(await countForPath(ws, 'requests/col', true)).toBe(2)
+    })
+
+    it('countForPath() counts a request whose only run is large', async () => {
+      await save(ws, big(uuid('large')))
+      expect(await countForPath(ws, 'requests/col/big.http', false)).toBe(1)
+    })
+
+    it('deleteForPath() deletes the large run too', async () => {
+      await save(ws, buildEntry({ id: uuid('small'), sourceFile: 'requests/col/big.http' }))
+      await save(ws, big(uuid('large')))
+      await save(ws, big(uuid('other'), 'requests/col/keep.http'))
+      await deleteForPath(ws, 'requests/col/big.http', false)
+      const files = await fs.readdir(join(ws, 'requests', '.runs'))
+      expect(files.length).toBe(1)
+      expect(await countForPath(ws, 'requests/col/keep.http', false)).toBe(1)
+    })
+
+    it('remove() deletes a large run by id', async () => {
+      await save(ws, big(uuid('large')))
+      await remove(ws, uuid('large'))
+      expect(await fs.readdir(join(ws, 'requests', '.runs'))).toEqual([])
+    })
+
+    it('updateSourceFile() relinks a large run and keeps its body byte for byte', async () => {
+      await save(ws, big(uuid('large')))
+      const dir = join(ws, 'requests', '.runs')
+      const [file] = await fs.readdir(dir)
+      const before = await fs.readFile(join(dir, file!), 'utf-8')
+      await updateSourceFile(ws, 'requests/col/big.http', 'requests/col/renamed.http', false)
+      const after = await fs.readFile(join(dir, file!), 'utf-8')
+      expect(after).toBe(
+        before.replace(
+          '# @source-file: requests/col/big.http',
+          '# @source-file: requests/col/renamed.http'
+        )
+      )
+      expect(await countForPath(ws, 'requests/col/renamed.http', false)).toBe(1)
+    })
+
+    it('get() finds a large run but refuses the full read, naming the size cap', async () => {
+      await save(ws, big(uuid('large')))
+      await expect(get(ws, uuid('large'))).rejects.toThrow(/too large/i)
+    })
   })
 })

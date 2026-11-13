@@ -1,7 +1,12 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type { WorkspaceTree } from '@shared/types'
-import { HTTP_SUFFIX, isInstanceFileName, splitInstanceName } from '@shared/lib/request-instances'
+import {
+  HTTP_SUFFIX,
+  INSTANCE_SUFFIX,
+  isInstanceFileName,
+  splitInstanceName
+} from '@shared/lib/request-instances'
 
 /** User-tree root under the workspace. All `.http` files live here. */
 export const REQUESTS_DIR = 'requests'
@@ -109,6 +114,11 @@ export async function readTree(dirPath: string): Promise<WorkspaceTree[]> {
   }
   const stems = new Set(stemToParent.keys())
 
+  // The label the sidebar shows for each file node: a request's stem, a bound
+  // instance's instance name, an orphan's name without `.instance.http`.
+  const labels = new Map<WorkspaceTree, string>()
+  for (const [stem, node] of stemToParent) labels.set(node, stem)
+
   const orphanInstances: WorkspaceTree[] = []
   for (const instName of instanceNames) {
     const node: WorkspaceTree = {
@@ -119,23 +129,29 @@ export async function readTree(dirPath: string): Promise<WorkspaceTree[]> {
     }
     const split = splitInstanceName(instName, stems)
     const parent = split ? stemToParent.get(split.parentStem) : undefined
-    if (parent) {
+    if (split && parent) {
       ;(parent.children ??= []).push(node)
+      labels.set(node, split.instanceName)
     } else {
       orphanInstances.push(node)
+      labels.set(node, instName.slice(0, -INSTANCE_SUFFIX.length))
     }
   }
 
-  // Sort each parent's instance children alphabetically (shared prefix ⇒
-  // filename order equals instance-name order).
+  // Files sort by their displayed label, not the raw filename: the extension
+  // would put a name below its own `-`/`_` variants (`login-copy.http` before
+  // `login.http`). The filename breaks a tie between equal labels.
+  const byLabel = (a: WorkspaceTree, b: WorkspaceTree): number =>
+    (labels.get(a) ?? a.name).localeCompare(labels.get(b) ?? b.name) || a.name.localeCompare(b.name)
+
   for (const node of regulars) {
-    node.children?.sort((a, b) => a.name.localeCompare(b.name))
+    node.children?.sort(byLabel)
   }
 
   // Folders first, then files (regular requests + orphan instances)
   // alphabetically — preserving the historical top-level ordering.
   folders.sort((a, b) => a.name.localeCompare(b.name))
-  const files = [...regulars, ...orphanInstances].sort((a, b) => a.name.localeCompare(b.name))
+  const files = [...regulars, ...orphanInstances].sort(byLabel)
 
   return [...folders, ...files]
 }

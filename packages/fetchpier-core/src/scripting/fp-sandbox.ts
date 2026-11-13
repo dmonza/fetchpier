@@ -709,6 +709,9 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
 
   const logs: ScriptLog[] = []
   const testResults: ScriptTestResult[] = []
+  // One counter for logs and test results, so their execution order survives
+  // the two arrays (the activity log merges them by it).
+  let seq = 0
 
   // ── Sandbox-realm helpers ──────────────────────────────────────────────
   // `intoSandbox()` re-creates a value inside the vm realm (via the context's
@@ -1006,16 +1009,26 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   const testFn = (name: string, fn: () => void): void => {
     try {
       fn()
-      testResults.push({ name: String(name), passed: true })
+      testResults.push({ name: String(name), passed: true, seq: seq++ })
     } catch (err) {
       // `thrownMessage`, not `instanceof Error`: a script's Error is from the vm realm.
-      testResults.push({ name: String(name), passed: false, error: thrownMessage(err) })
+      testResults.push({
+        name: String(name),
+        passed: false,
+        error: thrownMessage(err),
+        seq: seq++
+      })
     }
   }
 
   // ── Logging ────────────────────────────────────────────────────────────
   const pushLog = (level: ScriptLog['level'], args: unknown[]): void => {
-    logs.push({ level, args: args.map((a) => safeClone(a)), timestamp: new Date().toISOString() })
+    logs.push({
+      level,
+      args: args.map((a) => safeClone(a)),
+      timestamp: new Date().toISOString(),
+      seq: seq++
+    })
   }
 
   const fp: FpApi = {

@@ -121,6 +121,15 @@ describe('secrets service', () => {
     expect(updated.variables.apiToken).toBe('PLAINTOKEN')
   })
 
+  // SEC-13: a manifest that exists but cannot be read is not "no manifest" —
+  // setup must not mint a key over it, and status reports the error.
+  it('setupKey and getStatus refuse when the manifest exists but cannot be read', async () => {
+    await fs.mkdir(join(ws, '.fetchpier', 'secrets.json'))
+    await expect(service.setupKey(ws)).rejects.toMatchObject({ code: 'WORKSPACE_INVALID' })
+    await expect(service.getStatus(ws)).rejects.toMatchObject({ code: 'WORKSPACE_INVALID' })
+    expect(await listKeyEntries()).toEqual([])
+  })
+
   // SEC-06: a double click on the lock runs setup twice. The second call must see
   // the first one's manifest instead of minting a second key.
   it('two concurrent setups produce one key, and the manifest names the stored key', async () => {

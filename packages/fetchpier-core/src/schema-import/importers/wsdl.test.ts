@@ -1,5 +1,42 @@
 import { describe, it, expect } from 'vitest'
+import { XMLValidator } from 'fast-xml-parser'
 import { importWsdl } from './wsdl'
+
+/**
+ * A document/literal WSDL whose single operation `Op` sends the global element
+ * `Req`. `schemas` is the raw content of `<wsdl:types>` (one or more schemas).
+ */
+function docLiteralWsdl(schemas: string, wsdlTns = 'http://example.org/'): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+                  xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+                  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                  xmlns:tns="${wsdlTns}"
+                  targetNamespace="${wsdlTns}">
+  <wsdl:types>${schemas}</wsdl:types>
+  <wsdl:message name="OpIn"><wsdl:part name="parameters" element="tns:Req"/></wsdl:message>
+  <wsdl:portType name="PT"><wsdl:operation name="Op"><wsdl:input message="tns:OpIn"/></wsdl:operation></wsdl:portType>
+  <wsdl:binding name="B" type="tns:PT">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="Op"><soap:operation soapAction="urn:op"/><wsdl:input><soap:body use="literal"/></wsdl:input></wsdl:operation>
+  </wsdl:binding>
+  <wsdl:service name="S"><wsdl:port name="P" binding="tns:B"><soap:address location="http://localhost/svc"/></wsdl:port></wsdl:service>
+</wsdl:definitions>`
+}
+
+/** Body of the single imported operation, asserted to be well-formed XML. */
+function importedEnvelope(wsdl: string): string {
+  const body = importWsdl(wsdl).schema.operations[0]?.editorState.body ?? ''
+  expect(XMLValidator.validate(body)).toBe(true)
+  return body
+}
+
+/** Element tags (`tns:x`, `x`) opened in the body, in document order, excluding the envelope. */
+function openedTags(body: string): string[] {
+  return [...body.matchAll(/<([A-Za-z][\w.-]*(?::[\w.-]+)?)>/g)]
+    .map((m) => m[1])
+    .filter((t) => !t.startsWith('soapenv:'))
+}
 
 // Minimal WSDL with no <types>/<message>/<portType>: the body cannot be derived
 // from a schema, so the importer falls back to an empty wrapper.
@@ -284,5 +321,197 @@ describe('importWsdl', () => {
       'Svc_ShipmentSyncHttpGet',
       'Svc_ShipmentSyncHttpPost'
     ])
+  })
+})
+
+describe('importWsdl — example envelope is well-formed XML', () => {
+  it('escapes enumeration sample values holding & < > and quotes', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(`
+    <xs:schema targetNamespace="http://example.org/" elementFormDefault="qualified">
+      <xs:element name="Req"><xs:complexType><xs:sequence>
+        <xs:element name="mode"><xs:simpleType><xs:restriction base="xs:string">
+          <xs:enumeration value="A&amp;B"/><xs:enumeration value="C"/>
+        </xs:restriction></xs:simpleType></xs:element>
+        <xs:element name="cmp" type="tns:Cmp"/>
+      </xs:sequence></xs:complexType></xs:element>
+      <xs:simpleType name="Cmp"><xs:restriction base="xs:string">
+        <xs:enumeration value="&lt;=&gt;&quot;"/>
+      </xs:restriction></xs:simpleType>
+    </xs:schema>`)
+    )
+    expect(body).toContain('<tns:mode>A&amp;B</tns:mode>')
+    expect(body).toContain('<tns:cmp>&lt;=&gt;&quot;</tns:cmp>')
+  })
+
+  it('escapes the target namespace bound to tns', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(`
+    <xs:schema targetNamespace="http://ex.com/a?x=1&amp;y=&quot;2&quot;">
+      <xs:element name="Req" type="xs:string"/>
+    </xs:schema>`)
+    )
+    expect(body).toContain('xmlns:tns="http://ex.com/a?x=1&amp;y=&quot;2&quot;"')
+  })
+
+  it('escapes the WSDL target namespace used as the fallback binding', () => {
+    const wsdl = docLiteralWsdl('', 'http://ex.com/w?a=1&amp;b=2')
+    const body = importedEnvelope(wsdl)
+    expect(body).toContain('xmlns:tns="http://ex.com/w?a=1&amp;b=2"')
+  })
+})
+
+describe('importWsdl — elements referenced with ref=', () => {
+  it('qualifies a referenced global element even when the schema is unqualified', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(`
+    <xs:schema targetNamespace="http://example.org/">
+      <xs:element name="Customer"><xs:complexType><xs:sequence>
+        <xs:element name="id" type="xs:int"/>
+      </xs:sequence></xs:complexType></xs:element>
+      <xs:element name="Req"><xs:complexType><xs:sequence>
+        <xs:element ref="tns:Customer"/>
+        <xs:element name="note" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>`)
+    )
+    expect(openedTags(body)).toEqual(['tns:Req', 'tns:Customer', 'id', 'note'])
+  })
+
+  it('binds a prefix to the namespace of a global element from another schema', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(`
+    <xs:schema targetNamespace="http://other.org/" elementFormDefault="qualified">
+      <xs:element name="Address"><xs:complexType><xs:sequence>
+        <xs:element name="city" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>
+    <xs:schema targetNamespace="http://example.org/" xmlns:o="http://other.org/">
+      <xs:element name="Req"><xs:complexType><xs:sequence>
+        <xs:element ref="o:Address"/>
+        <xs:element name="note" type="xs:string"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>`)
+    )
+    expect(body).toContain('xmlns:tns="http://example.org/"')
+    expect(body).toContain('xmlns:ns1="http://other.org/"')
+    // The referenced element and its locals follow the declaring schema (qualified).
+    expect(openedTags(body)).toEqual(['tns:Req', 'ns1:Address', 'ns1:city', 'note'])
+  })
+
+  it('leaves a referenced element of a no-namespace schema unqualified', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(`
+    <xs:schema>
+      <xs:element name="Plain" type="xs:string"/>
+    </xs:schema>
+    <xs:schema targetNamespace="http://example.org/" elementFormDefault="qualified">
+      <xs:element name="Req"><xs:complexType><xs:sequence>
+        <xs:element ref="Plain"/>
+      </xs:sequence></xs:complexType></xs:element>
+    </xs:schema>`)
+    )
+    expect(openedTags(body)).toEqual(['tns:Req', 'Plain'])
+  })
+})
+
+describe('importWsdl — particles keep their declared order', () => {
+  const schema = (particles: string, extra = ''): string => `
+    <xs:schema targetNamespace="http://example.org/">
+      <xs:element name="Req"><xs:complexType>${particles}</xs:complexType></xs:element>${extra}
+    </xs:schema>`
+
+  it('keeps a choice in place inside a sequence (first branch)', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(
+        schema(`<xs:sequence>
+          <xs:element name="first" type="xs:string"/>
+          <xs:choice><xs:element name="byId" type="xs:int"/><xs:element name="byName" type="xs:string"/></xs:choice>
+          <xs:element name="last" type="xs:string"/>
+        </xs:sequence>`)
+      )
+    )
+    expect(openedTags(body)).toEqual(['tns:Req', 'first', 'byId', 'last'])
+  })
+
+  it('expands every choice when a sequence holds several', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(
+        schema(`<xs:sequence>
+          <xs:element name="first" type="xs:string"/>
+          <xs:choice><xs:element name="a1" type="xs:int"/><xs:element name="a2" type="xs:int"/></xs:choice>
+          <xs:element name="mid" type="xs:string"/>
+          <xs:choice><xs:element name="b1" type="xs:int"/><xs:element name="b2" type="xs:int"/></xs:choice>
+          <xs:element name="last" type="xs:string"/>
+        </xs:sequence>`)
+      )
+    )
+    expect(openedTags(body)).toEqual(['tns:Req', 'first', 'a1', 'mid', 'b1', 'last'])
+  })
+
+  it('expands nested sequences, a choice whose first branch is a sequence, and group refs in place', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(
+        schema(
+          `<xs:sequence>
+          <xs:element name="first" type="xs:string"/>
+          <xs:sequence><xs:element name="n1" type="xs:string"/><xs:element name="n2" type="xs:string"/></xs:sequence>
+          <xs:choice>
+            <xs:annotation><xs:documentation>pick one</xs:documentation></xs:annotation>
+            <xs:sequence><xs:element name="c1" type="xs:string"/><xs:element name="c2" type="xs:string"/></xs:sequence>
+            <xs:element name="other" type="xs:string"/>
+          </xs:choice>
+          <xs:group ref="tns:Tail"/>
+        </xs:sequence>`,
+          `
+      <xs:group name="Tail"><xs:sequence>
+        <xs:element name="g1" type="xs:string"/>
+        <xs:element name="g2" type="xs:string"/>
+      </xs:sequence></xs:group>`
+        )
+      )
+    )
+    expect(openedTags(body)).toEqual(['tns:Req', 'first', 'n1', 'n2', 'c1', 'c2', 'g1', 'g2'])
+  })
+
+  it('expands a complexType whose content model is a group ref or a top-level choice', () => {
+    const viaGroup = importedEnvelope(
+      docLiteralWsdl(
+        schema(
+          `<xs:group ref="tns:G"/>`,
+          `
+      <xs:group name="G"><xs:choice><xs:element name="x" type="xs:int"/><xs:element name="y" type="xs:int"/></xs:choice></xs:group>`
+        )
+      )
+    )
+    expect(openedTags(viaGroup)).toEqual(['tns:Req', 'x'])
+
+    const viaChoice = importedEnvelope(
+      docLiteralWsdl(
+        schema(
+          `<xs:choice><xs:element name="p" type="xs:int"/><xs:element name="q" type="xs:int"/></xs:choice>`
+        )
+      )
+    )
+    expect(openedTags(viaChoice)).toEqual(['tns:Req', 'p'])
+  })
+
+  it('keeps declared order in a base type extended through complexContent', () => {
+    const body = importedEnvelope(
+      docLiteralWsdl(`
+    <xs:schema targetNamespace="http://example.org/">
+      <xs:complexType name="Base"><xs:sequence>
+        <xs:element name="b1" type="xs:string"/>
+        <xs:choice><xs:element name="bc" type="xs:int"/></xs:choice>
+        <xs:element name="b2" type="xs:string"/>
+      </xs:sequence></xs:complexType>
+      <xs:element name="Req"><xs:complexType><xs:complexContent>
+        <xs:extension base="tns:Base"><xs:sequence>
+          <xs:element name="own" type="xs:string"/>
+        </xs:sequence></xs:extension>
+      </xs:complexContent></xs:complexType></xs:element>
+    </xs:schema>`)
+    )
+    expect(openedTags(body)).toEqual(['tns:Req', 'b1', 'bc', 'b2', 'own'])
   })
 })

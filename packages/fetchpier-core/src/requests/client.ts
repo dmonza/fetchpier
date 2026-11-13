@@ -26,6 +26,7 @@ import { CoreError } from '../shared/context'
 import { describeError } from '../shared/describe-error'
 import { decodeBody } from './decode-body'
 import { fillReasonPhrase } from '../activity-log/reason-phrase'
+import { isProbablyUtf8 } from '../activity-log/binary'
 
 /** Name of the abort reason an adapter's request timer uses (see {@link timeoutAbortReason}). */
 export const TIMEOUT_ABORT_NAME = 'TimeoutError'
@@ -888,6 +889,9 @@ export async function sendRequestWithRaw(
     const responseBody = decoded.body.toString('utf-8')
     // The byte count of the body as read, not of its lossy UTF-8 text.
     const sizeBytes = decoded.body.length
+    // The UTF-8 probe has to see the bytes: once decoded to a string, every
+    // invalid byte is U+FFFD, which re-encodes as valid UTF-8.
+    const binaryHint = !isProbablyUtf8(decoded.body)
 
     // Normalise headers: undici returns them as string | string[] per field.
     // Capture raw Set-Cookie as a separate array before joining, since comma
@@ -910,7 +914,9 @@ export async function sendRequestWithRaw(
         statusText: fillReasonPhrase(response.statusCode) || String(response.statusCode),
         headers: normalisedHeaders,
         headerList,
+        ...(rawSetCookie.length > 0 ? { setCookie: [...rawSetCookie] } : {}),
         body: responseBody,
+        ...(binaryHint ? { binaryHint } : {}),
         timingMs: Math.round(timingMs),
         sizeBytes,
         compressedBytes: decoded.compressedBytes,

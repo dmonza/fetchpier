@@ -3,6 +3,7 @@ import { promises as fs, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  assertEnvironmentNameAvailable,
   deleteEnvironment,
   listEnvironmentFolders,
   listEnvironments,
@@ -134,6 +135,31 @@ describe('listEnvironments / listEnvironmentFolders (F4)', () => {
   })
 })
 
+describe('assertEnvironmentNameAvailable (IMP-15)', () => {
+  it('returns the derived folder of a free name and writes nothing', async () => {
+    const ws = newWorkspace()
+    await expect(assertEnvironmentNameAvailable(ws, 'RESTful Blueprint')).resolves.toBe(
+      'restful-blueprint'
+    )
+    await expect(fs.access(join(ws, 'environments'))).rejects.toBeTruthy()
+  })
+
+  it('treats a folder with no config.json as taken, case-insensitively', async () => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, 'environments', 'Pets', '.state'), { recursive: true })
+    await expect(assertEnvironmentNameAvailable(ws, 'pets')).rejects.toThrow(
+      /^ENVIRONMENT_NAME_CONFLICT/
+    )
+  })
+
+  it('rejects a name that derives to no folder', async () => {
+    const ws = newWorkspace()
+    await expect(assertEnvironmentNameAvailable(ws, '***')).rejects.toThrow(
+      /^ENVIRONMENT_NAME_EMPTY/
+    )
+  })
+})
+
 describe('deleteEnvironment (F4)', () => {
   it('removes the whole environment folder', async () => {
     const ws = newWorkspace()
@@ -230,6 +256,53 @@ describe('saveEnvironment — merge (F4, REQ-0076/0079/0087)', () => {
     )
     const back = await readEnvFile(join(ws, 'environments', 'dev', 'config.json'))
     expect(back.variables).toEqual({ A: '2', B: '2' })
+  })
+
+  // WSP-08: names that are also `Object.prototype` members are ordinary names.
+  it('keeps new variables named after Object.prototype members', async () => {
+    const ws = newWorkspace()
+    await seedDev(ws, { baseUrl: 'https://x' })
+    const variables = JSON.parse(
+      '{"baseUrl":"https://x","constructor":"c","toString":"t","valueOf":"v","__proto__":"p"}'
+    ) as Record<string, string>
+
+    await saveEnvironment(
+      ws,
+      { id: 'dev', folder: 'dev', name: 'dev', variables },
+      {
+        baseUrl: 'https://x'
+      }
+    )
+
+    const onDisk = JSON.parse(
+      await fs.readFile(join(ws, 'environments', 'dev', 'config.json'), 'utf-8')
+    ) as { variables: Record<string, string> }
+    expect(Object.entries(onDisk.variables)).toEqual([
+      ['baseUrl', 'https://x'],
+      ['constructor', 'c'],
+      ['toString', 't'],
+      ['valueOf', 'v'],
+      ['__proto__', 'p']
+    ])
+  })
+
+  it('keeps such a variable already on disk when an unrelated one is saved', async () => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, 'environments', 'dev'), { recursive: true })
+    await fs.writeFile(
+      join(ws, 'environments', 'dev', 'config.json'),
+      JSON.stringify({ id: 'dev', name: 'dev', variables: { a: '1', constructor: 'hand' } })
+    )
+
+    // The editor loaded only `a` (e.g. before the hand edit) and adds `other`.
+    await saveEnvironment(
+      ws,
+      { id: 'dev', folder: 'dev', name: 'dev', variables: { a: '1', other: 'NEW' } },
+      { a: '1' }
+    )
+
+    const back = await readEnvFile(join(ws, 'environments', 'dev', 'config.json'))
+    expect(back.variables).toEqual({ a: '1', other: 'NEW', constructor: 'hand' })
   })
 })
 

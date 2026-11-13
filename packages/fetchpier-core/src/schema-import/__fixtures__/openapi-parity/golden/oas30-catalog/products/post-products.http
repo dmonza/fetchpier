@@ -7,7 +7,7 @@
 # @end-auth
 # @rawSubtype: json
 POST https://catalog.example.com/api/products
-X-Tenant: string
+X-Tenant: acme
 Content-Type: application/json
 
 {

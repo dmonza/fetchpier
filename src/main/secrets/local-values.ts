@@ -77,16 +77,48 @@ async function decryptLocal(
  *    orphans for this load; a later unlocked load re-wraps).
  *
  * Returns the (possibly rewritten) local file, the current manifest keyId, and any
- * orphan notice.
+ * orphan notice. Runs under the file's lock (SEC-03), so a re-wrap or an orphan
+ * removal never drops a script write landing at the same time.
  */
-async function normalizeLocalValues(
+function normalizeLocalValues(
   workspacePath: string,
   environmentId: string
-): Promise<{
+): Promise<NormalizedLocalValues> {
+  return secrets.withLocalValuesLock(workspacePath, environmentId, () =>
+    normalizeLocalValuesLocked(workspacePath, environmentId)
+  )
+}
+
+/**
+ * Run `fn` holding the `localvalues.json` lock of every listed environment, so a
+ * multi-file read-modify-write (key rotation) is serialized with every
+ * single-file writer. The locks are taken in a fixed (sorted) order; the lock is
+ * not reentrant, so `fn` must use the `…Locked` variants for these files.
+ */
+export function withLocalValuesLocks<T>(
+  workspacePath: string,
+  environmentIds: readonly string[],
+  fn: () => Promise<T>
+): Promise<T> {
+  const ids = [...new Set(environmentIds)].sort()
+  const acquire = (i: number): Promise<T> =>
+    i === ids.length
+      ? fn()
+      : secrets.withLocalValuesLock(workspacePath, ids[i], () => acquire(i + 1))
+  return acquire(0)
+}
+
+interface NormalizedLocalValues {
   local: secrets.LocalValuesFile
   currentKeyId: string | undefined
   orphanNotice?: OrphanNotice
-}> {
+}
+
+/** {@link normalizeLocalValues} for a caller already holding the file's lock. */
+async function normalizeLocalValuesLocked(
+  workspacePath: string,
+  environmentId: string
+): Promise<NormalizedLocalValues> {
   const manifest = await workspace.openWorkspace(workspacePath).secrets.readManifest()
   const currentKeyId = manifest?.encryption.keyId
   const local = await secrets.readLocalValues(workspacePath, environmentId)
@@ -330,14 +362,26 @@ export async function revealLocalValue(
  *  - `becoming === 'plain'`: an encrypted local override is decrypted in place.
  * A no-op when there is no local entry for the name, or it is already in the
  * target form. Called from `setSecret`/`unsetSecret` so both layers stay coherent.
+ * The read-modify-write runs under the file's lock (SEC-03).
  */
-export async function propagateSecrecyTransition(
+export function propagateSecrecyTransition(
   workspacePath: string,
   environmentId: string,
   name: string,
   becoming: 'secret' | 'plain'
 ): Promise<void> {
-  const { local, currentKeyId } = await normalizeLocalValues(workspacePath, environmentId)
+  return secrets.withLocalValuesLock(workspacePath, environmentId, () =>
+    propagateSecrecyTransitionLocked(workspacePath, environmentId, name, becoming)
+  )
+}
+
+async function propagateSecrecyTransitionLocked(
+  workspacePath: string,
+  environmentId: string,
+  name: string,
+  becoming: 'secret' | 'plain'
+): Promise<void> {
+  const { local, currentKeyId } = await normalizeLocalValuesLocked(workspacePath, environmentId)
   const value = local.variables[name]
   if (value === undefined) return
 
@@ -469,6 +513,10 @@ export async function getLocalView(
  * `rotateKey`'s atomic temp-then-rename batch. Returns `null` when there is
  * nothing encrypted to carry. A value that cannot be decrypted throws
  * `SECRETS_VALUE_CORRUPT` naming the variable.
+ *
+ * The caller holds the file's lock ({@link withLocalValuesLocks}) from this read
+ * until its batch has renamed: the returned content is a snapshot, and a write
+ * landing in between would otherwise be overwritten by it (SEC-03).
  */
 export async function reWrapLocalValuesForRotation(
   workspacePath: string,
@@ -478,7 +526,7 @@ export async function reWrapLocalValuesForRotation(
   newKeyId: string,
   stamp: string
 ): Promise<{ finalPath: string; tmpPath: string; content: string } | null> {
-  const { local } = await normalizeLocalValues(workspacePath, environmentId)
+  const { local } = await normalizeLocalValuesLocked(workspacePath, environmentId)
   const encryptedNames = Object.entries(local.variables)
     .filter(([, v]) => secrets.isEncryptedValue(v))
     .map(([name]) => name)

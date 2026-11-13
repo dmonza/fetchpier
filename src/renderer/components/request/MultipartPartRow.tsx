@@ -111,7 +111,8 @@ export function MultipartPartRow({
       for (;;) {
         const result = await window.api.binary.selectAndStage({
           sourcePath: nextSourcePath,
-          confirmed: nextConfirmed
+          confirmed: nextConfirmed,
+          title: t('request.body.binary.pickerTitle')
         })
         if (result.status === 'cancelled') return
         if (result.status === 'blocked') {

@@ -22,8 +22,12 @@ import {
 } from './xml-node'
 import {
   buildSoapBodyInner,
+  CHILD_ORDER,
+  escapeXml,
   type GlobalElement,
   type NamedType,
+  type OrderedChild,
+  type OrderedXmlNode,
   type XsdRegistry
 } from './wsdl-example'
 
@@ -47,10 +51,15 @@ function classifyBinding(binding: XmlNode, nsMap: Map<string, string>): BindingK
   return { kind: 'unsupported', ext: entry.key }
 }
 
-function buildEnvelope(tns: string, bodyLines: string[]): string {
+function buildEnvelope(
+  tns: string,
+  namespaces: { prefix: string; uri: string }[],
+  bodyLines: string[]
+): string {
+  const extra = namespaces.map((n) => ` xmlns:${n.prefix}="${escapeXml(n.uri)}"`).join('')
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="${tns}">`,
+    `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="${escapeXml(tns)}"${extra}>`,
     '  <soapenv:Header/>',
     '  <soapenv:Body>',
     ...bodyLines,
@@ -64,6 +73,7 @@ function buildEnvelope(tns: string, bodyLines: string[]): string {
 function buildXsdRegistry(definitions: XmlNode): XsdRegistry {
   const elements = new Map<string, GlobalElement>()
   const types = new Map<string, NamedType>()
+  const groups = new Map<string, XmlNode>()
 
   const typesRoot = getLocal(definitions, 'types')
   for (const schema of asArray<XmlNode>(getLocal(typesRoot, 'schema'))) {
@@ -82,9 +92,46 @@ function buildXsdRegistry(definitions: XmlNode): XsdRegistry {
       const name = getAttr(st, 'name')
       if (name && !types.has(name)) types.set(name, { node: st, kind: 'simple' })
     }
+    for (const g of asArray<XmlNode>(getLocal(schema, 'group'))) {
+      const name = getAttr(g, 'name')
+      if (name && !groups.has(name)) groups.set(name, g)
+    }
   }
 
-  return { elements, types }
+  return { elements, types, groups }
+}
+
+/** One entry of fast-xml-parser's `preserveOrder: true` output. */
+type OrderedEntry = Record<string, unknown>
+
+/**
+ * Turn `preserveOrder: true` output into the grouped shape the `getLocal`
+ * helpers navigate (same values as `preserveOrder: false`: an element with
+ * neither attributes nor element children collapses to its text or `''`),
+ * with each element's children kept in document order under `CHILD_ORDER`.
+ */
+function fromOrdered(entries: unknown, attrs?: unknown): unknown {
+  const node: OrderedXmlNode = { ...(attrs as XmlNode | undefined) }
+  const order: OrderedChild[] = []
+  let text: unknown
+  for (const entry of asArray<OrderedEntry>(entries)) {
+    const key = Object.keys(entry).find((k) => k !== ':@')
+    if (!key) continue
+    if (key === '#text') {
+      text = text === undefined ? entry[key] : `${String(text)}${String(entry[key])}`
+      continue
+    }
+    const value = fromOrdered(entry[key], entry[':@'])
+    order.push({ key, node: value })
+    const prev = node[key]
+    if (prev === undefined) node[key] = value
+    else if (Array.isArray(prev)) prev.push(value)
+    else node[key] = [prev, value]
+  }
+  if (order.length === 0 && attrs === undefined) return text ?? ''
+  if (text !== undefined) node['#text'] = text
+  if (order.length > 0) node[CHILD_ORDER] = order
+  return node
 }
 
 interface MessagePart {
@@ -152,12 +199,13 @@ export function importWsdl(raw: string): {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
-    preserveOrder: false,
+    // XSD particles are ordered; the grouped view built below keeps that order.
+    preserveOrder: true,
     trimValues: true,
     removeNSPrefix: false
   })
 
-  const parsed = parser.parse(raw) as XmlNode
+  const parsed = fromOrdered(parser.parse(raw)) as XmlNode
   const defsKey = Object.keys(parsed).find((k) => stripNsPrefix(k) === 'definitions')
   if (!defsKey) throw new Error('WSDL: <definitions> root not found')
   const definitions = parsed[defsKey] as XmlNode
@@ -255,7 +303,7 @@ export function importWsdl(raw: string): {
         bindingUrl,
         soapAction,
         soapVersion: cls.version,
-        bodyText: buildEnvelope(body.tns, body.lines),
+        bodyText: buildEnvelope(body.tns, body.namespaces, body.lines),
         resolved: body.resolved
       })
     }

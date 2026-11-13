@@ -4,7 +4,12 @@ import { Trash2, AlertTriangle, Copy, Check } from 'lucide-react'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { useSecretsStore } from '../../stores/secrets'
-import { keyDeleteToken, isKeyDeleteBlocked, canConfirmKeyDelete } from '../../lib/key-delete-guard'
+import {
+  keyDeleteToken,
+  isKeyDeleteBlocked,
+  canConfirmKeyDelete,
+  keyInUseNames
+} from '../../lib/key-delete-guard'
 import type { WorkspaceKeyMetadata } from '../../../shared/types'
 
 interface Props {
@@ -28,11 +33,17 @@ interface Props {
 export function DeleteWorkspaceKeyDialog({ entry, usedBy, onClose }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const deleteKey = useSecretsStore((s) => s.deleteKey)
+  const listKeys = useSecretsStore((s) => s.listKeys)
   const [busy, setBusy] = useState(false)
   const [typed, setTyped] = useState('')
   const [copied, setCopied] = useState(false)
+  // SEC-12: main re-checks references at call time and may refuse a delete the
+  // listing allowed (a workspace became readable since); its names block here.
+  const [refusedBy, setRefusedBy] = useState<string[] | null>(null)
+  const [failed, setFailed] = useState(false)
 
-  const blocked = isKeyDeleteBlocked(usedBy)
+  const blockedBy = isKeyDeleteBlocked(usedBy) ? usedBy! : refusedBy
+  const blocked = blockedBy !== null
   // The token to type: the workspace name when known, else the key id.
   const token = keyDeleteToken(entry)
   const label = entry.workspaceHint || t('workspaceKeys.unnamed')
@@ -41,9 +52,19 @@ export function DeleteWorkspaceKeyDialog({ entry, usedBy, onClose }: Props): Rea
   const handleDelete = async (): Promise<void> => {
     if (!canDelete) return
     setBusy(true)
+    setFailed(false)
     try {
       await deleteKey(entry.keyId)
       onClose()
+    } catch (err) {
+      const names = keyInUseNames(err)
+      if (names) {
+        setRefusedBy(names)
+        // Refresh so the panel's reference marks match what main just found.
+        await listKeys().catch(() => undefined)
+      } else {
+        setFailed(true)
+      }
     } finally {
       setBusy(false)
     }
@@ -75,7 +96,7 @@ export function DeleteWorkspaceKeyDialog({ entry, usedBy, onClose }: Props): Rea
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            {t('workspaceKeys.delete.blocked.body', { names: usedBy!.join(', ') })}
+            {t('workspaceKeys.delete.blocked.body', { names: blockedBy.join(', ') })}
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={onClose}>
@@ -133,6 +154,12 @@ export function DeleteWorkspaceKeyDialog({ entry, usedBy, onClose }: Props): Rea
           autoFocus
           className="w-full rounded border border-border-default bg-background px-2 py-1.5 text-xs outline-none focus:border-destructive focus-visible:ring-1 focus-visible:ring-ring"
         />
+
+        {failed && (
+          <p role="alert" className="text-xs text-destructive">
+            {t('workspaceKeys.delete.failed')}
+          </p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>

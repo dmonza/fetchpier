@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { matchClientCertificate, type CandidateScope, type ClientCertCandidate } from './matcher'
+import {
+  matchClientCertificate,
+  normalizeHostPattern,
+  type CandidateScope,
+  type ClientCertCandidate
+} from './matcher'
 import type { ClientCertEntry } from '@shared/types'
 
 function entry(partial: Partial<ClientCertEntry> & { host: string; id?: string }): ClientCertEntry {
@@ -250,5 +255,59 @@ describe('matchClientCertificate', () => {
       const result = matchClientCertificate(url, [candidate(e, 'workspace')])
       expect(result?.selected).toBe(e)
     })
+  })
+})
+
+// TLS-09 — a pattern is compared in the form WHATWG gives the request's host:
+// IPv6 bracketed and compressed, an IDN in punycode, lower case.
+describe('normalizeHostPattern', () => {
+  it.each([
+    ['::1', '[::1]'],
+    ['[::1]', '[::1]'],
+    ['fd00:0:0::10', '[fd00::10]'],
+    ['[FD00:0:0::10]', '[fd00::10]'],
+    ['bücher.example', 'xn--bcher-kva.example'],
+    ['*.bücher.example', '*.xn--bcher-kva.example'],
+    ['  API.Example.COM  ', 'api.example.com'],
+    ['*.Example.com', '*.example.com'],
+    ['127.1', '127.0.0.1']
+  ])('normalizes %j to %j', (pattern, expected) => {
+    expect(normalizeHostPattern(pattern)).toBe(expected)
+  })
+
+  it.each([
+    '',
+    '   ',
+    'api.example.com:8443',
+    '[::1]:443',
+    '[::1',
+    'a b.example.com',
+    'example.com/path',
+    'user@example.com',
+    'example.com?x',
+    '*.',
+    '*.::1',
+    '*.[::1]'
+  ])('rejects %j (no host to match)', (pattern) => {
+    expect(normalizeHostPattern(pattern)).toBeNull()
+  })
+})
+
+describe('matchClientCertificate — patterns in a non-WHATWG form (TLS-09)', () => {
+  it.each([
+    ['::1', 'https://[::1]:8443/x', 8443],
+    ['[fd00:0:0::10]', 'https://[fd00::10]/', null],
+    ['bücher.example', 'https://bücher.example/', null],
+    ['*.bücher.example', 'https://api.bücher.example/', null]
+  ])('selects a %j entry for %s', (host, url, port) => {
+    const e = entry({ host, port })
+    expect(matchClientCertificate(new URL(url), [candidate(e, 'workspace')])?.selected).toBe(e)
+  })
+
+  it('never selects an entry whose pattern is no host', () => {
+    const e = entry({ host: 'a b.example.com' })
+    expect(matchClientCertificate(new URL('https://a.example.com/'), [candidate(e, 'app')])).toBe(
+      null
+    )
   })
 })

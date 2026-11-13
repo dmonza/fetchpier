@@ -93,7 +93,16 @@ export async function createVariableSession(
       shared = {}
     }
   }
-  const manifest = await ws.secrets.readManifest()
+  // An unreadable manifest (locked by an antivirus or a sync client, restrictive
+  // ACLs) degrades like an unreadable environment file: sends that need no secret
+  // go on, and only a send that needs one fails, with the read error.
+  let manifestError: unknown
+  let manifest: Awaited<ReturnType<typeof ws.secrets.readManifest>> = null
+  try {
+    manifest = await ws.secrets.readManifest()
+  } catch (err) {
+    manifestError = err
+  }
   const currentKeyId = manifest?.encryption.keyId
   const local = environmentId
     ? await ws.secrets.readLocalValues(environmentId)
@@ -156,6 +165,7 @@ export async function createVariableSession(
   const resolveSecretNames = async (names: Iterable<string>): Promise<Record<string, string>> => {
     if (!environmentId) return {}
     const wanted = [...new Set(names)]
+    if (manifestError !== undefined && wanted.some(isSecretName)) throw manifestError
     const fromOverlay: Record<string, string> = {}
     for (const name of wanted) {
       if (name in overlaySet && isSecretName(name)) fromOverlay[name] = overlaySet[name]

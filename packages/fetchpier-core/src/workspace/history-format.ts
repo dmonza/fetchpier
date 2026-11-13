@@ -143,6 +143,8 @@ function buildBodySection(args: {
   body: string | undefined
   /** The body was decoded from its `Content-Encoding` (CLI hardening). */
   decoded?: boolean
+  /** The client's UTF-8 probe of the body bytes failed (`HttpResponse.binaryHint`). */
+  binaryHint?: boolean
   /** True byte count of the body; measured from `body` when absent. */
   byteLength?: number
 }): string {
@@ -154,7 +156,8 @@ function buildBodySection(args: {
     contentType: ctHeader,
     contentEncoding: ceHeader,
     body,
-    decoded: args.decoded
+    decoded: args.decoded,
+    binaryHint: args.binaryHint
   })
   if (!decision.isBinary) return body
   return binaryPlaceholder({
@@ -339,8 +342,33 @@ function buildStatusLine(resp: HttpResponse): string {
   return `HTTP/1.1 ${resp.status}`
 }
 
+/**
+ * The response header lines. A `Set-Cookie` record entry is joined with `", "`,
+ * which is ambiguous (`Expires` dates hold commas), so when the response carries
+ * the raw list each cookie gets its own line, in the joined entry's place.
+ */
+function buildResponseHeaders(resp: HttpResponse): string[] {
+  const headers = resp.headers ?? {}
+  const setCookie = resp.setCookie
+  if (!setCookie || setCookie.length === 0) return buildHeaders(headers)
+  const lines: string[] = []
+  let written = false
+  for (const [k, v] of Object.entries(headers)) {
+    if (v === undefined || v === null) continue
+    if (k.toLowerCase() !== 'set-cookie') {
+      lines.push(`${k}: ${v}`)
+      continue
+    }
+    if (written) continue
+    written = true
+    for (const cookie of setCookie) lines.push(`${k}: ${cookie}`)
+  }
+  if (!written) for (const cookie of setCookie) lines.push(`Set-Cookie: ${cookie}`)
+  return lines
+}
+
 function buildResponseRaw(resp: HttpResponse): string {
-  const lines: string[] = [buildStatusLine(resp), ...buildHeaders(resp.headers ?? {})]
+  const lines: string[] = [buildStatusLine(resp), ...buildResponseHeaders(resp)]
   // A compressed response the engine decoded is recorded as the text it is; the
   // kept `Content-Encoding` header must not turn it into a binary placeholder.
   // `body` is the lossy UTF-8 text of the bytes, so a placeholder takes its
@@ -351,6 +379,7 @@ function buildResponseRaw(resp: HttpResponse): string {
     headers: resp.headers ?? {},
     body: resp.body,
     decoded,
+    binaryHint: resp.binaryHint,
     byteLength: decoded ? resp.decompressedBytes : (resp.compressedBytes ?? resp.decompressedBytes)
   })
   const out: string[] = lines.slice()
@@ -446,9 +475,17 @@ function buildScriptResultsBlock(
   const hasTests = (result.testResults ?? []).length > 0
   const hasError = !!result.error
   if (!hasLogs && !hasTests && !hasError) return null
-  const lines: string[] = []
-  for (const log of result.logs ?? []) lines.push(renderLog(log))
-  for (const test of result.testResults ?? []) lines.push(renderTest(test))
+  // Logs and assertions in execution order, by the sandbox's shared sequence.
+  // Results without one (an older producer) keep logs first, then assertions.
+  // The script error is last: a top-level error ends the script.
+  const entries: Array<{ seq: number | undefined; line: string }> = [
+    ...(result.logs ?? []).map((log) => ({ seq: log.seq, line: renderLog(log) })),
+    ...(result.testResults ?? []).map((test) => ({ seq: test.seq, line: renderTest(test) }))
+  ]
+  if (entries.every((e) => typeof e.seq === 'number')) {
+    entries.sort((a, b) => a.seq! - b.seq!)
+  }
+  const lines = entries.map((e) => e.line)
   if (result.error) lines.push(...renderError(result.error))
   return { name: `script-results: ${phase}`, lines }
 }

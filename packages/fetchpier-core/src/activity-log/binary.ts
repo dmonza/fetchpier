@@ -5,7 +5,9 @@
 //
 //   1. Content-Type matches a closed list of binary prefixes.
 //   2. Content-Encoding is present and ≠ `identity`.
-//   3. The first 1 KB of the body does not decode as valid UTF-8.
+//   3. The first 1 KB of the body does not decode as valid UTF-8 — probed on
+//      the bytes: a raw `Uint8Array` body, or the client's `binaryHint` for a
+//      string body (already decoded, so the probe on it only sees NUL).
 
 import type { BinaryDecision } from './types'
 
@@ -52,7 +54,12 @@ function matchesBinaryContentType(ct: string): boolean {
   return BINARY_CONTENT_TYPE_PREFIXES.some((p) => ct.startsWith(p))
 }
 
-function isProbablyUtf8(bytes: Uint8Array): boolean {
+/**
+ * The UTF-8 probe over the first 1 KB of `bytes`. Exported for the HTTP client,
+ * which runs it on the body bytes before they become (lossy) text and carries
+ * the result as `HttpResponse.binaryHint`.
+ */
+export function isProbablyUtf8(bytes: Uint8Array): boolean {
   let i = 0
   const n = Math.min(bytes.length, PROBE_BYTES)
   while (i < n) {
@@ -114,10 +121,15 @@ export function detectBinaryBody(args: {
    * in hand, so only the content type and the UTF-8 probe decide.
    */
   decoded?: boolean
+  /**
+   * The probe already ran on the bytes and found them not UTF-8
+   * (`HttpResponse.binaryHint`). A string body cannot tell: invalid bytes are
+   * U+FFFD by then, which re-encodes as valid UTF-8.
+   */
+  binaryHint?: boolean
 }): BinaryDecision {
-  const ct = normalizeContentType(
-    args.contentType ?? headerLookup(args.headers ?? {}, 'content-type')
-  )
+  const rawCt = args.contentType ?? headerLookup(args.headers ?? {}, 'content-type')
+  const ct = normalizeContentType(rawCt)
   if (matchesBinaryContentType(ct)) return { isBinary: true, reason: 'content-type' }
 
   const ce = (args.contentEncoding ?? headerLookup(args.headers ?? {}, 'content-encoding') ?? '')
@@ -127,6 +139,11 @@ export function detectBinaryBody(args: {
     return { isBinary: true, reason: 'content-encoding' }
   }
 
+  // A body declared as text (`text/*`, or any type with a `charset`) is text in
+  // that charset even when its bytes are not UTF-8 (a Latin-1 page): the hint
+  // does not turn it into a placeholder. Decoding by charset is a separate matter.
+  const declaredText = ct.startsWith('text/') || /;\s*charset\s*=/i.test(rawCt ?? '')
+  if (args.binaryHint && !declaredText) return { isBinary: true, reason: 'utf8-probe' }
   if (args.body != null) {
     const bytes = bodyToBytes(args.body)
     if (!isProbablyUtf8(bytes)) return { isBinary: true, reason: 'utf8-probe' }

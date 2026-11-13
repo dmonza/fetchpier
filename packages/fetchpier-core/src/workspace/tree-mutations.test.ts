@@ -133,6 +133,13 @@ describe('createInstance', () => {
     expect(written.match(/# @id (\S+)/)?.[1]).not.toBe('parent-uuid')
   })
 
+  it('keeps the request line after a bare `# @id` in the parent (WSP-09)', async () => {
+    await seed('requests/login.http', '# @id\r\nGET https://example.com\r\n')
+    const dest = await createInstance(ws, 'requests/login.http', 'happy')
+    const written = await fs.readFile(dest, 'utf-8')
+    expect(written).toMatch(/^# @id [0-9a-f-]{36}\r\nGET https:\/\/example\.com\r\n$/)
+  })
+
   it('rejects an instance of an instance', async () => {
     await seed('requests/login.http')
     await seed('requests/login.ok.instance.http')
@@ -355,6 +362,23 @@ describe('duplicateEntry', () => {
     const written = await fs.readFile(dest, 'utf-8')
     expect(written.match(/# @id (\S+)/)?.[1]).not.toBe('source-uuid')
     expect(written.replace(/# @id \S+/, '# @id source-uuid')).toBe(source)
+  })
+
+  // WSP-09: an `# @id` line with no value is replaced on its own line only —
+  // the line after it (the request line, another directive) survives.
+  it.each([
+    ['a bare id (LF)', '# @id\nPOST https://api.example.com/users\nAccept: */*\n\n{}', '\n'],
+    ['an id left with trailing spaces', '# @id   \n# @name foo\nGET https://example.com\n', '\n'],
+    ['a bare id (CRLF)', '# @id\r\nPOST https://x\r\n', '\r\n']
+  ])('replaces %s without consuming the next line', async (_label, source, eol) => {
+    await seed('requests/a.http', source)
+
+    const dest = await duplicateEntry(ws, 'requests/a.http')
+
+    const written = await fs.readFile(dest, 'utf-8')
+    const [first, ...rest] = written.split(eol)
+    expect(first).toMatch(/^# @id [0-9a-f-]{36}$/)
+    expect(rest.join(eol)).toBe(source.split(eol).slice(1).join(eol))
   })
 
   it('leaves the source request instances behind, bound to the original', async () => {

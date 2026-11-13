@@ -11,6 +11,7 @@
 // traversal on every list refresh.
 
 import { RESPONSE_SEPARATOR } from './serializer'
+import { METHOD_TOKEN } from './method-token'
 
 const DIRECTIVE_OR_BLOCK_RE = /^# @([A-Za-z][A-Za-z0-9_-]*)(.*)$/
 
@@ -32,10 +33,13 @@ function parseStatusLine(line: string): { code: number; statusText: string } | n
   return { code: Number(m[1]), statusText: (m[2] ?? '').trim() }
 }
 
+/**
+ * `METHOD URL [HTTP/x]` — the method takes the `.http` parser's token grammar
+ * (custom verbs such as `VERSION-CONTROL` included), uppercased.
+ */
 function parseRequestLine(line: string): { method: string; url: string } | null {
-  // `METHOD URL HTTP/1.1` — method, URL, version.
-  const m = line.match(/^([A-Za-z]+)\s+(\S+)(?:\s+HTTP\/\S+)?$/)
-  if (!m) return null
+  const m = line.match(/^(\S+)\s+(\S+)(?:\s+HTTP\/\S+)?$/)
+  if (!m || !METHOD_TOKEN.test(m[1]!)) return null
   return { method: m[1]!.toUpperCase(), url: m[2]! }
 }
 

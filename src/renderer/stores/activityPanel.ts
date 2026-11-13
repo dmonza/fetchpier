@@ -58,7 +58,10 @@ export const useActivityPanelStore = create<ActivityPanelState>()((set, get) => 
 
   hydrate: (settings) => {
     if (settings?.heightPx && Number.isFinite(settings.heightPx)) {
-      set({ heightPx: settings.heightPx })
+      // The height was stored under another window size: clamp it to this one
+      // (not persisted — a later larger window may fit the stored value again).
+      const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800
+      set({ heightPx: clampHeight(settings.heightPx, windowHeight) })
     }
   },
 

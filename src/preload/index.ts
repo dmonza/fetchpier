@@ -605,6 +605,8 @@ const api = {
     selectAndStage: (args?: {
       sourcePath?: string
       confirmed?: boolean
+      /** Localized open-dialog title (main falls back to English). */
+      title?: string
     }): Promise<
       | { status: 'cancelled' }
       | { status: 'blocked'; sizeBytes: number; blockBytes: number; sourcePath: string }

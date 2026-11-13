@@ -12,7 +12,15 @@ import type { HistoryEntryListItem } from '../../../shared/types'
 
 vi.mock('react-i18next', () => ({
   useTranslation: (): { t: (k: string, opts?: Record<string, unknown>) => string } => ({
-    t: (key, opts) => (opts && 'ms' in opts ? `${(opts as { ms: number }).ms} ms` : key)
+    t: (key, opts) => {
+      if (opts && 'ms' in opts) return `${(opts as { ms: number }).ms} ms`
+      // Makes the interpolated tab-title parts visible to the assertions.
+      if (opts && 'url' in opts) {
+        const o = opts as { method: string; url: string }
+        return `${key}|${o.method}|${o.url}`
+      }
+      return key
+    }
   })
 }))
 
@@ -259,6 +267,53 @@ describe('HistoryList — Repeat keeps the recorded query', () => {
       ['page', '2'],
       ['token', '{{token}}']
     ])
+    unmount(root, container)
+  })
+})
+
+describe('HistoryList — Raw .http tab title (HIS-22)', () => {
+  beforeEach(() => {
+    document.body.replaceChildren()
+    useHistoryExpansionStore.getState().reset()
+    requestStoreState.openTab.mockClear()
+  })
+
+  async function openRaw(container: HTMLElement, rowText: string): Promise<void> {
+    act(() => {
+      findRowByText(container, rowText).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, button: 2 })
+      )
+    })
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === 'history.contextMenu.raw'
+    ) as HTMLElement | undefined
+    expect(item).toBeDefined()
+    await act(async () => {
+      item!.click()
+    })
+    await flush()
+  }
+
+  it('builds the title through t() with the method and the URL', async () => {
+    installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList()
+    await openRaw(container, 'https://api.example.com/foo')
+    expect(requestStoreState.openTab).toHaveBeenCalledTimes(1)
+    const opened = requestStoreState.openTab.mock.calls[0][0] as { title: string }
+    expect(opened.title).toBe('history.rawTabTitle|GET|https://api.example.com/foo')
+    unmount(root, container)
+  })
+
+  it('passes a URL longer than 30 characters truncated with an ellipsis', async () => {
+    const long = {
+      ...ITEM_A,
+      request: { method: 'POST', url: 'https://api.example.com/a/b/c/d/e' }
+    }
+    installApi([long], async () => RAW)
+    const { container, root } = await mountList()
+    await openRaw(container, 'https://api.example.com/a/b/c/d/e')
+    const opened = requestStoreState.openTab.mock.calls[0][0] as { title: string }
+    expect(opened.title).toBe('history.rawTabTitle|POST|https://api.example.com/a/b/c/…')
     unmount(root, container)
   })
 })

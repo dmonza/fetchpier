@@ -66,6 +66,17 @@ describe('computeReferences', () => {
     expect(refs.incomplete).toBe(false)
   })
 
+  // SEC-13: a manifest that exists but cannot be read is "could not check", not
+  // "no key" — the folder stats fine, the file does not open.
+  it('reports "could not check" when the manifest exists but cannot be read', async () => {
+    const a = await makeWorkspaceWithKey()
+    const unreadable = await makeWorkspaceWithoutSecrets()
+    await fs.mkdir(join(unreadable, '.fetchpier', 'secrets.json')) // EISDIR on read
+    const refs = await computeReferences([a.path, unreadable])
+    expect(refs.byKeyId).toEqual({ [a.keyId]: [basename(a.path)] })
+    expect(refs.incomplete).toBe(true)
+  })
+
   it('reports "could not check" when a known workspace folder is missing', async () => {
     const a = await makeWorkspaceWithKey()
     const missing = join(tmpdir(), 'fp-ref-deleted-does-not-exist-xyz')

@@ -408,12 +408,15 @@ export function CookiesTab({ cookies, warnings }: CookiesTabProps): React.JSX.El
   // everything fits with no horizontal scrollbar. The first drag freezes them:
   // from then on the numbers are the user's and re-fitting would silently undo
   // the adjustment they just made.
-  const hostRef = useRef<HTMLDivElement>(null)
+  // State, not a ref: the measured container exists only in the populated
+  // branch, and a mounted tab can switch from empty to populated through props
+  // alone (another workspace tab), so the effect must re-run when it appears.
+  const [host, setHost] = useState<HTMLDivElement | null>(null)
   const [available, setAvailable] = useState(ASSUMED_WIDTH)
   const [manual, setManual] = useState<Record<string, number> | null>(null)
 
   useEffect(() => {
-    const el = hostRef.current
+    const el = host
     if (!el) return
     const measure = (): void => setAvailable(el.clientWidth || ASSUMED_WIDTH)
     measure()
@@ -423,7 +426,7 @@ export function CookiesTab({ cookies, warnings }: CookiesTabProps): React.JSX.El
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [host])
 
   // A manual layout is kept proportional to the container, so widening the panel
   // grows the columns the user sized rather than leaving a gap on the right.
@@ -435,7 +438,7 @@ export function CookiesTab({ cookies, warnings }: CookiesTabProps): React.JSX.El
   const onResizeStart = (): void => {
     // Freeze the fitted widths as the starting point, so the first drag moves
     // from what is on screen rather than jumping to some default.
-    setManual((prev) => prev ?? layout(columns, hostRef.current?.clientWidth || ASSUMED_WIDTH))
+    setManual((prev) => prev ?? layout(columns, host?.clientWidth || ASSUMED_WIDTH))
   }
 
   const onResize = (leftKey: ColumnKey, rightKey: ColumnKey, delta: number): void => {
@@ -454,7 +457,7 @@ export function CookiesTab({ cookies, warnings }: CookiesTabProps): React.JSX.El
   }
 
   return (
-    <div ref={hostRef} className="h-full overflow-auto py-2">
+    <div ref={setHost} className="h-full overflow-auto py-2">
       {cookieWarnings.length > 0 && <WarningList warnings={cookieWarnings} />}
       <CookieTable
         title={t('response.cookies.sent')}

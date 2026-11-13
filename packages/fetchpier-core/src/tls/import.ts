@@ -3,13 +3,32 @@ import { X509Certificate, createPrivateKey } from 'node:crypto'
 
 const PEM_CERT_RE = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
 
+/**
+ * Stable reasons a certificate import or edit is refused. The desktop maps each
+ * one to a translated message; the code leads the error message because only
+ * the message survives the IPC boundary.
+ */
+export type TlsImportErrorCode =
+  | 'TLS_HOST_REQUIRED'
+  | 'TLS_HOST_INVALID'
+  | 'TLS_PORT_INVALID'
+  | 'TLS_FILES_REQUIRED'
+  | 'TLS_CERT_NOT_PEM'
+  | 'TLS_CERT_INVALID'
+  | 'TLS_KEY_NOT_PEM'
+  | 'TLS_KEY_INVALID'
+  | 'TLS_PFX_TRUNCATED'
+  | 'TLS_PFX_NOT_PKCS12'
+
 /** Wraps a node:crypto error so callers can surface a clean message to the UI. */
 export class TlsImportError extends Error {
   constructor(
+    public readonly code: TlsImportErrorCode,
+    /** The plain-language reason, without the code. */
     public readonly reason: string,
     cause?: unknown
   ) {
-    super(reason)
+    super(`${code}: ${reason}`)
     this.name = 'TlsImportError'
     if (cause instanceof Error) this.cause = cause
   }
@@ -31,13 +50,13 @@ export async function readPemCertFile(sourcePath: string): Promise<ImportedFile>
   const text = content.toString('utf-8')
   const blocks = text.match(PEM_CERT_RE)
   if (!blocks || blocks.length === 0) {
-    throw new TlsImportError('No PEM CERTIFICATE block found in file')
+    throw new TlsImportError('TLS_CERT_NOT_PEM', 'No PEM CERTIFICATE block found in file')
   }
   for (const block of blocks) {
     try {
       new X509Certificate(block)
     } catch (err) {
-      throw new TlsImportError('Invalid PEM certificate block', err)
+      throw new TlsImportError('TLS_CERT_INVALID', 'Invalid PEM certificate block', err)
     }
   }
   return { content, certCount: blocks.length }
@@ -51,7 +70,7 @@ export async function readPemKeyFile(sourcePath: string): Promise<ImportedFile> 
   const content = await fs.readFile(sourcePath)
   const text = content.toString('utf-8')
   if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text)) {
-    throw new TlsImportError('File does not contain a PEM PRIVATE KEY block')
+    throw new TlsImportError('TLS_KEY_NOT_PEM', 'File does not contain a PEM PRIVATE KEY block')
   }
   // Try to parse without a passphrase. Unencrypted-but-invalid keys throw here;
   // encrypted keys also throw (OpenSSL has no passphrase to prompt with), and
@@ -60,7 +79,7 @@ export async function readPemKeyFile(sourcePath: string): Promise<ImportedFile> 
     createPrivateKey({ key: content, format: 'pem' })
   } catch (err) {
     if (!looksLikeEncryptedKeyError(err) && !isEncryptedKeyMaterial(text)) {
-      throw new TlsImportError('Invalid PEM key', err)
+      throw new TlsImportError('TLS_KEY_INVALID', 'Invalid PEM key', err)
     }
   }
   return { content }
@@ -91,10 +110,11 @@ function looksLikeEncryptedKeyError(err: unknown): boolean {
 export async function readPfxFile(sourcePath: string): Promise<ImportedFile> {
   const content = await fs.readFile(sourcePath)
   if (content.length < 2) {
-    throw new TlsImportError('PFX file is empty or truncated')
+    throw new TlsImportError('TLS_PFX_TRUNCATED', 'PFX file is empty or truncated')
   }
   if (content[0] !== 0x30) {
     throw new TlsImportError(
+      'TLS_PFX_NOT_PKCS12',
       'PFX file does not begin with a DER SEQUENCE tag (not a valid PKCS#12)'
     )
   }

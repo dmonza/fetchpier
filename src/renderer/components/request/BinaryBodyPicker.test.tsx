@@ -155,9 +155,11 @@ describe('BinaryBodyPicker', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    // UI-06: the native picker's title is resolved here, through t().
     expect(api.selectAndStage).toHaveBeenCalledWith({
       sourcePath: undefined,
-      confirmed: undefined
+      confirmed: undefined,
+      title: 'request.body.binary.pickerTitle'
     })
     expect(onChange).toHaveBeenCalledWith(STAGED)
   })

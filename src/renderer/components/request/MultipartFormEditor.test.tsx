@@ -137,6 +137,40 @@ describe('MultipartFormEditor', () => {
     expect(kindSelect?.value).toBe('file')
   })
 
+  it('passes the localized picker title when choosing a file for a part (UI-06)', async () => {
+    const api = setupApi()
+    api.selectAndStage.mockResolvedValueOnce({ status: 'cancelled' })
+    const parts: MultipartPart[] = [
+      {
+        kind: 'file',
+        id: 'mp-0',
+        name: 'photo',
+        file: { ref: '', originalName: '', sizeBytes: 0, mimeType: '' }
+      }
+    ]
+    ;({ container, root } = await mount({ parts, workspacePath: '/ws' }))
+    const trigger = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) =>
+      b.textContent?.includes('request.body.multipart.chooseFile')
+    )
+    expect(trigger).toBeDefined()
+    await act(async () => {
+      trigger!.click()
+    })
+    const selectLocal = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((b) => b.textContent?.includes('request.body.binary.picker.selectLocal'))
+    expect(selectLocal).toBeDefined()
+    await act(async () => {
+      selectLocal!.click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(api.selectAndStage).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'request.body.binary.pickerTitle' })
+    )
+  })
+
   it('calls onChange with one fewer part when removing', async () => {
     const parts: MultipartPart[] = [
       { kind: 'text', id: 'mp-0', name: 'a', value: 'A' },

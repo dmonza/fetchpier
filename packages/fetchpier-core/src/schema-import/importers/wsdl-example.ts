@@ -26,7 +26,25 @@ export interface XsdRegistry {
   elements: Map<string, GlobalElement>
   /** local name → named type */
   types: Map<string, NamedType>
+  /** local name → named model group (`<xsd:group name>`) */
+  groups?: Map<string, XmlNode>
 }
+
+/**
+ * Key under which the WSDL parser stores a node's element children in document
+ * order. The grouped `getLocal` view loses the order between different child
+ * names; XSD particles need it. A symbol, so `Object.keys` never sees it.
+ */
+export const CHILD_ORDER: unique symbol = Symbol('xmlChildOrder')
+
+/** One element child of a parsed node: its prefixed name and its value. */
+export interface OrderedChild {
+  key: string
+  node: unknown
+}
+
+/** A node as built by the WSDL parser: grouped children plus their order. */
+export type OrderedXmlNode = XmlNode & { [CHILD_ORDER]?: OrderedChild[] }
 
 export interface BuildBodyResult {
   /** Inner lines of `<soapenv:Body>`, already indented at `baseIndent`. */
@@ -35,6 +53,17 @@ export interface BuildBodyResult {
   resolved: boolean
   /** Namespace the envelope should bind to the `tns` prefix. */
   tns: string
+  /** Further prefixes the body uses (`ns1`, `ns2`, …), in allocation order. */
+  namespaces: { prefix: string; uri: string }[]
+}
+
+/** Escape text for an XML element body or a double-quoted attribute value. */
+export function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 export interface BuildBodyOptions {
@@ -54,10 +83,37 @@ export interface BuildBodyOptions {
 const MAX_DEPTH = 6
 const PREFIX = 'tns'
 
+/** Namespace → prefix bindings the body needs; `tns` is the wrapper's namespace. */
+interface NsBindings {
+  tns: string
+  extra: Map<string, string>
+}
+
 interface BuildCtx {
   registry: XsdRegistry
   /** Whether descendant local elements are namespace-qualified. */
   qualified: boolean
+  /** Prefix that qualified descendant locals carry. */
+  prefix: string
+  namespaces: NsBindings
+}
+
+function prefixFor(ns: NsBindings, uri: string): string {
+  if (uri === ns.tns) return PREFIX
+  let prefix = ns.extra.get(uri)
+  if (!prefix) {
+    prefix = `ns${ns.extra.size + 1}`
+    ns.extra.set(uri, prefix)
+  }
+  return prefix
+}
+
+function newCtx(registry: XsdRegistry, tns: string, qualified: boolean): BuildCtx {
+  return { registry, qualified, prefix: PREFIX, namespaces: { tns, extra: new Map() } }
+}
+
+function extraNamespaces(ctx: BuildCtx): { prefix: string; uri: string }[] {
+  return [...ctx.namespaces.extra].map(([uri, prefix]) => ({ prefix, uri }))
 }
 
 /** Placeholder text for an XSD built-in type (by local name). */
@@ -167,7 +223,7 @@ function renderElement(
   if (children.length > 0) {
     return [`${indent}<${tag}>`, ...children, `${indent}</${tag}>`]
   }
-  return [`${indent}<${tag}>${value ?? ''}</${tag}>`]
+  return [`${indent}<${tag}>${escapeXml(value ?? '')}</${tag}>`]
 }
 
 /** Expand a single `<xsd:element>` (resolving a `ref` to a global element). */
@@ -176,6 +232,8 @@ function expandElement(el: XmlNode, indent: string, depth: number, ctx: BuildCtx
 
   let node = el
   let name = getAttr(el, 'name')
+  let tag: string | undefined
+  let childCtx = ctx
   const ref = getAttr(el, 'ref')
   if (ref) {
     const refLocal = stripNsPrefix(ref)
@@ -183,14 +241,24 @@ function expandElement(el: XmlNode, indent: string, depth: number, ctx: BuildCtx
     if (g) {
       node = g.node
       name = getAttr(g.node, 'name') ?? refLocal
+      // A global element belongs to its schema's targetNamespace whatever
+      // elementFormDefault says; its locals follow the declaring schema.
+      if (g.schemaNs) {
+        const prefix = prefixFor(ctx.namespaces, g.schemaNs)
+        tag = `${prefix}:${name}`
+        childCtx = { ...ctx, qualified: g.qualified, prefix }
+      } else {
+        tag = name
+        childCtx = { ...ctx, qualified: false }
+      }
     } else {
       name = refLocal
     }
   }
   if (!name) return []
 
-  const tag = ctx.qualified ? `${PREFIX}:${name}` : name
-  return renderElement(tag, node, indent, depth, ctx)
+  tag ??= ctx.qualified ? `${ctx.prefix}:${name}` : name
+  return renderElement(tag, node, indent, depth, childCtx)
 }
 
 /** Collect the element particles of a complexType (sequence/all/choice/extension). */
@@ -220,35 +288,68 @@ function expandComplexType(ct: XmlNode, indent: string, depth: number, ctx: Buil
   return expandParticles(ct, indent, depth, ctx)
 }
 
-/** Expand the `element` children of a sequence/all (or first branch of a choice). */
+/**
+ * Element children of a node in document order. A node built by the WSDL
+ * parser carries the order; a hand-built tree falls back to its key order.
+ */
+function childrenInOrder(node: unknown): OrderedChild[] {
+  if (!node || typeof node !== 'object') return []
+  const ordered = (node as OrderedXmlNode)[CHILD_ORDER]
+  if (ordered) return ordered
+  const out: OrderedChild[] = []
+  for (const [key, value] of Object.entries(node as XmlNode)) {
+    if (key.startsWith('@_') || key === '#text') continue
+    for (const child of asArray<unknown>(value)) out.push({ key, node: child })
+  }
+  return out
+}
+
+/** XSD particles that can appear in a model group (annotations are skipped). */
+const PARTICLES = new Set(['element', 'sequence', 'all', 'choice', 'group', 'any'])
+/** Content-model children of a complexType / extension / group definition. */
+const MODEL_GROUPS = new Set(['sequence', 'all', 'choice', 'group'])
+
+/** Expand the content model (sequence/all/choice/group) of a container. */
 function expandParticles(
   container: XmlNode,
   indent: string,
   depth: number,
   ctx: BuildCtx
 ): string[] {
-  const ordered = getLocal(container, 'sequence') ?? getLocal(container, 'all')
-  if (ordered) {
-    const out: string[] = []
-    for (const el of asArray<XmlNode>(getLocal(ordered, 'element'))) {
-      out.push(...expandElement(el, indent, depth + 1, ctx))
-    }
-    // A choice nested inside a sequence — emit just its first branch.
-    const innerChoice = getLocal(ordered, 'choice')
-    if (innerChoice) {
-      const first = asArray<XmlNode>(getLocal(innerChoice, 'element'))[0]
-      if (first) out.push(...expandElement(first, indent, depth + 1, ctx))
-    }
-    return out
-  }
+  const model = childrenInOrder(container).find((c) => MODEL_GROUPS.has(stripNsPrefix(c.key)))
+  return model ? expandParticle(model, indent, depth, ctx) : []
+}
 
-  const choice = getLocal(container, 'choice')
-  if (choice) {
-    const first = asArray<XmlNode>(getLocal(choice, 'element'))[0]
-    return first ? expandElement(first, indent, depth + 1, ctx) : []
+/**
+ * Expand one particle in declared order: an element, every particle of a
+ * sequence/all, the first branch of a choice, or a referenced model group.
+ */
+function expandParticle(p: OrderedChild, indent: string, depth: number, ctx: BuildCtx): string[] {
+  if (depth > MAX_DEPTH) return []
+  switch (stripNsPrefix(p.key)) {
+    case 'element':
+      return expandElement(p.node as XmlNode, indent, depth + 1, ctx)
+    case 'sequence':
+    case 'all': {
+      const out: string[] = []
+      for (const child of childrenInOrder(p.node)) {
+        out.push(...expandParticle(child, indent, depth, ctx))
+      }
+      return out
+    }
+    case 'choice': {
+      const first = childrenInOrder(p.node).find((c) => PARTICLES.has(stripNsPrefix(c.key)))
+      return first ? expandParticle(first, indent, depth, ctx) : []
+    }
+    case 'group': {
+      const ref = getAttr(p.node, 'ref')
+      const def = ref ? ctx.registry.groups?.get(stripNsPrefix(ref)) : (p.node as XmlNode)
+      return def ? expandParticles(def, indent, depth + 1, ctx) : []
+    }
+    default:
+      // `any` and anything unknown: nothing to sample.
+      return []
   }
-
-  return []
 }
 
 export function buildSoapBodyInner(opts: BuildBodyOptions): BuildBodyResult {
@@ -259,17 +360,18 @@ export function buildSoapBodyInner(opts: BuildBodyOptions): BuildBodyResult {
   if (opts.doc) {
     const g = opts.registry.elements.get(opts.doc.elementLocal)
     if (g) {
-      const ctx: BuildCtx = { registry: opts.registry, qualified: g.qualified }
+      const tns = g.schemaNs ?? fallbackTns
+      const ctx = newCtx(opts.registry, tns, g.qualified)
       const name = getAttr(g.node, 'name') ?? opts.doc.elementLocal
       // The wrapper is a global element — always namespace-qualified.
       const lines = renderElement(`${PREFIX}:${name}`, g.node, baseIndent, 0, ctx)
-      return { lines, resolved: true, tns: g.schemaNs ?? fallbackTns }
+      return { lines, resolved: true, tns, namespaces: extraNamespaces(ctx) }
     }
   }
 
   // rpc/literal: wrapper = operation name, children = message parts (unqualified).
   if (opts.rpc) {
-    const ctx: BuildCtx = { registry: opts.registry, qualified: false }
+    const ctx = newCtx(opts.registry, fallbackTns, false)
     const childIndent = baseIndent + '  '
     const children: string[] = []
     for (const p of opts.rpc.parts) {
@@ -282,7 +384,7 @@ export function buildSoapBodyInner(opts: BuildBodyOptions): BuildBodyResult {
       children.length > 0
         ? [`${baseIndent}<${tag}>`, ...children, `${baseIndent}</${tag}>`]
         : [`${baseIndent}<${tag}></${tag}>`]
-    return { lines, resolved: true, tns: fallbackTns }
+    return { lines, resolved: true, tns: fallbackTns, namespaces: extraNamespaces(ctx) }
   }
 
   // Nothing resolvable — emit an empty wrapper (no TODO comment).
@@ -290,6 +392,7 @@ export function buildSoapBodyInner(opts: BuildBodyOptions): BuildBodyResult {
   return {
     lines: [`${baseIndent}<${tag}></${tag}>`],
     resolved: false,
-    tns: fallbackTns
+    tns: fallbackTns,
+    namespaces: []
   }
 }

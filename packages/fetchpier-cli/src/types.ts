@@ -121,6 +121,11 @@ export interface RequestUnit {
     decompressedBytes?: number
     /** `decoded` · `not-required` · `unsupported` · `failed`. */
     decodingStatus?: 'decoded' | 'not-required' | 'unsupported' | 'failed'
+    /**
+     * The body bytes did not probe as UTF-8 (the engine's probe, before they
+     * became text): `body` is lossy. Present only when true; additive.
+     */
+    binaryHint?: true
   }
   scripts: {
     preRequest?: { logs: ScriptLog[]; errors: ScriptError[]; mutations?: ScriptMutationSummary }

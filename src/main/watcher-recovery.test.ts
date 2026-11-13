@@ -246,6 +246,89 @@ describe('focus re-scan (REQ-0113 §6.2)', () => {
   })
 })
 
+// WSP-11: a bulk change (import, checkout, folder copy) fires one structural
+// event per entry; the watcher reads and broadcasts the tree once per burst,
+// and a read that loses the race to a newer one is never applied.
+describe('structural events (WSP-11)', () => {
+  it('collapses a burst of structural events into one trailing tree read', async () => {
+    await mod.startWatcher('/ws')
+    h.treeRead.mockClear()
+
+    live().emit('addDir', '/ws/requests/imported')
+    for (let i = 0; i < 5; i++) live().emit('add', `/ws/requests/imported/r${i}.http`)
+    live().emit('unlink', '/ws/requests/old.http')
+    live().emit('unlinkDir', '/ws/requests/gone')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(h.treeRead).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(h.treeRead).toHaveBeenCalledTimes(1)
+    expect(countOf('filesystem:changed')).toBe(1)
+  })
+
+  it('a pending structural read is cancelled when the workspace closes', async () => {
+    await mod.startWatcher('/ws')
+    h.treeRead.mockClear()
+
+    live().emit('add', '/ws/requests/a.http')
+    await mod.stopWatcher()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(h.treeRead).not.toHaveBeenCalled()
+  })
+
+  it('a pending structural read of the old workspace is cancelled by a switch', async () => {
+    await mod.startWatcher('/ws')
+    h.treeRead.mockClear()
+
+    live().emit('add', '/ws/requests/a.http')
+    await mod.startWatcher('/other')
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(h.treeRead).not.toHaveBeenCalled()
+  })
+
+  it('drops a tree read that finishes after a newer one was broadcast', async () => {
+    await mod.startWatcher('/ws')
+    h.send.mockClear()
+    let finishSlow: (tree: unknown[]) => void = () => {}
+    h.treeRead
+      .mockImplementationOnce(
+        () =>
+          new Promise<unknown[]>((resolve) => {
+            finishSlow = resolve
+          })
+      )
+      .mockResolvedValueOnce([{ name: 'new.http' }])
+
+    live().emit('add', '/ws/requests/old.http')
+    await vi.advanceTimersByTimeAsync(200) // slow read starts
+    live().emit('add', '/ws/requests/new.http')
+    await vi.advanceTimersByTimeAsync(200) // newer read finishes first
+    finishSlow([{ name: 'old.http' }])
+    await vi.advanceTimersByTimeAsync(0)
+
+    const trees = h.send.mock.calls.filter(([c]) => c === 'filesystem:changed').map(([, t]) => t)
+    expect(trees).toEqual([[{ name: 'new.http' }]])
+  })
+
+  it('still applies an older read that finishes first, then the newer one', async () => {
+    await mod.startWatcher('/ws')
+    h.send.mockClear()
+    h.treeRead
+      .mockResolvedValueOnce([{ name: 'first' }])
+      .mockResolvedValueOnce([{ name: 'second' }])
+
+    live().emit('add', '/ws/requests/a.http')
+    await vi.advanceTimersByTimeAsync(200)
+    live().emit('add', '/ws/requests/b.http')
+    await vi.advanceTimersByTimeAsync(200)
+
+    const trees = h.send.mock.calls.filter(([c]) => c === 'filesystem:changed').map(([, t]) => t)
+    expect(trees).toEqual([[{ name: 'first' }], [{ name: 'second' }]])
+  })
+})
+
 describe('system resume (REQ-0113 §6.3)', () => {
   it('CA-05: resume re-establishes watching and re-scans', async () => {
     await mod.startWatcher('/ws')

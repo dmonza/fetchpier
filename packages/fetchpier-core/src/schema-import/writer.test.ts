@@ -77,14 +77,16 @@ describe('writeSchemaToDisk', () => {
 
   it('aborts when target exists and strategy is abort', async () => {
     await fs.mkdir(join(workspace, 'Pets'), { recursive: true })
-    await expect(
-      writeSchemaToDisk(fakeSchema(), {
-        targetFolder: workspace,
-        collectionName: 'Pets',
-        conflictStrategy: 'abort',
-        workspacePath: workspace
-      })
-    ).rejects.toThrow(/already exists/)
+    const err = await writeSchemaToDisk(fakeSchema(), {
+      targetFolder: workspace,
+      collectionName: 'Pets',
+      conflictStrategy: 'abort',
+      workspacePath: workspace
+    }).catch((e: Error) => e)
+    // IMP-28: a stable leading code, the collection named by its folder, never
+    // the absolute path.
+    expect((err as Error).message).toMatch(/^TARGET_EXISTS: .*"Pets"/)
+    expect((err as Error).message).not.toContain(workspace)
   })
 
   // CA-04: there is no destructive "replace" — merge never wipes the folder, so
@@ -317,6 +319,91 @@ describe('writeSchemaToDisk — environment handling', () => {
         workspacePath: workspace
       })
     ).rejects.toThrow(/ENVIRONMENT_NAME_CONFLICT/)
+    // IMP-15: the conflict is found before any request is written.
+    await expect(fs.access(join(workspace, 'Pets'))).rejects.toThrow()
+  })
+
+  describe('environment availability is checked before any request is written (IMP-15)', () => {
+    it('rejects a leftover env folder with no config.json and writes nothing', async () => {
+      // git removed config.json but left the gitignored `.state/` behind.
+      await fs.mkdir(join(workspace, 'environments', 'pets', '.state'), { recursive: true })
+      await expect(
+        writeSchemaToDisk(schemaWithVars(), {
+          targetFolder: workspace,
+          collectionName: 'Pets',
+          conflictStrategy: 'abort',
+          postman: { environmentStrategy: 'new', environmentName: 'Pets' },
+          workspacePath: workspace
+        })
+      ).rejects.toThrow(/^ENVIRONMENT_NAME_CONFLICT/)
+      await expect(fs.access(join(workspace, 'Pets'))).rejects.toThrow()
+      // A retry with the same settings meets the same conflict, not TARGET_EXISTS.
+      await expect(
+        writeSchemaToDisk(schemaWithVars(), {
+          targetFolder: workspace,
+          collectionName: 'Pets',
+          conflictStrategy: 'abort',
+          postman: { environmentStrategy: 'new', environmentName: 'Pets' },
+          workspacePath: workspace
+        })
+      ).rejects.toThrow(/^ENVIRONMENT_NAME_CONFLICT/)
+    })
+
+    it('rejects a name that derives to no folder before writing', async () => {
+      await expect(
+        writeSchemaToDisk(schemaWithVars(), {
+          targetFolder: workspace,
+          collectionName: 'Pets',
+          conflictStrategy: 'abort',
+          postman: { environmentStrategy: 'new', environmentName: '!!!' },
+          workspacePath: workspace
+        })
+      ).rejects.toThrow(/^ENVIRONMENT_NAME_EMPTY/)
+      await expect(fs.access(join(workspace, 'Pets'))).rejects.toThrow()
+    })
+
+    it('skips the check when there are no variables to create an environment from', async () => {
+      await fs.mkdir(join(workspace, 'environments', 'pets'), { recursive: true })
+      const result = await writeSchemaToDisk(
+        { ...fakeSchema(), envVariables: {} },
+        {
+          targetFolder: workspace,
+          collectionName: 'Pets',
+          conflictStrategy: 'abort',
+          postman: { environmentStrategy: 'new', environmentName: 'Pets' },
+          workspacePath: workspace
+        }
+      )
+      expect(result.operationsCreated).toBe(2)
+      expect(result.environmentCreated).toBeUndefined()
+    })
+  })
+
+  it('a merge keeps the environment order and appends only the missing keys (IMP-14)', async () => {
+    const envDir = join(workspace, 'environments')
+    await fs.mkdir(join(envDir, 'dev'), { recursive: true })
+    await fs.writeFile(
+      join(envDir, 'dev', 'config.json'),
+      JSON.stringify({
+        id: 'dev',
+        name: 'Dev',
+        variables: { baseUrl: 'a', apiKey: 'b', userId: 'c' }
+      }),
+      'utf8'
+    )
+    await writeSchemaToDisk(
+      { ...fakeSchema(), envVariables: { token: 't', userId: 'imported' } },
+      {
+        targetFolder: workspace,
+        collectionName: 'Pets',
+        conflictStrategy: 'abort',
+        postman: { environmentStrategy: 'merge', mergeEnvironmentId: 'dev' },
+        workspacePath: workspace
+      }
+    )
+    const env = JSON.parse(await fs.readFile(join(envDir, 'dev', 'config.json'), 'utf8'))
+    expect(Object.keys(env.variables)).toEqual(['baseUrl', 'apiKey', 'userId', 'token'])
+    expect(env.variables.userId).toBe('c')
   })
 
   it('merges into an existing environment without overwriting existing vars', async () => {

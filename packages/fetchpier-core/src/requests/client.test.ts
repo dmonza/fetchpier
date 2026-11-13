@@ -297,6 +297,38 @@ describe('sendRequest', () => {
     expect(result.sizeBytes).toBe(result.decompressedBytes)
   })
 
+  // HIS-14: the UTF-8 probe runs on the bytes, before they become lossy text.
+  it.each([
+    ['msgpack with no NUL', Buffer.from([0x81, 0xa1, 0x61, 0xcb, 0x3f, 0xf8, 0xff, 0xfe, 0x92])],
+    ['Latin-1 text', Buffer.from('café ñandú', 'latin1')]
+  ])('hints a non-UTF-8 body as binary: %s', async (_label, bytes) => {
+    mockRequest.mockResolvedValueOnce(
+      makeResponse(200, { 'content-type': 'application/msgpack' }, bytes)
+    )
+    const result = await sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
+    expect(result.binaryHint).toBe(true)
+  })
+
+  it.each([
+    ['UTF-8 text', Buffer.from('{"name":"José 日本 😀"}')],
+    ['an empty body', Buffer.alloc(0)]
+  ])('gives no binary hint for %s', async (_label, bytes) => {
+    mockRequest.mockResolvedValueOnce(makeResponse(200, {}, bytes))
+    const result = await sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
+    expect(result.binaryHint).toBeUndefined()
+  })
+
+  it('probes a gzip body after decoding it', async () => {
+    const { gzipSync } = await import('node:zlib')
+    const wire = gzipSync(Buffer.from([0x81, 0xa1, 0x61, 0xff, 0xfe]))
+    mockRequest.mockResolvedValueOnce(
+      makeResponse(200, { 'content-encoding': 'gzip', 'content-type': 'application/cbor' }, wire)
+    )
+    const result = await sendRequest({ method: 'GET', url: 'https://example.com', headers: {} })
+    expect(result.decodingStatus).toBe('decoded')
+    expect(result.binaryHint).toBe(true)
+  })
+
   it('calls agent.destroy() after a successful request', async () => {
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
 
@@ -600,14 +632,25 @@ describe('sendRequestWithRaw — Set-Cookie capture', () => {
     expect(response.headers['x-trace']).toBe('1, 2')
   })
 
+  it('carries the Set-Cookie list on the response for the run file (HIS-10)', async () => {
+    const setCookieA = 'a=1; Path=/'
+    const setCookieB = 'b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT'
+    mockRequest.mockResolvedValueOnce(
+      makeResponse(200, { 'Set-Cookie': [setCookieA, setCookieB] }, 'ok')
+    )
+    const { response } = await sendRequestWithRaw({ method: 'GET', url: 'https://x/', headers: {} })
+    expect(response.setCookie).toEqual([setCookieA, setCookieB])
+  })
+
   it('returns an empty array when no Set-Cookie was received', async () => {
     mockRequest.mockResolvedValueOnce(makeResponse(200, {}, ''))
-    const { rawSetCookie } = await sendRequestWithRaw({
+    const { rawSetCookie, response } = await sendRequestWithRaw({
       method: 'GET',
       url: 'https://x/',
       headers: {}
     })
     expect(rawSetCookie).toEqual([])
+    expect(response.setCookie).toBeUndefined()
   })
 
   it('captures a single Set-Cookie returned as a bare string (not array)', async () => {

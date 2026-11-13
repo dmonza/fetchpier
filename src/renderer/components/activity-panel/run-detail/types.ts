@@ -47,8 +47,8 @@ export interface RawHttpSectionSpec {
   /** Optional i18n key overriding the default "Request" / "Response" heading. */
   titleKey?: string
   /**
-   * If `true`, when the payload's `Content-Type` matches `application/json`
-   * show a `[Format]/[Raw]` button that pretty-prints the body (only).
+   * If `true`, when the payload's `Content-Type` is `application/json` or any
+   * `+json` type (parameters ignored), show a `[Format]/[Raw]` button that pretty-prints the body (only).
    */
   jsonFormatToggle?: boolean
 }

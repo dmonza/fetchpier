@@ -117,6 +117,52 @@ describe('shared/lib/activity-log', () => {
     expect(fromConvenience).toEqual(fromTwoSteps)
   })
 
+  it('rebuilds a method with a hyphen or a digit (HIS-16)', () => {
+    const entry = historyEntryFromRaw(
+      '# @timestamp: t\n\nVERSION-CONTROL https://dav.example.com/x HTTP/1.1\n\n' +
+        '### Response\n\nHTTP/1.1 200 OK\n\n'
+    )
+    expect(entry.request.method).toBe('VERSION-CONTROL')
+    expect(entry.request.url).toBe('https://dav.example.com/x')
+  })
+
+  // HIS-10: one `Set-Cookie:` line per cookie; the reader keeps every one.
+  describe('repeated response headers', () => {
+    const withResponseHeaders = (headers: string) =>
+      historyEntryFromRaw(
+        '# @timestamp: t\n\nGET / HTTP/1.1\n\n### Response\n\nHTTP/1.1 200 OK\n' + headers + '\n'
+      )
+
+    it('keeps each Set-Cookie line as its own cookie, an Expires comma included', () => {
+      const entry = withResponseHeaders(
+        'set-cookie: a=1; Path=/\n' +
+          'Content-Type: text/plain\n' +
+          'set-cookie: b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT\n'
+      )
+      expect(entry.response.setCookie).toEqual([
+        'a=1; Path=/',
+        'b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT'
+      ])
+      // The record joins a repeated name the way a live response does.
+      expect(entry.response.headers).toEqual({
+        'set-cookie': 'a=1; Path=/, b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT',
+        'Content-Type': 'text/plain'
+      })
+    })
+
+    it('accumulates any repeated header name, whatever its casing', () => {
+      const entry = withResponseHeaders('X-Trace: 1\nx-trace: 2\n')
+      expect(entry.response.headers).toEqual({ 'X-Trace': '1, 2' })
+      expect(entry.response.setCookie).toBeUndefined()
+    })
+
+    it('loads an older run whose cookies were joined on one line', () => {
+      const entry = withResponseHeaders('set-cookie: a=1; Path=/, b=2\n')
+      expect(entry.response.headers['set-cookie']).toBe('a=1; Path=/, b=2')
+      expect(entry.response.setCookie).toEqual(['a=1; Path=/, b=2'])
+    })
+  })
+
   // HIS-18: the rebuilt size is a byte count — the placeholder's recorded
   // count for a binary body, else the body's UTF-8 length.
   describe('rebuilt response sizeBytes', () => {

@@ -23,7 +23,9 @@ import { atomicWriteFile } from './atomic-write'
 
 const HISTORY_DIR = 'requests/.runs'
 const HISTORY_EXT = '.http'
-const MAX_HISTORY_FILE_SIZE = 5 * 1024 * 1024 // 5 MB — anything larger is ignored
+const MAX_HISTORY_FILE_SIZE = 5 * 1024 * 1024 // 5 MB — the cap on a full read
+/** Enough for the directives and the request line of any run file. */
+const HEAD_READ_BYTES = 64 * 1024
 
 function historyDir(workspacePath: string): string {
   return path.join(workspacePath, HISTORY_DIR)
@@ -42,6 +44,37 @@ async function readEntryText(filePath: string): Promise<string | null> {
     const stat = await fs.stat(filePath)
     if (stat.size > MAX_HISTORY_FILE_SIZE) return null
     return await fs.readFile(filePath, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The head of a run file — its first `HEAD_READ_BYTES`, whatever the file's
+ * size — for the lookups that need only the header directives (count, delete,
+ * remove, get, relink). A cut file loses its last, partial line, so a directive
+ * is never read truncated. `null` when the file cannot be read.
+ */
+async function readEntryHead(filePath: string): Promise<string | null> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined
+  try {
+    handle = await fs.open(filePath, 'r')
+    const buf = Buffer.alloc(HEAD_READ_BYTES)
+    const { bytesRead } = await handle.read(buf, 0, HEAD_READ_BYTES, 0)
+    const text = buf.subarray(0, bytesRead).toString('utf-8')
+    if (bytesRead < HEAD_READ_BYTES) return text
+    const lastEol = text.lastIndexOf('\n')
+    return lastEol === -1 ? '' : text.slice(0, lastEol + 1)
+  } catch {
+    return null
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+function previewOf(text: string): ReturnType<typeof readMetadataPreview> | null {
+  try {
+    return readMetadataPreview(text)
   } catch {
     return null
   }
@@ -190,15 +223,19 @@ export async function get(workspacePath: string, entryId: string): Promise<strin
 
   for (const ordered of [fastCandidates, slowCandidates]) {
     for (const file of ordered) {
-      const text = await readEntryText(path.join(dir, file))
-      if (text === null) continue
-      let preview
-      try {
-        preview = readMetadataPreview(text)
-      } catch {
-        continue
+      const filepath = path.join(dir, file)
+      const head = await readEntryHead(filepath)
+      if (head === null) continue
+      if (previewOf(head)?.directives['run-id'] !== entryId) continue
+      // The cap applies to the full read only: the entry exists, it is too big.
+      const stat = await fs.stat(filepath).catch(() => null)
+      if (stat && stat.size > MAX_HISTORY_FILE_SIZE) {
+        throw new Error(
+          `history:get — entry too large to open (over ${MAX_HISTORY_FILE_SIZE / (1024 * 1024)} MB): ${entryId}`
+        )
       }
-      if (preview.directives['run-id'] === entryId) return text
+      const text = await readEntryText(filepath)
+      if (text !== null) return text
     }
   }
   throw new Error(`history:get — entry not found: ${entryId}`)
@@ -266,9 +303,9 @@ export async function updateSourceFile(
 
   for (const file of files) {
     const filepath = path.join(dir, file)
-    const text = await readEntryText(filepath)
-    if (text === null) continue
-    const line = findSourceFileLine(text)
+    const head = await readEntryHead(filepath)
+    if (head === null) continue
+    const line = findSourceFileLine(head)
     if (line === null) continue
     const src = normalizePathSeparators(line.value)
     let updated: string | null = null
@@ -280,6 +317,11 @@ export async function updateSourceFile(
       updated = newNorm
     }
     if (updated === null) continue
+    // The rewrite splices one header line, so it reads the whole file whatever
+    // its size — the full-read cap is for parsing, not for this. The head is a
+    // prefix of the text, so the line's offsets hold in it.
+    const text = await fs.readFile(filepath, 'utf-8').catch(() => null)
+    if (text === null || !text.startsWith(head)) continue
     await atomicWriteFile(
       filepath,
       `${text.slice(0, line.start)}# @source-file: ${updated}${text.slice(line.end)}`
@@ -302,15 +344,9 @@ export async function countForPath(
   const prefix = isFolder ? (norm.endsWith('/') ? norm : `${norm}/`) : null
   let count = 0
   for (const file of files) {
-    const text = await readEntryText(path.join(dir, file))
-    if (text === null) continue
-    let preview
-    try {
-      preview = readMetadataPreview(text)
-    } catch {
-      continue
-    }
-    const src = preview.directives['source-file']
+    const head = await readEntryHead(path.join(dir, file))
+    if (head === null) continue
+    const src = previewOf(head)?.directives['source-file']
     if (!src) continue
     const srcNorm = normalizePathSeparators(src)
     if (isFolder && prefix ? srcNorm.startsWith(prefix) : srcNorm === norm) count++
@@ -333,15 +369,9 @@ export async function deleteForPath(
   const prefix = isFolder ? (norm.endsWith('/') ? norm : `${norm}/`) : null
   for (const file of files) {
     const filepath = path.join(dir, file)
-    const text = await readEntryText(filepath)
-    if (text === null) continue
-    let preview
-    try {
-      preview = readMetadataPreview(text)
-    } catch {
-      continue
-    }
-    const src = preview.directives['source-file']
+    const head = await readEntryHead(filepath)
+    if (head === null) continue
+    const src = previewOf(head)?.directives['source-file']
     if (!src) continue
     const srcNorm = normalizePathSeparators(src)
     if (isFolder && prefix ? srcNorm.startsWith(prefix) : srcNorm === norm) {
@@ -366,15 +396,9 @@ export async function remove(workspacePath: string, entryId: string): Promise<vo
   for (const ordered of [fast, slow]) {
     for (const file of ordered) {
       const filepath = path.join(dir, file)
-      const text = await readEntryText(filepath)
-      if (text === null) continue
-      let preview
-      try {
-        preview = readMetadataPreview(text)
-      } catch {
-        continue
-      }
-      if (preview.directives['run-id'] === entryId) {
+      const head = await readEntryHead(filepath)
+      if (head === null) continue
+      if (previewOf(head)?.directives['run-id'] === entryId) {
         await fs.unlink(filepath).catch(() => undefined)
         return
       }

@@ -84,7 +84,11 @@ function generateFromSchema(schema: JsonSchema, depth: number, refs?: ExampleRef
         Object.assign(merged, value)
       }
     }
-    if (Object.keys(merged).length > 0) return merged
+    if (Object.keys(merged).length > 0) {
+      // The schema's own `properties` beside `allOf` are part of the same
+      // constraints (`allOf: [Base]` + properties ≡ `allOf: [Base, {properties}]`).
+      return Object.assign(merged, generateProperties(schema, depth, refs))
+    }
   }
   if (schema.oneOf && schema.oneOf.length > 0) {
     return generateExampleFromJsonSchema(schema.oneOf[0], depth + 1, refs)
@@ -127,18 +131,26 @@ function generateFromSchema(schema: JsonSchema, depth: number, refs?: ExampleRef
       return example === null ? [] : [example]
     }
     case 'object':
-    case undefined: {
-      const out: Record<string, unknown> = {}
-      if (schema.properties) {
-        for (const [key, sub] of Object.entries(schema.properties)) {
-          out[key] = generateExampleFromJsonSchema(sub, depth + 1, refs)
-        }
-      }
-      return out
-    }
+    case undefined:
+      return generateProperties(schema, depth, refs)
     default:
       return null
   }
+}
+
+/** One example value per entry of the schema's own `properties`. */
+function generateProperties(
+  schema: JsonSchema,
+  depth: number,
+  refs?: ExampleRefContext
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (schema.properties) {
+    for (const [key, sub] of Object.entries(schema.properties)) {
+      out[key] = generateExampleFromJsonSchema(sub, depth + 1, refs)
+    }
+  }
+  return out
 }
 
 export function prettyJson(value: unknown): string {

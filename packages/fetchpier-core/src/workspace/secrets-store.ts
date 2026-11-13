@@ -8,6 +8,8 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { parseManifest, serializeManifest, type SecretsManifest } from '../secrets'
 import { atomicWriteFile } from './atomic-write'
+import { CoreError } from '../shared/context'
+import { describeError } from '../shared/describe-error'
 
 const MANIFEST_FILE = '.fetchpier/secrets.json'
 
@@ -17,16 +19,24 @@ export function secretsManifestPath(workspacePath: string): string {
 }
 
 /**
- * Read and validate the manifest. Returns `null` when the file does not exist
- * (a workspace with no secrets). Throws `WORKSPACE_INVALID` for a present but
- * malformed/unsupported manifest — never decrypt against a broken manifest.
+ * Read and validate the manifest. Returns `null` only when the file does not
+ * exist (`ENOENT`, or `ENOTDIR` when `.fetchpier` is not a folder): a workspace
+ * with no secrets. Throws `WORKSPACE_INVALID` for a present manifest that cannot
+ * be read (permissions, a lock, a directory in its place — SEC-13) or is
+ * malformed/unsupported — never mistake it for "no key", never decrypt against it.
  */
 export async function readManifest(workspacePath: string): Promise<SecretsManifest | null> {
+  const filePath = secretsManifestPath(workspacePath)
   let raw: string
   try {
-    raw = await fs.readFile(secretsManifestPath(workspacePath), 'utf-8')
-  } catch {
-    return null
+    raw = await fs.readFile(filePath, 'utf-8')
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null
+    throw new CoreError(
+      'WORKSPACE_INVALID',
+      `Secrets manifest could not be read: ${filePath}: ${describeError(err)}`
+    )
   }
   return parseManifest(raw)
 }

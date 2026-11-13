@@ -361,3 +361,44 @@ describe('previewClientCertForUrl — variable-based URLs', () => {
     })
   })
 })
+
+// TLS-11 — an app-scope certificate change the settings file did not take must
+// reject, so the panel reports it instead of closing the dialog as if it worked.
+describe('app-scope certificate writes', () => {
+  beforeEach(async () => {
+    userDataDir = await fs.mkdtemp(join(tmpdir(), 'fp-tls-app-write-'))
+  })
+  afterEach(async () => {
+    vi.doUnmock('../ipc/appsettings.ipc')
+    vi.resetModules()
+    await fs.rm(userDataDir, { recursive: true, force: true })
+  })
+
+  it('rejects when the app settings file cannot be written', async () => {
+    vi.resetModules()
+    vi.doMock('../ipc/appsettings.ipc', async (importOriginal) => {
+      const real = await importOriginal<typeof import('../ipc/appsettings.ipc')>()
+      const withCa = (): AppSettings => ({
+        ...real.readAppSettings(),
+        tls: { caCertificates: [{ id: 'ca-1', file: 'ca-1.pem' }], clientCertificates: [] }
+      })
+      return {
+        ...real,
+        readAppSettings: withCa,
+        // The lenient writer logs a failed write and returns the unsaved value.
+        writeAppSettings: (patch: Partial<AppSettings>): AppSettings => ({ ...withCa(), ...patch }),
+        writeAppSettingsStrict: (): AppSettings => {
+          throw new Error('EACCES: permission denied')
+        }
+      }
+    })
+    const tls = await import('./store')
+
+    await expect(
+      tls.updateCA({ scope: 'app', id: 'ca-1', patch: { label: 'Corp root' } })
+    ).rejects.toThrow(/permission denied/)
+    await expect(tls.remove({ scope: 'app', id: 'ca-1', kind: 'ca' })).rejects.toThrow(
+      /permission denied/
+    )
+  })
+})

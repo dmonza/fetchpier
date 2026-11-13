@@ -294,7 +294,10 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     async (item: HistoryEntryListItem) => {
       if (!workspacePath) return
       const url = item.request.url
-      const title = `RAW ${item.request.method} ${url.length > 30 ? url.slice(0, 30) + '…' : url}`
+      const title = t('history.rawTabTitle', {
+        method: item.request.method,
+        url: url.length > 30 ? url.slice(0, 30) + '…' : url
+      })
       try {
         const rawContent = await window.api.history.get(item.id)
         openTab({
@@ -309,7 +312,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
         console.error('[HistoryList] Failed to read raw .http:', err)
       }
     },
-    [workspacePath, openTab]
+    [workspacePath, openTab, t]
   )
 
   const handleDeleteEntry = useCallback(

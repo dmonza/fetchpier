@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { binaryPlaceholder, bodyByteLength, detectBinaryBody } from './binary'
+import { binaryPlaceholder, bodyByteLength, detectBinaryBody, isProbablyUtf8 } from './binary'
 
 describe('detectBinaryBody', () => {
   it('flags binary content-types from the closed exact list', () => {
@@ -43,6 +43,43 @@ describe('detectBinaryBody', () => {
 
     const binary = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) // PNG magic
     expect(detectBinaryBody({ body: binary }).reason).toBe('utf8-probe')
+  })
+
+  // HIS-14: the string the client hands over is lossy UTF-8 — the probe that
+  // saw the bytes travels as `binaryHint`.
+  it('takes the client probe hint for a lossy string body', () => {
+    // What `Buffer.toString('utf-8')` gives the client: U+FFFD per invalid byte.
+    const lossy = new TextDecoder().decode(new Uint8Array([0x81, 0xa1, 0x61, 0xcb, 0xff, 0xfe]))
+    expect(detectBinaryBody({ body: lossy, contentType: 'application/msgpack' }).isBinary).toBe(
+      false
+    )
+    expect(
+      detectBinaryBody({ body: lossy, contentType: 'application/msgpack', binaryHint: true })
+    ).toEqual({ isBinary: true, reason: 'utf8-probe' })
+    // The earlier tests keep their reason.
+    expect(
+      detectBinaryBody({ body: lossy, contentType: 'image/png', binaryHint: true }).reason
+    ).toBe('content-type')
+  })
+
+  // A body declared as text in another charset (Latin-1 is not UTF-8) is text,
+  // not binary: the hint must not turn a legacy page into a placeholder.
+  it.each([
+    ['text/html; charset=iso-8859-1'],
+    ['text/plain'],
+    ['application/xml; charset=windows-1252'],
+    ['TEXT/CSV; Charset="ISO-8859-1"']
+  ])('ignores the probe hint for a body declared as text (%s)', (contentType) => {
+    const lossy = new TextDecoder().decode(new Uint8Array([0x49, 0x6e, 0x66, 0xf3, 0x6e]))
+    expect(detectBinaryBody({ body: lossy, contentType, binaryHint: true })).toEqual({
+      isBinary: false
+    })
+  })
+
+  it('exposes the byte probe the client runs', () => {
+    expect(isProbablyUtf8(new Uint8Array([0x81, 0xa1]))).toBe(false)
+    expect(isProbablyUtf8(new TextEncoder().encode('José 😀'))).toBe(true)
+    expect(isProbablyUtf8(new Uint8Array([]))).toBe(true)
   })
 
   it('treats NUL bytes as binary signal even within ASCII range', () => {

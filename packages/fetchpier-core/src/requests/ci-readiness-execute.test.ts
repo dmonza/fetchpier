@@ -183,6 +183,32 @@ describe('execute() — secret masking of the response', () => {
     expect(result.environmentChanges?.set.token).toBe(FRESH)
   })
 
+  it('masks the token in each Set-Cookie value of the raw list the run file writes (HIS-10)', async () => {
+    await server.forPost('/cookie-login').thenCallback(() => ({
+      statusCode: 200,
+      headers: {
+        'content-type': 'application/json',
+        'set-cookie': [`sid=${FRESH}; Path=/`, 'pref=dark; Expires=Wed, 21 Oct 2026 07:28:00 GMT']
+      },
+      body: JSON.stringify({ token: FRESH })
+    }))
+    const result = await execute(
+      {
+        method: 'POST',
+        url: `${server.url}/cookie-login`,
+        headers: {},
+        postResponseScript: storeToken
+      },
+      { ...base, secretNames: ['token'], revealResponse: true }
+    )
+    expect(result.response?.setCookie).toEqual([
+      'sid={secret:token}; Path=/',
+      'pref=dark; Expires=Wed, 21 Oct 2026 07:28:00 GMT'
+    ])
+    expect(JSON.stringify(result.response)).not.toContain(FRESH)
+    expect(result.unmaskedResponse?.setCookie?.[0]).toBe(`sid=${FRESH}; Path=/`)
+  })
+
   it('masks a secret the pre-request script writes and the server echoes', async () => {
     await server.forGet('/echo').thenCallback((req) => ({
       statusCode: 200,

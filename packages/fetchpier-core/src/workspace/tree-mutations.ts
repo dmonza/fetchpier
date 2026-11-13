@@ -148,10 +148,14 @@ async function findInstanceSiblings(
   return out
 }
 
-/** Replace the first `# @id …` line with a fresh UUID (or prepend one). */
+/**
+ * Replace the first `# @id …` line — a bare `# @id` with no value included —
+ * with a fresh UUID (or prepend one). The match stays on that one line:
+ * horizontal whitespace only, so a bare id never swallows the line after it.
+ */
 function withFreshRequestId(content: string): string {
   const idLine = `# @id ${randomUUID()}`
-  const re = /^#\s*@id\s+\S.*$/im
+  const re = /^[ \t]*#[ \t]*@id(?:[ \t][^\r\n]*)?$/im
   return re.test(content) ? content.replace(re, idLine) : `${idLine}\n${content}`
 }
 

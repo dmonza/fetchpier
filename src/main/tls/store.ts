@@ -7,7 +7,7 @@ import type {
 } from '../../shared/types'
 import { getActiveWorkspaceHandle } from '../state/active-workspace'
 import { getSendEnvironmentId } from '../state/send-environment'
-import { readAppSettings, writeAppSettings } from '../ipc/appsettings.ipc'
+import { readAppSettings, writeAppSettingsStrict } from '../ipc/appsettings.ipc'
 import { updateHttpSettings } from '../config/workspace-settings-store'
 import { appCertsDir } from './paths'
 
@@ -20,7 +20,9 @@ const store = coreTls.createTlsStore({
   appCertsDir,
   getWorkspacePath: () => getActiveWorkspaceHandle()?.path ?? null,
   readAppTls: () => readAppSettings().tls,
-  writeAppTls: (next) => writeAppSettings({ tls: next } as Partial<AppSettings>).tls,
+  // Strict: a write the file did not take rejects, so the panel reports it
+  // instead of closing as if the certificate change had been saved.
+  writeAppTls: (next) => writeAppSettingsStrict({ tls: next } as Partial<AppSettings>).tls,
   // Feeds a read-modify-write of the block, so it always comes from disk: a
   // cached copy would overwrite an entry a teammate added (git pull).
   readWorkspaceTls: async (ws) => (await workspace.openWorkspace(ws).settings.load()).tls,

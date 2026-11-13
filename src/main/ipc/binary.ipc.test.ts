@@ -172,6 +172,30 @@ describe('binary.ipc — selectAndStage limits flow', () => {
     expect(dialogMock.showOpenDialog).not.toHaveBeenCalled()
   })
 
+  // UI-06: main has no i18n runtime; the renderer passes the localized title.
+  it('titles the picker with the title the renderer passed', async () => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
+    await invoke('binary:selectAndStage', null, { title: 'Elegí un archivo para subir' })
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Elegí un archivo para subir' })
+    )
+  })
+
+  it.each([
+    ['no args', undefined],
+    ['no title', {}],
+    ['a non-string title', { title: 42 }],
+    ['an empty title', { title: '' }],
+    ['a blank title', { title: '   ' }],
+    ['an oversized title', { title: 'x'.repeat(501) }]
+  ])('falls back to the English title for %s', async (_label, args) => {
+    dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
+    await invoke('binary:selectAndStage', null, args)
+    expect(dialogMock.showOpenDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Select a file to upload' })
+    )
+  })
+
   it('returns cancelled when the user dismisses the picker', async () => {
     dialogMock.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: [] })
     const res = await invoke<{ status: string }>('binary:selectAndStage', null, {})

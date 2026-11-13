@@ -9,7 +9,7 @@ import {
   AlertCircle,
   Info
 } from 'lucide-react'
-import { useSchemaImportStore } from '../../stores/schemaImport'
+import { activeSourceContent, useSchemaImportStore } from '../../stores/schemaImport'
 import { useEnvironmentStore } from '../../stores/environment'
 import { useWorkspaceStore } from '../../stores/workspace'
 import {
@@ -27,6 +27,7 @@ import { cn } from '../../lib/utils'
 import type { SchemaFormat, SchemaImportRequest } from '../../../shared/types'
 import { deriveEnvFolderName } from '../../../shared/lib/env-folder-name'
 import { ImportResultSummary } from './ImportResultSummary'
+import { schemaImportErrorText } from './schema-import-error'
 
 const FORMAT_OPTIONS: Array<SchemaFormat | 'auto'> = [
   'auto',
@@ -53,15 +54,19 @@ export function ImportSchemaModal(): React.JSX.Element | null {
     return unsub
   }, [state.isOpen])
 
-  // Auto-detect format when raw content changes and format = 'auto'
+  // The active tab's local content: what detection reads and *Import* sends.
+  const content = activeSourceContent(state)
+
+  // Auto-detect format when the active tab's content changes and format = 'auto'.
+  // A tab with no local content (URL, or nothing picked/typed) detects nothing.
   useEffect(() => {
-    if (state.format !== 'auto' || !state.rawContent) {
-      if (state.format !== 'auto') state.setDetectedFormat(null)
+    if (state.format !== 'auto' || !content) {
+      state.setDetectedFormat(null)
       return
     }
     let cancelled = false
     window.api.schema
-      .detectFormat(state.rawContent)
+      .detectFormat(content)
       .then((fmt) => {
         if (!cancelled) state.setDetectedFormat(fmt)
       })
@@ -72,7 +77,7 @@ export function ImportSchemaModal(): React.JSX.Element | null {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.rawContent, state.format])
+  }, [content, state.format])
 
   const handlePickFile = (): void => {
     fileInputRef.current?.click()
@@ -101,15 +106,13 @@ export function ImportSchemaModal(): React.JSX.Element | null {
   const canImport = useMemo(() => {
     if (state.isImporting) return false
     if (needsEnvName && state.environmentName.trim().length === 0) return false
-    if (state.sourceKind === 'file') return !!state.rawContent
     if (state.sourceKind === 'url') return /^https?:\/\//i.test(state.urlValue.trim())
-    return state.textValue.trim().length > 0
+    return content.trim().length > 0
   }, [
     state.isImporting,
     state.sourceKind,
-    state.rawContent,
+    content,
     state.urlValue,
-    state.textValue,
     state.environmentName,
     needsEnvName
   ])
@@ -147,9 +150,7 @@ export function ImportSchemaModal(): React.JSX.Element | null {
       const source: SchemaImportRequest['source'] =
         state.sourceKind === 'url'
           ? { kind: 'url', value: state.urlValue.trim() }
-          : state.sourceKind === 'text'
-            ? { kind: 'text', value: state.textValue }
-            : { kind: 'text', value: state.rawContent }
+          : { kind: 'text', value: content }
 
       const req: SchemaImportRequest = {
         source,
@@ -182,15 +183,7 @@ export function ImportSchemaModal(): React.JSX.Element | null {
         }
       }
     } catch (err) {
-      const msg = (err as Error).message ?? String(err)
-      if (msg.includes('ENVIRONMENT_NAME_CONFLICT')) {
-        const occupant = /environment "([^"]*)"/.exec(msg)?.[1] ?? ''
-        state.setError(t('environment.errors.folderConflict', { name: occupant }))
-      } else if (msg.includes('ENVIRONMENT_NAME_EMPTY')) {
-        state.setError(t('environment.errors.nameEmpty'))
-      } else {
-        state.setError(msg)
-      }
+      state.setError(schemaImportErrorText(err, t))
     } finally {
       state.setImporting(false)
       state.setProgress(null)

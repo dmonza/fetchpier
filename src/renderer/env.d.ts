@@ -343,7 +343,12 @@ declare global {
         setActiveEnvironment: (id: string | null) => Promise<void>
       }
       binary: {
-        selectAndStage: (args?: { sourcePath?: string; confirmed?: boolean }) => Promise<
+        selectAndStage: (args?: {
+          sourcePath?: string
+          confirmed?: boolean
+          /** Localized open-dialog title (main falls back to English). */
+          title?: string
+        }) => Promise<
           | { status: 'cancelled' }
           | { status: 'blocked'; sizeBytes: number; blockBytes: number; sourcePath: string }
           | {

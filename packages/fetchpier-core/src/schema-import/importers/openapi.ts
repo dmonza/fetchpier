@@ -132,7 +132,18 @@ interface ParamInfo {
   required?: boolean
   schema?: Record<string, unknown>
   example?: unknown
+  /** Swagger 2.0 parameter-level sample sources (OAS3 keeps them on `schema`). */
+  default?: unknown
+  enum?: unknown[]
   type?: string
+}
+
+/** A node's own sample value: `example`, then `default`, then `enum[0]` (as the body generator). */
+function sampleOf(node: { example?: unknown; default?: unknown; enum?: unknown }): unknown {
+  if (node.example !== undefined) return node.example
+  if (node.default !== undefined) return node.default
+  if (Array.isArray(node.enum) && node.enum.length > 0) return node.enum[0]
+  return undefined
 }
 
 function normalizeParams(raw: unknown, refs: Refs): ParamInfo[] {
@@ -142,26 +153,37 @@ function normalizeParams(raw: unknown, refs: Refs): ParamInfo[] {
     .filter((p): p is ParamInfo => !!p && !!p.in && !!p.name)
 }
 
-/** Value for a query / header / form parameter: its example, a marker, or a type placeholder. */
+/**
+ * Value for a query / header / form parameter: the parameter's own sample
+ * (example → default → enum[0]), then the resolved schema's, then a marker or
+ * the type placeholder.
+ */
 function paramValue(p: ParamInfo, refs: Refs): string {
-  if (p.example !== undefined) return String(p.example)
+  const own = sampleOf(p)
+  if (own !== undefined) return String(own)
   if (p.schema === undefined) return examplePrimitive(p.type)
   const resolved = refs.schema(p.schema)
   if ('marker' in resolved) return resolved.marker
+  const fromSchema = resolved.schema ? sampleOf(resolved.schema) : undefined
+  if (fromSchema !== undefined) return String(fromSchema)
   return examplePrimitive((resolved.schema?.type as string | undefined) ?? p.type)
 }
 
 /**
- * Value inlined into the URL path. Never a marker — markers contain spaces and
- * `#`, which would break the URL — so an unresolvable schema falls back to the
- * type placeholder (the warning carries the signal).
+ * Value inlined into the URL path, by the same order as `paramValue`. Never a
+ * marker — markers contain spaces and `#`, which would break the URL — so an
+ * unresolvable schema falls back to the type placeholder (the warning carries
+ * the signal).
  */
 function pathParamValue(p: ParamInfo, refs: Refs): string {
-  if (p.example !== undefined) return String(p.example)
+  const own = sampleOf(p)
+  if (own !== undefined) return String(own)
   if (p.schema === undefined) return examplePrimitive(p.type)
   const resolved = refs.schema(p.schema)
-  const type = 'marker' in resolved ? undefined : (resolved.schema?.type as string | undefined)
-  return examplePrimitive(type ?? p.type)
+  const schema = 'marker' in resolved ? undefined : resolved.schema
+  const fromSchema = schema ? sampleOf(schema) : undefined
+  if (fromSchema !== undefined) return String(fromSchema)
+  return examplePrimitive((schema?.type as string | undefined) ?? p.type)
 }
 
 function examplePrimitive(type?: string): string {
@@ -382,6 +404,8 @@ function detectAuthFromSecurity(
   return { type: 'none' }
 }
 
+const OAS3_IGNORED_HEADERS = new Set(['accept', 'content-type', 'authorization'])
+
 function buildOperation(args: {
   method: string
   pathKey: string
@@ -425,7 +449,14 @@ function buildOperation(args: {
   const substitutedPath = buildUrlWithPathParams(pathKey, pathParams, refs)
   const fullUrl = joinUrl(baseUrl, substitutedPath)
 
-  const headers = paramsToKeyValuePairs(allParams, 'header', refs)
+  // OAS 3: a header parameter named Accept, Content-Type or Authorization SHALL
+  // be ignored (those are described by the media types and security schemes).
+  const headerParams = isSwagger
+    ? allParams
+    : allParams.filter(
+        (p) => !(p.in === 'header' && OAS3_IGNORED_HEADERS.has(p.name.toLowerCase()))
+      )
+  const headers = paramsToKeyValuePairs(headerParams, 'header', refs)
   const params = paramsToKeyValuePairs(allParams, 'query', refs)
 
   let bodyType: BodyType = 'none'
@@ -452,7 +483,9 @@ function buildOperation(args: {
     }
   }
 
-  if (contentType) {
+  // One Content-Type: a declared, enabled one (Swagger 2.0 header parameter) is kept.
+  const hasContentType = headers.some((h) => h.enabled && h.key.toLowerCase() === 'content-type')
+  if (contentType && !hasContentType) {
     headers.push({
       id: 'content-type',
       key: 'Content-Type',

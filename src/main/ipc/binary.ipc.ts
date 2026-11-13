@@ -34,6 +34,21 @@ export interface BinarySelectAndStageArgs {
   sourcePath?: string
   /** When true, bypass the warn threshold (user already saw the confirmation). */
   confirmed?: boolean
+  /**
+   * The open dialog's title, localized by the renderer (main has no i18n
+   * runtime). Missing or invalid → the English fallback.
+   */
+  title?: string
+}
+
+const DEFAULT_PICKER_TITLE = 'Select a file to upload'
+const MAX_PICKER_TITLE_LENGTH = 500
+
+function pickerTitle(title: unknown): string {
+  if (typeof title !== 'string') return DEFAULT_PICKER_TITLE
+  const trimmed = title.trim()
+  if (trimmed === '' || trimmed.length > MAX_PICKER_TITLE_LENGTH) return DEFAULT_PICKER_TITLE
+  return trimmed
 }
 
 export interface BinaryStatArgs {
@@ -59,7 +74,7 @@ export function registerBinaryHandlers(): void {
       if (!sourcePath) {
         const picked = await dialog.showOpenDialog({
           properties: ['openFile'],
-          title: 'Select a file to upload'
+          title: pickerTitle(args?.title)
         })
         if (picked.canceled || picked.filePaths.length === 0) {
           return { status: 'cancelled' }

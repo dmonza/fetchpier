@@ -220,6 +220,23 @@ describe('createVariableSession — secrets', () => {
     ).rejects.toMatchObject({ code: 'SECRETS_VALUE_UNSET' })
   })
 
+  // SEC-13 review: an unreadable manifest (locked by an antivirus or a sync
+  // client, restrictive ACLs) must not fail sends that need no secret — the
+  // session degrades as it does for an unreadable environment file, and only a
+  // send that needs a secret fails, with the read error.
+  it('an unreadable manifest fails only a send that needs a secret', async () => {
+    await writeEnv({ token: await encryptValue(key, 'token', 'stored'), plain: 'p' })
+    // A directory where the file should be: a read error other than ENOENT.
+    await fs.mkdir(join(ws, '.fetchpier', 'secrets.json'), { recursive: true })
+    const s = await session()
+    const prepared = await s.prepare(get('https://x/{{plain}}'))
+    expect(prepared.request.variables?.plain).toBe('p')
+    expect(prepared.masker).toBeUndefined()
+    await expect(s.prepare(get('https://x/{{token}}'))).rejects.toMatchObject({
+      code: 'WORKSPACE_INVALID'
+    })
+  })
+
   it('exposes orphans from a local layer under an older key', async () => {
     await withManifest()
     await writeEnv({ token: await encryptValue(key, 'token', 'stored') })

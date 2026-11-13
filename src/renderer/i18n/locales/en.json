@@ -334,6 +334,7 @@
         "confirmCancel": "Cancel",
         "tooLargeBlock": "The selected file is {{sizeMB}} MB, which exceeds the workspace block limit of {{limitMB}} MB. Choose a smaller file or raise the limit in workspace settings.",
         "errorReadingFile": "Could not read the selected file: {{message}}",
+        "pickerTitle": "Select a file to upload",
         "picker": {
           "openLabel": "Pick a workspace file",
           "searchPlaceholder": "Search staged files…",
@@ -589,6 +590,7 @@
     "allEntries": "All history",
     "emptyForFile": "No history for this request.",
     "rawBanner": "Raw — .http file content (read-only)",
+    "rawTabTitle": "Raw {{method}} {{url}}",
     "contextMenu": {
       "open": "Open",
       "raw": "Raw .http",
@@ -837,6 +839,7 @@
         "pfxFile": "PFX bundle (.pfx / .p12)",
         "passphrase": "Passphrase",
         "passphrasePlaceholder": "Literal value or {{varName}}",
+        "passphrasePlaceholderLiteral": "Literal value",
         "passphraseWarning": "This passphrase will be stored in plain text in the workspace settings file. If your workspace is shared via git, prefer {{example}} and define the value in an environment file.",
         "pickFile": "Browse..."
       }
@@ -845,6 +848,17 @@
       "hostRequired": "Host pattern is required.",
       "fileRequired": "Pick a file to import.",
       "importFailed": "Import failed: {{message}}",
+      "saveFailed": "Could not save the certificate: {{message}}",
+      "removeFailed": "Could not remove the certificate: {{message}}",
+      "toggleFailed": "Could not change whether the certificate is enabled: {{message}}",
+      "invalidHost": "Enter a host name, an IP address or *.domain, with no port or path.",
+      "invalidPort": "Enter a port from 1 to 65535, or leave it empty for any port.",
+      "certNotPem": "The file has no PEM certificate. Export it in PEM (Base64) format and try again.",
+      "certInvalid": "The file contains a PEM certificate that cannot be read.",
+      "keyNotPem": "The file has no PEM private key.",
+      "keyInvalid": "The private key in the file cannot be read.",
+      "pfxTruncated": "The PFX file is empty or truncated.",
+      "pfxInvalid": "The file is not a PKCS#12 (.pfx / .p12) bundle.",
       "passphraseVariableNotAllowed": "A global certificate passphrase cannot use a variable reference. Use a literal value, or move the certificate to workspace scope to use a variable."
     },
     "preview": {
@@ -1236,6 +1250,14 @@
       "import": "Import",
       "cancel": "Cancel",
       "close": "Close"
+    },
+    "errors": {
+      "targetExists": "A collection named \"{{name}}\" already exists in this folder. Choose Merge or another collection name.",
+      "fetchFailed": "The schema could not be downloaded ({{detail}}).",
+      "formatUndetected": "The schema format could not be detected. Pick the format in the list.",
+      "parseFailed": "The schema could not be read: {{detail}}",
+      "writeFailed": "The imported files could not be written or read ({{code}}). Check the folder's permissions and free disk space, then try again.",
+      "importFailed": "The import failed: {{message}}"
     }
   },
   "cookies": {
@@ -1258,6 +1280,8 @@
     "sameSite": "SameSite",
     "sameSiteUnset": "(unset)",
     "source": "Source",
+    "sourceResponse": "Response",
+    "sourceManual": "Manual",
     "edit": "Edit",
     "delete": "Delete",
     "save": "Save",
@@ -1402,6 +1426,7 @@
       "copy": "Copy",
       "copied": "Copied",
       "confirm": "Delete key",
+      "failed": "Could not delete the key. Try again.",
       "blocked": {
         "title": "This key is still in use",
         "body": "This key is used by {{names}}. Remove the dependent secrets from that workspace first, then delete the key.",

@@ -240,3 +240,111 @@ describe('cookies:changed subscription behaviour', () => {
     errSpy.mockRestore()
   })
 })
+
+// UI-05: replies can come back out of order. A late reply for an environment
+// that is no longer the active one is dropped, whichever call made it.
+describe('a late reply for an environment that is no longer active is dropped (UI-05)', () => {
+  function deferred<T>(): {
+    promise: Promise<T>
+    resolve: (v: T) => void
+    reject: (e: unknown) => void
+  } {
+    let resolve!: (v: T) => void
+    let reject!: (e: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  const A = [makeCookie({ id: 'a1', name: 'fromA' })]
+  const B = [makeCookie({ id: 'b1', name: 'fromB' })]
+
+  // The load of A must already be waiting on list('A') when the switch lands,
+  // so these exercise the checks after the list reply (not the earlier one).
+  const listStarted = (env: string): Promise<void> =>
+    vi.waitFor(() => expect(api.cookies.list).toHaveBeenCalledWith(env))
+
+  it('keeps B when list(A) resolves after list(B)', async () => {
+    const listA = deferred<Cookie[]>()
+    api.cookies.list.mockImplementation((env: string) =>
+      env === 'A' ? listA.promise : Promise.resolve(B)
+    )
+    const loadA = store.getState().loadForEnvironment('A')
+    await listStarted('A')
+    await store.getState().loadForEnvironment('B')
+    listA.resolve(A)
+    await loadA
+    expect(store.getState()).toMatchObject({ environmentId: 'B', cookies: B, isLoading: false })
+  })
+
+  it('keeps the empty list when list(A) resolves after a switch to no environment', async () => {
+    const listA = deferred<Cookie[]>()
+    api.cookies.list.mockImplementation(() => listA.promise)
+    const loadA = store.getState().loadForEnvironment('A')
+    await listStarted('A')
+    await store.getState().loadForEnvironment(null)
+    listA.resolve(A)
+    await loadA
+    expect(store.getState()).toMatchObject({ environmentId: null, cookies: [], isLoading: false })
+  })
+
+  it('does not report a late failure of A over the loaded B', async () => {
+    const listA = deferred<Cookie[]>()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.cookies.list.mockImplementation((env: string) =>
+      env === 'A' ? listA.promise : Promise.resolve(B)
+    )
+    const loadA = store.getState().loadForEnvironment('A')
+    await listStarted('A')
+    await store.getState().loadForEnvironment('B')
+    listA.reject(new Error('jar unreadable'))
+    await loadA
+    expect(store.getState()).toMatchObject({ environmentId: 'B', cookies: B, loadError: null })
+    errSpy.mockRestore()
+  })
+
+  it('does not list A when its setActiveEnvironment resolves after the switch to B', async () => {
+    const activateA = deferred<void>()
+    api.cookies.setActiveEnvironment.mockImplementation((env: string | null) =>
+      env === 'A' ? activateA.promise : Promise.resolve()
+    )
+    api.cookies.list.mockImplementation((env: string) => Promise.resolve(env === 'A' ? A : B))
+    const loadA = store.getState().loadForEnvironment('A')
+    await store.getState().loadForEnvironment('B')
+    activateA.resolve()
+    await loadA
+    expect(api.cookies.list).not.toHaveBeenCalledWith('A')
+    expect(store.getState()).toMatchObject({ environmentId: 'B', cookies: B })
+  })
+
+  it('drops a cookies:changed refresh of A that resolves after the switch to B', async () => {
+    api.cookies.list.mockResolvedValueOnce(A)
+    await store.getState().loadForEnvironment('A')
+    const refreshA = deferred<Cookie[]>()
+    api.cookies.list.mockImplementation((env: string) =>
+      env === 'A' ? refreshA.promise : Promise.resolve(B)
+    )
+    onChangedCb!('A')
+    await store.getState().loadForEnvironment('B')
+    refreshA.resolve(A)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(store.getState()).toMatchObject({ environmentId: 'B', cookies: B })
+  })
+
+  it('drops the reload after a mutation of A once B is active', async () => {
+    api.cookies.list.mockResolvedValueOnce(A)
+    await store.getState().loadForEnvironment('A')
+    const deleteA = deferred<void>()
+    api.cookies.delete.mockImplementation(() => deleteA.promise)
+    api.cookies.list.mockImplementation((env: string) => Promise.resolve(env === 'A' ? [] : B))
+    const removal = store.getState().remove('a1')
+    await store.getState().loadForEnvironment('B')
+    deleteA.resolve()
+    await removal
+    expect(api.cookies.delete).toHaveBeenCalledWith('A', 'a1')
+    expect(store.getState()).toMatchObject({ environmentId: 'B', cookies: B })
+  })
+})

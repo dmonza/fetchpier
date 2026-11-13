@@ -1,19 +1,145 @@
 import { promises as fsp, readFileSync, existsSync } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import { mkdtemp, rm, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { atomicWriteFile, atomicWriteFileSync } from './atomic-write'
+import { atomicWriteBatch, atomicWriteFile, atomicWriteFileSync } from './atomic-write'
+
+// The sync variant uses the named `node:fs` exports, which cannot be spied on
+// in place; pass-through wrappers record the order of its flush and rename.
+const syncOrder = vi.hoisted(() => [] as string[])
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    fsyncSync: (fd: number): void => {
+      syncOrder.push('fsync')
+      actual.fsyncSync(fd)
+    },
+    renameSync: (from: string, to: string): void => {
+      syncOrder.push('rename')
+      actual.renameSync(from, to)
+    }
+  }
+})
 
 let dir: string
+const realPlatform = process.platform
 
 beforeEach(async () => {
+  syncOrder.length = 0
   dir = await mkdtemp(join(tmpdir(), 'fp-atomic-'))
 })
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  Object.defineProperty(process, 'platform', { value: realPlatform })
   await rm(dir, { recursive: true, force: true })
+})
+
+/**
+ * Record, in order, every flush (`sync` on a handle, tagged with the opened
+ * path) and every rename. A directory open is answered with a fake handle: on
+ * Windows a real one cannot be opened for a flush.
+ */
+function recordFlushes(opts: { failDirectory?: boolean } = {}): string[] {
+  const order: string[] = []
+  const realOpen = fsp.open.bind(fsp)
+  vi.spyOn(fsp, 'open').mockImplementation(async (path, flags, mode) => {
+    const p = String(path)
+    if (p === dir) {
+      if (opts.failDirectory) throw Object.assign(new Error('EISDIR'), { code: 'EISDIR' })
+      return {
+        sync: async () => void order.push(`sync:dir`),
+        close: async () => undefined
+      } as unknown as FileHandle
+    }
+    const fh = await realOpen(path, flags, mode)
+    const realSync = fh.sync.bind(fh)
+    fh.sync = async () => {
+      order.push(`sync:${basename(p).startsWith('.') ? 'temp' : p}`)
+      await realSync()
+    }
+    return fh
+  })
+  const realRename = fsp.rename.bind(fsp)
+  vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+    order.push('rename')
+    await realRename(from, to)
+  })
+  return order
+}
+
+// WSP-12: rename alone survives a crash, not a power loss — the temp file's
+// data must be on disk before the rename can make it the target.
+describe('durability (flush before rename)', () => {
+  it('flushes the temp file before renaming it, and the directory after on POSIX', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    const order = recordFlushes()
+
+    await atomicWriteFile(join(dir, 'a.json'), '{"v":1}')
+
+    expect(order).toEqual(['sync:temp', 'rename', 'sync:dir'])
+    expect(readFileSync(join(dir, 'a.json'), 'utf-8')).toBe('{"v":1}')
+  })
+
+  it('does not open the directory for a flush on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const order = recordFlushes()
+
+    await atomicWriteFile(join(dir, 'a.json'), '{"v":1}')
+
+    expect(order).toEqual(['sync:temp', 'rename'])
+  })
+
+  it('still succeeds when the directory cannot be flushed (the rename already landed)', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    const order = recordFlushes({ failDirectory: true })
+
+    await atomicWriteFile(join(dir, 'a.json'), 'NEW')
+
+    expect(order).toEqual(['sync:temp', 'rename'])
+    expect(readFileSync(join(dir, 'a.json'), 'utf-8')).toBe('NEW')
+  })
+
+  it('a batch flushes every temp before the first rename', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
+    const order = recordFlushes()
+
+    await atomicWriteBatch([
+      { finalPath: join(dir, 'a.json'), tmpPath: join(dir, '.a.tmp'), content: 'A' },
+      { finalPath: join(dir, 'b.json'), tmpPath: join(dir, '.b.tmp'), content: 'B' }
+    ])
+
+    expect(order).toEqual(['sync:temp', 'sync:temp', 'rename', 'rename', 'sync:dir'])
+    expect(readFileSync(join(dir, 'a.json'), 'utf-8')).toBe('A')
+    expect(readFileSync(join(dir, 'b.json'), 'utf-8')).toBe('B')
+  })
+
+  it('a batch whose second temp cannot be written renames nothing and removes both temps', async () => {
+    await fsp.writeFile(join(dir, 'a.json'), 'OLD')
+
+    await expect(
+      atomicWriteBatch([
+        { finalPath: join(dir, 'a.json'), tmpPath: join(dir, '.a.tmp'), content: 'A' },
+        {
+          finalPath: join(dir, 'b.json'),
+          tmpPath: join(dir, 'missing', 'sub', '\u0000.tmp'),
+          content: 'B'
+        }
+      ])
+    ).rejects.toThrow()
+
+    expect(readFileSync(join(dir, 'a.json'), 'utf-8')).toBe('OLD')
+    expect(await readdir(dir)).toEqual(['a.json'])
+  })
+
+  it('the sync variant flushes the temp file before renaming it', () => {
+    atomicWriteFileSync(join(dir, 'sync.json'), '{"sync":true}')
+    expect(syncOrder.slice(0, 2)).toEqual(['fsync', 'rename'])
+    expect(readFileSync(join(dir, 'sync.json'), 'utf-8')).toBe('{"sync":true}')
+  })
 })
 
 describe('atomicWriteFile', () => {
@@ -69,7 +195,8 @@ describe('atomicWriteFile', () => {
     const target = join(dir, 'request.http')
     await atomicWriteFile(target, 'PREVIOUS-COMPLETE-CONTENT')
 
-    // Simulate a crash/power-loss after the temp write but before/at the rename.
+    // Simulate a crash or a full disk after the temp write but before/at the
+    // rename (power loss is covered by the flush order, see "durability").
     const renameSpy = vi
       .spyOn(fsp, 'rename')
       .mockRejectedValueOnce(new Error('ENOSPC: simulated disk full'))

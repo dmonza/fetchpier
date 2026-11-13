@@ -86,8 +86,10 @@ export function createSecretMasker(input: SecretMaskerInput): SecretMasker {
   for (const name of names) markerVariables[name] = secretMarker(name, nonce)
 
   // Matches only THIS execution's markers. A marker carrying any other nonce
-  // fails this pattern and is left untouched (anti-injection, CA-15).
-  const markerSource = `\\{\\$secret:([^:{}]+):${escapeRegExp(nonce)}\\}`
+  // fails this pattern and is left untouched (anti-injection, CA-15). The name
+  // may hold ':' (SEC-11): the capture backtracks to the final `:<nonce>}`, and
+  // `{` / `}` never appear in a token name, so a match cannot span markers.
+  const markerSource = `\\{\\$secret:([^{}]+):${escapeRegExp(nonce)}\\}`
 
   const wireRender = (text: string): string =>
     text.replace(new RegExp(markerSource, 'g'), (whole, name: string) =>

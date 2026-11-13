@@ -174,6 +174,22 @@ describe('deleteKey', () => {
     await fs.rm(wsPath, { recursive: true, force: true })
   })
 
+  // SEC-13: an unreadable manifest is "could not check", which never blocks —
+  // the guard keeps blocking on a positive reference only.
+  it('still deletes when a known workspace manifest cannot be read', async () => {
+    const key = await generateWorkspaceKey()
+    await service.addKey(formatKey(key), 'acme-api')
+    const wsPath = await fs.mkdtemp(join(tmpdir(), 'fp-keymgmt-ws-'))
+    await fs.mkdir(join(wsPath, '.fetchpier', 'secrets.json'), { recursive: true })
+    await writeWorkspaceStore({ path: wsPath, recent: [wsPath] })
+
+    expect((await service.listKeys()).references.incomplete).toBe(true)
+    await service.deleteKey(deriveKeyId(key))
+    expect((await service.listKeys()).entries).toHaveLength(0)
+
+    await fs.rm(wsPath, { recursive: true, force: true })
+  })
+
   // CA-06 boundary half: absence of a known reference never blocks.
   it('deletes a key with no locally-known reference', async () => {
     const key = await generateWorkspaceKey()

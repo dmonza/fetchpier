@@ -84,6 +84,38 @@ describe('collectReferencedVariableNames', () => {
     expect([...names].sort()).toEqual(['cityName', 'memoVar', 'noteVar', 'userName'])
   })
 
+  // SEC-02: the ordered header list is authoritative for the wire, so a secret in
+  // an earlier same-name header (lost from the last-wins record) still scopes.
+  it('scans the ordered header list, including an earlier same-name header', () => {
+    const names = collectReferencedVariableNames({
+      method: 'GET',
+      url: '/',
+      headerList: [
+        { name: 'X-Key', value: '{{secretA}}' },
+        { name: 'X-{{hk}}', value: 'x' },
+        { name: 'X-Key', value: '{{plainB}}' }
+      ],
+      headers: { 'X-Key': '{{plainB}}', 'X-{{hk}}': 'x' }
+    })
+    expect([...names].sort()).toEqual(['hk', 'plainB', 'secretA'])
+  })
+
+  it('reads only the header list when present, the record only as a fallback', () => {
+    const fromList = collectReferencedVariableNames({
+      method: 'GET',
+      url: '/',
+      headerList: [],
+      headers: { 'X-Stale': '{{notSent}}' }
+    })
+    expect([...fromList]).toEqual([])
+    const fromRecord = collectReferencedVariableNames({
+      method: 'GET',
+      url: '/',
+      headers: { 'X-Key': '{{recordOnly}}' }
+    })
+    expect([...fromRecord]).toEqual(['recordOnly'])
+  })
+
   it('collects basic and api-key auth value fields', () => {
     const basic = collectReferencedVariableNames({
       method: 'GET',

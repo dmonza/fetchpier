@@ -31,6 +31,22 @@ describe('readMetadataPreview', () => {
     expect(p.responseStatus).toEqual({ code: 200, statusText: 'OK' })
   })
 
+  it('reads a method with a hyphen or a digit, the .http parser grammar (HIS-16)', () => {
+    const run = (requestLine: string): string =>
+      `# @run-id: r\n\n${requestLine}\n\n### Response\n\nHTTP/1.1 200 OK\n`
+    expect(readMetadataPreview(run('VERSION-CONTROL /x HTTP/1.1')).requestLine).toEqual({
+      method: 'VERSION-CONTROL',
+      url: '/x'
+    })
+    expect(readMetadataPreview(run('m2 /x HTTP/1.1')).requestLine).toEqual({
+      method: 'M2',
+      url: '/x'
+    })
+    // Outside the grammar (leading digit, or a character the parser rejects).
+    expect(readMetadataPreview(run('2M /x HTTP/1.1')).requestLine).toBeNull()
+    expect(readMetadataPreview(run('GE_T /x HTTP/1.1')).requestLine).toBeNull()
+  })
+
   it('captures header blocks (e.g. @settings)', () => {
     const text =
       '# @timestamp: t\n' +

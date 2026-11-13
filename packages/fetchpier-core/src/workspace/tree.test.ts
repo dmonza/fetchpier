@@ -106,6 +106,45 @@ describe('readTree — request instances grouping', () => {
     const tree = await readTree(root)
     expect(tree.map((n) => n.name)).toEqual(['zebra', 'apple.http', 'orphan.x.instance.http'])
   })
+
+  // WSP-13: the order is the order of what the sidebar shows (the label without
+  // the extension), not of the raw filename — a name before its `-`/`_` variants.
+  it('sorts requests by their displayed stem, a duplicate below its source', async () => {
+    for (const name of ['users', 'user_v2', 'login-copy', 'user-admin', 'login', 'user']) {
+      await write(root, `${name}.http`)
+    }
+    const tree = await readTree(root)
+    expect(tree.map((n) => n.name)).toEqual([
+      'login.http',
+      'login-copy.http',
+      'user.http',
+      'user_v2.http',
+      'user-admin.http',
+      'users.http'
+    ])
+  })
+
+  it('sorts bound instances by their instance name', async () => {
+    await write(root, 'login.http')
+    await write(root, 'login.okay.instance.http')
+    await write(root, 'login.ok-2.instance.http')
+    await write(root, 'login.ok.instance.http')
+    const tree = await readTree(root)
+    expect(byName(tree, 'login.http')?.children?.map((c) => c.name)).toEqual([
+      'login.ok.instance.http',
+      'login.ok-2.instance.http',
+      'login.okay.instance.http'
+    ])
+  })
+
+  it('sorts orphan instances by their label among requests, the filename breaking a tie', async () => {
+    await write(root, 'ok.instance.http')
+    await write(root, 'ok-2.http')
+    await write(root, 'ok.http')
+    const tree = await readTree(root)
+    // `ok.http` and the orphan `ok.instance.http` both read "ok".
+    expect(tree.map((n) => n.name)).toEqual(['ok.http', 'ok.instance.http', 'ok-2.http'])
+  })
 })
 
 describe('readTree — read errors', () => {

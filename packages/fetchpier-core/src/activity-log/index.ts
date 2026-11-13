@@ -14,6 +14,7 @@ export type {
 export { serializeActivityLog, RESPONSE_SEPARATOR } from './serializer'
 export { parseActivityLog } from './parser'
 export { buildActivityLogFilename, hash4 } from './filename'
-export { detectBinaryBody, binaryPlaceholder, bodyByteLength } from './binary'
+export { detectBinaryBody, binaryPlaceholder, bodyByteLength, isProbablyUtf8 } from './binary'
 export { fillReasonPhrase } from './reason-phrase'
 export { readMetadataPreview, type ActivityLogMetadataPreview } from './header-read'
+export { METHOD_TOKEN } from './method-token'

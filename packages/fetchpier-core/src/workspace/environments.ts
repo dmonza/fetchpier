@@ -185,6 +185,22 @@ async function assertFolderAvailable(
 }
 
 /**
+ * Check, without writing anything, that `name` can create a new environment:
+ * it derives to a folder (`ENVIRONMENT_NAME_EMPTY` otherwise) that nothing under
+ * `environments/` occupies (`ENVIRONMENT_NAME_CONFLICT` otherwise) — the same
+ * rule `createEnvironmentFile` applies. Lets a caller that writes other files
+ * first fail before it has written any of them. Returns the derived folder.
+ */
+export async function assertEnvironmentNameAvailable(
+  workspacePath: string,
+  name: string
+): Promise<string> {
+  const folder = deriveFolderOrThrow(name)
+  await assertFolderAvailable(workspacePath, folder)
+  return folder
+}
+
+/**
  * Resolve an opaque identifier to the folder that holds it (§6.10).
  *
  * The fast path covers every workspace created before the identity split (and
@@ -389,8 +405,10 @@ export async function listEnvironmentsWithErrors(
     }
     // Compare case-insensitively and repair to the folder verbatim: the
     // derivation lowercases, so a hand-created `Staging/` folder would otherwise
-    // be "repaired" on every single read.
-    if (deriveEnvFolderName(env.name) !== folder.toLowerCase()) {
+    // be "repaired" on every single read. A name equal to the folder is the
+    // repair's fixed point even when the folder is not in derived form
+    // (`prod_eu`, `qa.v2`, `My Env`), so it is never rewritten again.
+    if (env.name !== folder && deriveEnvFolderName(env.name) !== folder.toLowerCase()) {
       env = { ...env, name: folder }
       await writeEnvFile(workspacePath, env).catch(() => undefined)
     }
@@ -437,8 +455,11 @@ export async function saveEnvironment(
   // the write).
   const folder = await resolveEnvFolder(workspacePath, env.id)
 
-  const disk: Record<string, string | null> = {}
-  const secretShaped: Record<string, string | null> = {}
+  // Variable names are arbitrary, so every map here has no prototype and every
+  // membership test is own-property: a variable named `constructor`, `toString`
+  // or `__proto__` is an ordinary name, never an inherited member.
+  const disk: Record<string, string | null> = Object.create(null)
+  const secretShaped: Record<string, string | null> = Object.create(null)
   try {
     const existing = await readEnvFile(envConfigPath(workspacePath, folder))
     for (const [name, value] of Object.entries(existing.variables)) {
@@ -450,9 +471,9 @@ export async function saveEnvironment(
   }
 
   const changedBySaver = (name: string, value: string | null): boolean =>
-    !baseline || !(name in baseline) || baseline[name] !== value
+    !baseline || !Object.hasOwn(baseline, name) || baseline[name] !== value
 
-  const variables: Record<string, string | null> = {}
+  const variables: Record<string, string | null> = Object.create(null)
   for (const [name, value] of Object.entries(env.variables)) {
     if (isReservedVariableName(name)) {
       throw new CoreError(
@@ -460,7 +481,7 @@ export async function saveEnvironment(
         `env:save — variable name "${name}" begins with "$", which is reserved for system dynamic variables.`
       )
     }
-    if (name in secretShaped) {
+    if (Object.hasOwn(secretShaped, name)) {
       variables[name] = secretShaped[name] // authoritative disk value at the renderer's position
       continue
     }
@@ -472,7 +493,7 @@ export async function saveEnvironment(
     if (changedBySaver(name, value)) {
       if (value === null) continue // needs-value with no on-disk secret: nothing to persist
       variables[name] = value
-    } else if (name in disk) {
+    } else if (Object.hasOwn(disk, name)) {
       if (disk[name] !== null) variables[name] = disk[name]
     } else if (value !== null) {
       variables[name] = value
@@ -480,13 +501,13 @@ export async function saveEnvironment(
   }
 
   for (const [name, value] of Object.entries(disk)) {
-    if (name in variables || name in env.variables) continue
+    if (Object.hasOwn(variables, name) || Object.hasOwn(env.variables, name)) continue
     const isSecret = value === null || isEncryptedValue(value)
     if (isSecret) {
       variables[name] = value
       continue
     }
-    if (baseline && name in baseline) continue // saver deleted it
+    if (baseline && Object.hasOwn(baseline, name)) continue // saver deleted it
     variables[name] = value // concurrently added elsewhere
   }
 

@@ -147,6 +147,87 @@ describe('buildSoapBodyInner — document/literal', () => {
     expect(body).toContain('</tns:order>')
   })
 
+  it('qualifies an element reached through ref= with its own namespace and schema form', () => {
+    const registry: XsdRegistry = {
+      elements: new Map([
+        [
+          'Req',
+          {
+            node: {
+              '@_name': 'Req',
+              'xsd:complexType': {
+                'xsd:sequence': {
+                  'xsd:element': [{ '@_ref': 'tns:Customer' }, { '@_ref': 'tns:Unknown' }]
+                }
+              }
+            } as XmlNode,
+            schemaNs: 'http://example.org/',
+            qualified: false
+          }
+        ],
+        [
+          'Customer',
+          {
+            node: {
+              '@_name': 'Customer',
+              'xsd:complexType': {
+                'xsd:sequence': { 'xsd:element': { '@_name': 'id', '@_type': 'xsd:int' } }
+              }
+            } as XmlNode,
+            schemaNs: 'http://example.org/',
+            qualified: true
+          }
+        ]
+      ]),
+      types: new Map()
+    }
+
+    const res = buildSoapBodyInner({
+      registry,
+      opName: 'Req',
+      baseIndent: '',
+      doc: { elementLocal: 'Req' }
+    })
+    expect(res.namespaces).toEqual([])
+    expect(res.lines).toEqual([
+      '<tns:Req>',
+      '  <tns:Customer>',
+      '    <tns:id>0</tns:id>',
+      '  </tns:Customer>',
+      // An unresolved ref keeps the referencing context's rule.
+      '  <Unknown></Unknown>',
+      '</tns:Req>'
+    ])
+  })
+
+  it('escapes an enumeration sample value placed in element text', () => {
+    const registry: XsdRegistry = {
+      elements: new Map([
+        [
+          'Req',
+          {
+            node: {
+              '@_name': 'Req',
+              'xsd:simpleType': {
+                'xsd:restriction': { 'xsd:enumeration': { '@_value': `a&b<c>"d'` } }
+              }
+            } as XmlNode,
+            schemaNs: 'http://example.org/',
+            qualified: true
+          }
+        ]
+      ]),
+      types: new Map()
+    }
+    const res = buildSoapBodyInner({
+      registry,
+      opName: 'Req',
+      baseIndent: '',
+      doc: { elementLocal: 'Req' }
+    })
+    expect(res.lines).toEqual([`<tns:Req>a&amp;b&lt;c&gt;&quot;d'</tns:Req>`])
+  })
+
   it('falls back to an empty wrapper when the element is not in the registry', () => {
     const res = buildSoapBodyInner({
       registry: emptyRegistry(),

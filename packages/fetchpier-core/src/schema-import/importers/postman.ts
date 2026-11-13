@@ -18,7 +18,9 @@ import { sanitizeName } from '../sanitize'
 // ── Types that model the subset of the Postman schema we consume ──────────
 interface PostmanVariable {
   key?: string
-  value?: string
+  /** The schema allows any JSON value (a number, a boolean…). */
+  value?: unknown
+  disabled?: boolean
 }
 
 interface PostmanKeyValue {
@@ -79,7 +81,8 @@ interface PostmanEvent {
 interface PostmanRequest {
   method?: string
   url?: PostmanUrl | string
-  header?: PostmanHeader[]
+  /** v2.x: a header list, or the headers as one `Name: value`-per-line string. */
+  header?: PostmanHeader[] | string
   body?: PostmanBody
   auth?: PostmanAuth | null
   description?: string | { content?: string }
@@ -221,8 +224,9 @@ function getUrl(u: PostmanRequest['url']): PostmanUrl {
   return u
 }
 
-function headersFromPostman(headers: PostmanHeader[] | undefined): KeyValuePair[] {
-  if (!headers) return []
+function headersFromPostman(headers: PostmanHeader[] | string | undefined): KeyValuePair[] {
+  if (typeof headers === 'string') return headersFromString(headers)
+  if (!Array.isArray(headers)) return []
   return headers
     .filter((h) => h && typeof h.key === 'string')
     .map((h, i) => ({
@@ -231,6 +235,19 @@ function headersFromPostman(headers: PostmanHeader[] | undefined): KeyValuePair[
       value: h.value ?? '',
       enabled: !h.disabled
     }))
+}
+
+/** One `Name: value` per line, split at the first `:`; empty or nameless lines are skipped. */
+function headersFromString(text: string): KeyValuePair[] {
+  const out: KeyValuePair[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const colon = line.indexOf(':')
+    if (colon < 0) continue
+    const key = line.slice(0, colon).trim()
+    if (!key) continue
+    out.push({ id: `h-${out.length}`, key, value: line.slice(colon + 1).trim(), enabled: true })
+  }
+  return out
 }
 
 /**
@@ -482,9 +499,12 @@ function collectVariables(vars: PostmanVariable[] | undefined, into: Record<stri
   if (!Array.isArray(vars)) return
   for (const v of vars) {
     if (!v || typeof v.key !== 'string' || !v.key.trim()) continue
+    // A disabled variable is not active in Postman, so it is not imported.
+    if (v.disabled === true) continue
     // First occurrence wins (collection root comes first when we walk breadth).
     if (!(v.key in into)) {
-      into[v.key] = v.value ?? ''
+      // Environment values are text; a number or boolean keeps its spelling.
+      into[v.key] = typeof v.value === 'string' ? v.value : v.value == null ? '' : String(v.value)
     }
   }
 }

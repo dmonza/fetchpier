@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2, FolderOpen, Pencil, AlertTriangle } from 'lucide-react'
 import { useCertificateStore } from '../../stores/certificates'
+import { certificateErrorText } from './certificate-error'
 import { useEnvironmentStore } from '../../stores/environment'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -24,6 +25,18 @@ const EMPTY_VARIABLES: Record<string, string | null> = {}
 /** Value carries a `{{...}}` reference anywhere (used to reject app-global passphrases). */
 function containsVariableReference(value: string): boolean {
   return /\{\{[^{}]+\}\}/.test(value)
+}
+
+/**
+ * The port field: empty is any port, otherwise decimal digits naming 1–65535
+ * (the store's rule). `undefined` marks an invalid entry.
+ */
+function parsePortField(text: string): number | null | undefined {
+  const trimmed = text.trim()
+  if (trimmed === '') return null
+  if (!/^\d+$/.test(trimmed)) return undefined
+  const port = Number(trimmed)
+  return port >= 1 && port <= 65535 ? port : undefined
 }
 
 /**
@@ -51,7 +64,11 @@ function PassphraseInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       variables={scope === 'workspace' ? variables : undefined}
-      placeholder={t('certificates.form.client.passphrasePlaceholder')}
+      placeholder={
+        scope === 'workspace'
+          ? t('certificates.form.client.passphrasePlaceholder')
+          : t('certificates.form.client.passphrasePlaceholderLiteral')
+      }
       className="h-8 w-full rounded-md border border-input bg-background shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
       inputClassName="px-2 py-1 text-xs placeholder:text-muted-foreground"
     />
@@ -115,12 +132,18 @@ function CASection({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [addOpen, setAddOpen] = useState(false)
+  const [rowError, setRowError] = useState<string | null>(null)
   const remove = useCertificateStore((s) => s.remove)
 
   async function handleRemove(entry: CACertEntry): Promise<void> {
     const label = entry.label ?? entry.file
     if (!window.confirm(t('certificates.remove.ca', { name: label }))) return
-    await remove({ scope, id: entry.id, kind: 'ca' })
+    setRowError(null)
+    try {
+      await remove({ scope, id: entry.id, kind: 'ca' })
+    } catch (err) {
+      setRowError(certificateErrorText(err, 'remove', t))
+    }
   }
 
   return (
@@ -170,6 +193,7 @@ function CASection({
           ))}
         </TableShell>
       )}
+      <RowError message={rowError} />
 
       {addOpen && <AddCAForm scope={scope} onClose={() => setAddOpen(false)} />}
     </section>
@@ -188,16 +212,27 @@ function ClientSection({
   const { t } = useTranslation()
   const [addOpen, setAddOpen] = useState(false)
   const [editing, setEditing] = useState<ClientCertEntry | null>(null)
+  const [rowError, setRowError] = useState<string | null>(null)
   const updateClient = useCertificateStore((s) => s.updateClient)
   const remove = useCertificateStore((s) => s.remove)
 
   async function handleRemove(entry: ClientCertEntry): Promise<void> {
     if (!window.confirm(t('certificates.remove.client', { name: entry.host }))) return
-    await remove({ scope, id: entry.id, kind: 'client' })
+    setRowError(null)
+    try {
+      await remove({ scope, id: entry.id, kind: 'client' })
+    } catch (err) {
+      setRowError(certificateErrorText(err, 'remove', t))
+    }
   }
 
   async function handleToggleDisabled(entry: ClientCertEntry, enabled: boolean): Promise<void> {
-    await updateClient({ scope, id: entry.id, patch: { disabled: !enabled } })
+    setRowError(null)
+    try {
+      await updateClient({ scope, id: entry.id, patch: { disabled: !enabled } })
+    } catch (err) {
+      setRowError(certificateErrorText(err, 'toggle', t))
+    }
   }
 
   return (
@@ -282,6 +317,7 @@ function ClientSection({
           ))}
         </TableShell>
       )}
+      <RowError message={rowError} />
 
       {addOpen && <AddClientForm scope={scope} onClose={() => setAddOpen(false)} />}
       {editing && <EditClientForm scope={scope} entry={editing} onClose={() => setEditing(null)} />}
@@ -321,11 +357,7 @@ function AddCAForm({
       await addCA({ scope, sourcePath, label: label.trim() || undefined })
       onClose()
     } catch (err) {
-      setError(
-        t('certificates.errors.importFailed', {
-          message: err instanceof Error ? err.message : String(err)
-        })
-      )
+      setError(certificateErrorText(err, 'import', t))
     } finally {
       setSubmitting(false)
     }
@@ -430,9 +462,9 @@ function AddClientForm({
       setError(t('certificates.errors.fileRequired'))
       return
     }
-    const parsedPort = port.trim() ? Number(port.trim()) : null
-    if (parsedPort !== null && (!Number.isFinite(parsedPort) || parsedPort < 1)) {
-      setError('Invalid port')
+    const parsedPort = parsePortField(port)
+    if (parsedPort === undefined) {
+      setError(t('certificates.errors.invalidPort'))
       return
     }
     setSubmitting(true)
@@ -447,11 +479,7 @@ function AddClientForm({
       })
       onClose()
     } catch (err) {
-      setError(
-        t('certificates.errors.importFailed', {
-          message: err instanceof Error ? err.message : String(err)
-        })
-      )
+      setError(certificateErrorText(err, 'import', t))
     } finally {
       setSubmitting(false)
     }
@@ -601,9 +629,9 @@ function EditClientForm({
       setError(t('certificates.errors.passphraseVariableNotAllowed'))
       return
     }
-    const parsedPort = port.trim() ? Number(port.trim()) : null
-    if (parsedPort !== null && (!Number.isFinite(parsedPort) || parsedPort < 1)) {
-      setError('Invalid port')
+    const parsedPort = parsePortField(port)
+    if (parsedPort === undefined) {
+      setError(t('certificates.errors.invalidPort'))
       return
     }
     setSubmitting(true)
@@ -619,11 +647,7 @@ function EditClientForm({
       })
       onClose()
     } catch (err) {
-      setError(
-        t('certificates.errors.importFailed', {
-          message: err instanceof Error ? err.message : String(err)
-        })
-      )
+      setError(certificateErrorText(err, 'save', t))
     } finally {
       setSubmitting(false)
     }
@@ -724,6 +748,16 @@ function SectionHeader({
       </div>
       {action}
     </header>
+  )
+}
+
+/** A remove or enable toggle the store refused, under the section's table. */
+function RowError({ message }: { message: string | null }): React.JSX.Element | null {
+  if (!message) return null
+  return (
+    <p role="alert" className="mt-2 text-xs text-destructive">
+      {message}
+    </p>
   )
 }
 

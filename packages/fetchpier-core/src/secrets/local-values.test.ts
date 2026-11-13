@@ -12,6 +12,7 @@ import {
   mergeEnvironmentLayers,
   persistScriptEnvChanges,
   readLocalValues,
+  withLocalValuesLock,
   writeLocalValues,
   type LocalValuesFile
 } from './local-values'
@@ -300,6 +301,48 @@ describe('readLocalValues / writeLocalValues', () => {
 
 // ── persistScriptEnvChanges (CLI readiness: core owns script-write persistence) ──
 
+describe('withLocalValuesLock (SEC-03)', () => {
+  const gate = (): { wait: Promise<void>; open: () => void } => {
+    let open = (): void => undefined
+    const wait = new Promise<void>((r) => (open = r))
+    return { wait, open }
+  }
+
+  it('runs the same environment one at a time, in call order, across path spellings', async () => {
+    const order: string[] = []
+    const g = gate()
+    const first = withLocalValuesLock('/ws', 'dev', async () => {
+      order.push('first:start')
+      await g.wait
+      order.push('first:end')
+    })
+    const second = withLocalValuesLock('/ws/../ws', 'dev', async () => {
+      order.push('second')
+    })
+    await Promise.resolve()
+    g.open()
+    await Promise.all([first, second])
+    expect(order).toEqual(['first:start', 'first:end', 'second'])
+  })
+
+  it('does not serialize different environments', async () => {
+    const g = gate()
+    const held = withLocalValuesLock('/ws', 'dev', () => g.wait)
+    await expect(withLocalValuesLock('/ws', 'prod', async () => 'ran')).resolves.toBe('ran')
+    g.open()
+    await held
+  })
+
+  it('a rejection reaches its caller and releases the lock', async () => {
+    await expect(
+      withLocalValuesLock('/ws', 'dev', async () => {
+        throw new Error('boom')
+      })
+    ).rejects.toThrow('boom')
+    await expect(withLocalValuesLock('/ws', 'dev', async () => 7)).resolves.toBe(7)
+  })
+})
+
 describe('persistScriptEnvChanges', () => {
   let ws = ''
   let key: Uint8Array
@@ -415,6 +458,30 @@ describe('persistScriptEnvChanges', () => {
     expect(await persist(undefined)).toEqual([])
     expect(await persist({ set: {}, removed: [] })).toEqual([])
     await expect(fs.access(localValuesPath(ws, 'dev'))).rejects.toThrow()
+  })
+
+  // SEC-03: two sends finishing together each re-read the latest file, so neither
+  // drops the other's write (the secret write awaits the key and the cipher).
+  it('keeps both writes of concurrent persists with disjoint names', async () => {
+    await writeLocalValues(ws, 'dev', local({ keep: 'v' }))
+    await Promise.all([
+      persist({ set: { token: 'A' }, removed: [] }),
+      persist({ set: { refreshToken: 'B' }, removed: [] }),
+      persist({ set: { other: 'C' }, removed: ['keep'] })
+    ])
+    const back = await readLocalValues(ws, 'dev')
+    expect(Object.keys(back.variables).sort()).toEqual(['other', 'refreshToken', 'token'])
+    expect(await decryptValue(key, 'token', back.variables.token)).toBe('A')
+    expect(back.variables.refreshToken).toBe('B')
+  })
+
+  it('a rejected persist does not block the next one', async () => {
+    const results = await Promise.allSettled([
+      persist({ set: { $guid: 'x' }, removed: [] }),
+      persist({ set: { baseUrl: 'after' }, removed: [] })
+    ])
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'fulfilled'])
+    expect((await readLocalValues(ws, 'dev')).variables).toEqual({ baseUrl: 'after' })
   })
 
   it('rejects a reserved `$` name and a plain value claiming the `enc:` prefix', async () => {

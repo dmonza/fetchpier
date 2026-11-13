@@ -16,7 +16,7 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { EnvironmentChanges, EnvWriteNotPersistedWarning } from '@shared/types'
 import { isReservedVariableName } from '@shared/lib/dynamic-variables'
 import { encryptValue, isEncryptedValue } from './crypto'
@@ -179,6 +179,39 @@ export async function writeLocalValues(
   await atomicWriteFile(filePath, `${JSON.stringify(out, null, 2)}\n`)
 }
 
+/**
+ * SEC-03 — serializes every read-modify-write of one environment's
+ * `localvalues.json` (in this process). Two sends finishing together each read
+ * the file, and the later atomic rename silently dropped the other's script
+ * write; inside the lock each writer re-reads the latest file. Keyed by the
+ * resolved workspace path and the opaque environment identifier (the folder is
+ * resolved inside, close to the I/O).
+ *
+ * Not reentrant: a locked function never calls another locked one. Lock order
+ * is workspace key (setup/rotate) → local values → keystore; nothing taken
+ * inside this lock reaches back for the workspace-key lock.
+ */
+const localValuesLocks = new Map<string, Promise<void>>()
+
+export async function withLocalValuesLock<T>(
+  workspacePath: string,
+  environmentId: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const key = `${resolve(workspacePath)}\u0000${environmentId}`
+  const run = (localValuesLocks.get(key) ?? Promise.resolve()).then(fn)
+  const tail = run.then(
+    () => undefined,
+    () => undefined
+  )
+  localValuesLocks.set(key, tail)
+  try {
+    return await run
+  } finally {
+    if (localValuesLocks.get(key) === tail) localValuesLocks.delete(key)
+  }
+}
+
 export interface PersistScriptEnvChangesInput {
   workspacePath: string
   environmentId: string
@@ -218,11 +251,23 @@ export interface PersistScriptEnvChangesInput {
 export async function persistScriptEnvChanges(
   input: PersistScriptEnvChangesInput
 ): Promise<EnvWriteNotPersistedWarning[]> {
-  const { workspacePath, environmentId, changes, sharedVariables, currentKeyId, getKey } = input
+  const { workspacePath, environmentId, changes } = input
   if (!changes) return []
   const setEntries = Object.entries(changes.set)
   if (setEntries.length === 0 && changes.removed.length === 0) return []
 
+  // SEC-03: the whole read-modify-write runs under the file's lock.
+  return withLocalValuesLock(workspacePath, environmentId, () =>
+    persistLocked(input, setEntries, changes.removed)
+  )
+}
+
+async function persistLocked(
+  input: PersistScriptEnvChangesInput,
+  setEntries: Array<[string, string]>,
+  removed: readonly string[]
+): Promise<EnvWriteNotPersistedWarning[]> {
+  const { workspacePath, environmentId, sharedVariables, currentKeyId, getKey } = input
   const local = await readLocalValues(workspacePath, environmentId)
   const hasEncrypted = Object.values(local.variables).some(isEncryptedValue)
   const keyMismatch = hasEncrypted && local.keyId !== undefined && local.keyId !== currentKeyId
@@ -269,7 +314,7 @@ export async function persistScriptEnvChanges(
       next[name] = value
     }
   }
-  for (const name of changes.removed) delete next[name]
+  for (const name of removed) delete next[name]
 
   await writeLocalValues(workspacePath, environmentId, {
     version: VALUES_VERSION,

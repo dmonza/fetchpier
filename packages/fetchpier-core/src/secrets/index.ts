@@ -55,6 +55,7 @@ export {
   writeLocalValues,
   mergeEnvironmentLayers,
   persistScriptEnvChanges,
+  withLocalValuesLock,
   isReservedPrefixValue,
   RESERVED_VALUE_PREFIX,
   type LocalValuesFile,

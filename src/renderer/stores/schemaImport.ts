@@ -18,9 +18,10 @@ interface SchemaImportState {
 
   sourceKind: ImportSourceKind
   fileName: string | null
+  /** Text of the file picked in the File tab. Each tab keeps its own content. */
+  fileContent: string
   urlValue: string
   textValue: string
-  rawContent: string
 
   format: SchemaFormat | 'auto'
   detectedFormat: SchemaFormat | null
@@ -58,6 +59,19 @@ interface SchemaImportState {
   setError: (e: string | null) => void
 }
 
+/**
+ * The local content of the active tab — what format detection reads and what
+ * *Import* sends: the picked file's text on File, the pasted text on Paste
+ * text, nothing on URL (the main process fetches it).
+ */
+export function activeSourceContent(
+  state: Pick<SchemaImportState, 'sourceKind' | 'fileContent' | 'textValue'>
+): string {
+  if (state.sourceKind === 'file') return state.fileContent
+  if (state.sourceKind === 'text') return state.textValue
+  return ''
+}
+
 export const useSchemaImportStore = create<SchemaImportState>((set) => ({
   isOpen: false,
   targetFolder: null,
@@ -65,9 +79,9 @@ export const useSchemaImportStore = create<SchemaImportState>((set) => ({
 
   sourceKind: 'file',
   fileName: null,
+  fileContent: '',
   urlValue: '',
   textValue: '',
-  rawContent: '',
 
   format: 'auto',
   detectedFormat: null,
@@ -92,9 +106,9 @@ export const useSchemaImportStore = create<SchemaImportState>((set) => ({
       targetLabel,
       sourceKind: 'file',
       fileName: null,
+      fileContent: '',
       urlValue: '',
       textValue: '',
-      rawContent: '',
       format: 'auto',
       detectedFormat: null,
       collectionName: '',
@@ -111,9 +125,9 @@ export const useSchemaImportStore = create<SchemaImportState>((set) => ({
   close: () => set({ isOpen: false }),
 
   setSourceKind: (sourceKind) => set({ sourceKind }),
-  setFileContent: (fileName, rawContent) => set({ fileName, rawContent }),
+  setFileContent: (fileName, fileContent) => set({ fileName, fileContent }),
   setUrlValue: (urlValue) => set({ urlValue }),
-  setTextValue: (textValue) => set({ textValue, rawContent: textValue }),
+  setTextValue: (textValue) => set({ textValue }),
   setFormat: (format) => set({ format }),
   setDetectedFormat: (detectedFormat) => set({ detectedFormat }),
   setCollectionName: (collectionName) => set({ collectionName }),

@@ -192,7 +192,8 @@ export function toRequestUnit(args: {
           ...(response.decompressedBytes !== undefined
             ? { decompressedBytes: response.decompressedBytes }
             : {}),
-          ...(response.decodingStatus ? { decodingStatus: response.decodingStatus } : {})
+          ...(response.decodingStatus ? { decodingStatus: response.decodingStatus } : {}),
+          ...(response.binaryHint ? { binaryHint: true as const } : {})
         }
       : undefined,
     scripts: {

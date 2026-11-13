@@ -237,6 +237,60 @@ describe('secrecy transition propagation', () => {
   })
 })
 
+// ── Concurrent writers (SEC-03) ───────────────────────────────────────────────
+
+describe('concurrent local-values writers', () => {
+  it('a secrecy propagation and editor/script writes running together keep every write', async () => {
+    await service.setupKey(ws)
+    await writeConfig('dev', { variables: { token: 'shared-plain' } })
+    await local.setLocalValue(ws, 'dev', 'token', 'my-local')
+
+    await Promise.all([
+      local.propagateSecrecyTransition(ws, 'dev', 'token', 'secret'),
+      local.setLocalValue(ws, 'dev', 'other', 'x'),
+      local.persistScriptEnvChanges(ws, 'dev', { set: { fromScript: 'y' }, removed: [] })
+    ])
+
+    const lv = await secrets.readLocalValues(ws, 'dev')
+    expect(Object.keys(lv.variables).sort()).toEqual(['fromScript', 'other', 'token'])
+    expect(secrets.isEncryptedValue(lv.variables.token)).toBe(true)
+  })
+
+  it('a lazy re-wrap on load does not drop a script write landing at the same time', async () => {
+    const k1 = await secrets.generateWorkspaceKey()
+    const m1 = await secrets.buildManifest(k1)
+    await workspace.openWorkspace(ws).secrets.writeManifest(m1)
+    await storeWorkspaceKey(m1.encryption.keyId, k1, 'old')
+    await writeConfig('dev', {
+      secrets: { apiToken: await secrets.encryptValue(k1, 'apiToken', 'S') }
+    })
+    await secrets.writeLocalValues(ws, 'dev', {
+      version: 1,
+      keyId: m1.encryption.keyId,
+      variables: { apiToken: await secrets.encryptValue(k1, 'apiToken', 'L') }
+    })
+    const k2 = await secrets.generateWorkspaceKey()
+    const m2 = await secrets.buildManifest(k2)
+    await workspace.openWorkspace(ws).secrets.writeManifest(m2)
+    await storeWorkspaceKey(m2.encryption.keyId, k2, 'new')
+
+    await Promise.all([
+      local.loadMergedEnvironment(ws, 'dev'),
+      secrets.persistScriptEnvChanges({
+        workspacePath: ws,
+        environmentId: 'dev',
+        changes: { set: { plainVar: 'p' }, removed: [] },
+        sharedVariables: {},
+        currentKeyId: m2.encryption.keyId,
+        getKey: async () => k2
+      })
+    ])
+
+    const lv = await secrets.readLocalValues(ws, 'dev')
+    expect(lv.variables.plainVar).toBe('p')
+  })
+})
+
 // ── Plaintext-of-secret validation (CA-11) & view ─────────────────────────────
 
 describe('getLocalView', () => {

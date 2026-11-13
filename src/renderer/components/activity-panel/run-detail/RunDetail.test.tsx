@@ -148,6 +148,46 @@ describe('RunDetail (REQ-0069)', () => {
     unmount(root, container)
   })
 
+  // HIS-21: the Response Format toggle follows the media type, parameters
+  // stripped — `application/json` or any RFC 6839 `+json` structured syntax.
+  it.each([
+    ['application/json', true],
+    ['application/problem+json', true],
+    ['APPLICATION/VND.API+JSON; charset=utf-8', true],
+    ['application/hal+json ; profile="x"', true],
+    ['text/plain', false],
+    ['application/json-seq', false],
+    ['application/xml; note=+json', false],
+    [null, false]
+  ])('offers the Response Format toggle for Content-Type %s → %s (HIS-21)', async (ct, offered) => {
+    const raw =
+      '# @run-id: r-json\n' +
+      '\n' +
+      'GET https://api.example.com/x HTTP/1.1\n' +
+      '\n' +
+      '### Response\n' +
+      '\n' +
+      'HTTP/1.1 400 Bad Request\n' +
+      (ct === null ? '' : `Content-Type: ${ct}\n`) +
+      '\n' +
+      '{"title":"bad"}\n'
+    const { container, root } = await mount(
+      <RunDetail file={parseActivityLog(raw)} descriptor={requestsRunDetailDescriptor} />
+    )
+    const responseToggle = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('history.expansion.response.title')
+    ) as HTMLButtonElement | undefined
+    expect(responseToggle).toBeDefined()
+    act(() => {
+      responseToggle!.click()
+    })
+    const formatBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.getAttribute('title') === 'history.expansion.response.format'
+    )
+    expect(formatBtn !== undefined).toBe(offered)
+    unmount(root, container)
+  })
+
   it('renders the Metadata Source file row with an Open file affordance', async () => {
     const file = parseActivityLog(RAW_WITH_SCRIPTS)
     const onOpenSourceFile = vi.fn()

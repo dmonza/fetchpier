@@ -10,6 +10,7 @@ import type {
 import { serializeRequest } from '@shared/lib/http-serializer'
 import { sanitizeName } from './sanitize'
 import {
+  assertEnvironmentNameAvailable,
   createEnvironmentFile,
   envConfigPath,
   resolveEnvFolder,
@@ -71,10 +72,32 @@ export async function writeSchemaToDisk(
   const alreadyExists = await exists(collectionPath)
   if (alreadyExists) {
     if (opts.conflictStrategy === 'abort') {
-      throw new Error(`Target folder already exists: ${collectionPath}`)
+      // The code leads the message (it does not survive IPC as a property); the
+      // collection is named by its folder, never by an absolute path.
+      throw new Error(`TARGET_EXISTS: collection folder "${collectionDirName}" already exists`)
     }
     // 'merge' → keep existing folder, skip colliding files. There is no
     // destructive option: an existing collection is never wiped (REQ write-safety).
+  }
+
+  // Environment handling is Postman-only and runs after the requests are
+  // written, so a new environment's name is checked here, before any write:
+  // a taken folder (even one with no config.json) must not leave the import
+  // half done.
+  const postman = opts.postman
+  const envVars = schema.envVariables
+  const handlesEnv =
+    !!postman &&
+    postman.environmentStrategy !== 'none' &&
+    !!envVars &&
+    Object.keys(envVars).length > 0
+  const newEnvName = (
+    postman?.environmentName?.trim() ||
+    opts.collectionName ||
+    'imported'
+  ).toString()
+  if (handlesEnv && postman.environmentStrategy === 'new') {
+    await assertEnvironmentNameAvailable(opts.workspacePath, newEnvName)
   }
 
   await fs.mkdir(collectionPath, { recursive: true })
@@ -110,24 +133,12 @@ export async function writeSchemaToDisk(
   // Environment handling (Postman-only)
   let environmentCreated: string | undefined
   let environmentMerged: string | undefined
-  const postman = opts.postman
-  const envVars = schema.envVariables
-  if (
-    postman &&
-    postman.environmentStrategy !== 'none' &&
-    envVars &&
-    Object.keys(envVars).length > 0
-  ) {
+  if (handlesEnv && postman && envVars) {
     const envDir = resolveInsideWorkspace(opts.workspacePath, envDirPath(opts.workspacePath))
     await fs.mkdir(envDir, { recursive: true })
 
     if (postman.environmentStrategy === 'new') {
-      const desiredName = (
-        postman.environmentName?.trim() ||
-        opts.collectionName ||
-        'imported'
-      ).toString()
-      const env = await createEnvironmentFile(opts.workspacePath, desiredName, { ...envVars })
+      const env = await createEnvironmentFile(opts.workspacePath, newEnvName, { ...envVars })
       // The user-facing handle is the folder, not the opaque identifier.
       environmentCreated = env.folder
     } else if (postman.environmentStrategy === 'merge' && postman.mergeEnvironmentId) {
@@ -140,13 +151,18 @@ export async function writeSchemaToDisk(
           envConfigPath(opts.workspacePath, targetFolder)
         )
         const env = await readEnvFile(envPath)
+        // Existing vars take precedence and keep the order the user set (it is
+        // meaningful and persisted); only missing keys are appended.
+        const variables = { ...env.variables }
+        for (const [key, value] of Object.entries(envVars)) {
+          if (!Object.hasOwn(variables, key)) variables[key] = value
+        }
         const merged: Environment = {
           ...env,
           // Pin the folder explicitly rather than trusting the parsed file — the
           // write must land in the folder we just resolved, nowhere else.
           folder: targetFolder,
-          // Existing vars take precedence; only add new keys.
-          variables: { ...envVars, ...env.variables }
+          variables
         }
         await writeEnvFile(opts.workspacePath, merged)
         environmentMerged = targetFolder

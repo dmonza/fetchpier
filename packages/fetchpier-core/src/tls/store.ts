@@ -5,6 +5,7 @@ import type { CACertEntry, ClientCertEntry, TlsScope, TlsScopeSettings } from '@
 import { CoreError } from '../shared/context'
 import { assertSafeIdentifier } from '../workspace/safe-path'
 import { canonicalCertFilename, workspaceCertsDir } from './paths'
+import { normalizeHostPattern } from './matcher'
 import { readPemCertFile, readPemKeyFile, readPfxFile, TlsImportError } from './import'
 import { atomicWriteFile } from '../workspace/atomic-write'
 
@@ -130,6 +131,34 @@ function normaliseTls(value: TlsScopeSettings | undefined): TlsScopeSettings {
   }
 }
 
+/**
+ * The host pattern as it is stored: normalized to the form the matcher compares
+ * (TLS-09), so what the panel lists is what a request is matched against.
+ */
+function normaliseHostArg(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) throw new TlsImportError('TLS_HOST_REQUIRED', 'Host pattern is required')
+  const host = normalizeHostPattern(raw)
+  if (host === null) {
+    throw new TlsImportError(
+      'TLS_HOST_INVALID',
+      'Host pattern must be a host name, an IP address or *.domain, with no port or path'
+    )
+  }
+  return host
+}
+
+/** The rule of the CLI's `--tls-config` validator: an integer from 1 to 65535, or none. */
+function assertPortArg(port: unknown): void {
+  if (port === null || port === undefined) return
+  if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) {
+    throw new TlsImportError(
+      'TLS_PORT_INVALID',
+      'Port must be a number from 1 to 65535, or empty for any port'
+    )
+  }
+}
+
 /** A missing or empty id would match an id-less entry instead of naming one. */
 function assertEntryId(id: unknown): void {
   if (typeof id !== 'string' || id === '') {
@@ -245,8 +274,8 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
   }
 
   async function addClient(args: AddClientArgs): Promise<ClientCertEntry> {
-    const host = args.host?.trim()
-    if (!host) throw new TlsImportError('Host pattern is required')
+    const host = normaliseHostArg(args.host)
+    assertPortArg(args.port)
     // Reject an invalid app-global passphrase before anything is written to disk.
     assertPassphraseAllowed(args.scope, args.passphrase)
 
@@ -257,7 +286,10 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
     let entry: ClientCertEntry
     if (args.type === 'pem') {
       if (!args.sourcePaths.certPath || !args.sourcePaths.keyPath) {
-        throw new TlsImportError('PEM type requires both certPath and keyPath')
+        throw new TlsImportError(
+          'TLS_FILES_REQUIRED',
+          'PEM type requires both certPath and keyPath'
+        )
       }
       const cert = await readPemCertFile(args.sourcePaths.certPath)
       const key = await readPemKeyFile(args.sourcePaths.keyPath)
@@ -283,7 +315,7 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
       }
     } else {
       if (!args.sourcePaths.pfxPath) {
-        throw new TlsImportError('PFX type requires pfxPath')
+        throw new TlsImportError('TLS_FILES_REQUIRED', 'PFX type requires pfxPath')
       }
       const pfx = await readPfxFile(args.sourcePaths.pfxPath)
       const pfxFile = await writeCertFileNoOverwrite(
@@ -346,12 +378,9 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
     if (idx < 0) throw new Error(`Client certificate not found: ${args.id}`)
     const existing = current.clientCertificates[idx]
 
-    // Host is the matching metadata — validate it the same way addClient does.
-    let nextHost: string | undefined
-    if (args.patch.host !== undefined) {
-      nextHost = args.patch.host.trim()
-      if (!nextHost) throw new TlsImportError('Host pattern is required')
-    }
+    // Host and port are the matching metadata — validate them as addClient does.
+    const nextHost = args.patch.host !== undefined ? normaliseHostArg(args.patch.host) : undefined
+    if (args.patch.port !== undefined) assertPortArg(args.patch.port)
 
     const updated: ClientCertEntry = {
       ...existing,
@@ -414,6 +443,11 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
       }
     }
 
+    // The metadata goes first: when it cannot be saved the call rejects with the
+    // entry and its files intact. Unlinking afterwards is best-effort (a file
+    // left behind is unreferenced, never an entry pointing at nothing).
+    await writeScopeSettings(args.scope, next)
+
     // Identical imports share one file (writeCertFileNoOverwrite): a file another
     // remaining entry of the scope still uses stays on disk.
     if (dir) {
@@ -422,7 +456,6 @@ export function createTlsStore(deps: TlsStoreDeps): TlsStore {
         if (file && !stillUsed.has(file)) await safeUnlink(dir, file)
       }
     }
-    await writeScopeSettings(args.scope, next)
 
     return { removed: true }
   }

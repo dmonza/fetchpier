@@ -1040,12 +1040,19 @@ export interface ScriptLog {
   /** IPC-safe values — functions/circulars replaced with ScriptArgSentinel objects. */
   args: unknown[]
   timestamp: string
+  /**
+   * Position in the script's execution, one counter shared with `fp.test`
+   * results (the sandbox fills it). Absent on results rebuilt from history.
+   */
+  seq?: number
 }
 
 export interface ScriptTestResult {
   name: string
   passed: boolean
   error?: string
+  /** Position in the script's execution, shared with `ScriptLog.seq`. */
+  seq?: number
 }
 
 export interface EnvironmentChanges {
@@ -1219,7 +1226,20 @@ export interface HttpResponse {
    * response rebuilt from history has only `headers`.
    */
   headerList?: HeaderEntry[]
+  /**
+   * Every `Set-Cookie` value as received, one entry per header (commas inside an
+   * `Expires` date kept). Absent when none was received. Masked like `headers`;
+   * the run file writes one `Set-Cookie:` line per entry, and the reader rebuilds
+   * it from those lines.
+   */
+  setCookie?: string[]
   body: string
+  /**
+   * `true` when the client's UTF-8 probe found the first 1 KB of the body bytes
+   * (after decoding) not to be UTF-8 — `body` is then lossy text. Absent
+   * otherwise, and on responses rebuilt from history.
+   */
+  binaryHint?: boolean
   timingMs: number
   /** Byte length of `body` as read (i.e. after decoding). Unchanged meaning. */
   sizeBytes: number
