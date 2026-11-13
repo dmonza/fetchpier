@@ -60,3 +60,7 @@ docs/
 # back.
 
 profiles/
+
+# Harness y cola de issues (proceso interno; van al repo privado de desarrollo)
+scripts/harness/
+scripts/issues/
