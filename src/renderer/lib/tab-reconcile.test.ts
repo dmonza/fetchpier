@@ -18,6 +18,17 @@ describe('reconcileContentChange', () => {
     )
   })
 
+  it('reloads a tab whose file had no readable request, though it has no baseline (ISS-0053)', () => {
+    expect(
+      reconcileContentChange({
+        cleanHash: undefined,
+        newHash: 'abc',
+        isDirty: false,
+        unreadable: true
+      })
+    ).toBe('reload')
+  })
+
   it('flags a conflict on a modified tab when the on-disk content diverges', () => {
     expect(reconcileContentChange({ cleanHash: 'h1', newHash: 'h2', isDirty: true })).toBe(
       'conflict'

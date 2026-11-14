@@ -549,6 +549,36 @@ describe('round-trip fidelity — a URL fragment (FMT-01)', () => {
   })
 })
 
+describe('round-trip fidelity — an empty URL (ISS-0053)', () => {
+  it('reads back the headers, the script and the id of a request saved with no URL', () => {
+    const id = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b'
+    const state = editorState({
+      url: '',
+      headers: [kv('X-Trace', '1')],
+      preRequestScript: 'fp.environment.set("a","b")'
+    })
+    const text = serializeRequest(state, id)
+    expect(text).toContain('\nGET \n')
+
+    const file = parseHttpFile(text)
+    expect(file.requestId).toBe(id)
+    expect(file.requests).toHaveLength(1)
+    const r = file.requests[0]
+    expect(r.method).toBe('GET')
+    expect(r.url).toBe('')
+    expect(getAllHeaders(r.headerList ?? [], 'X-Trace')).toEqual(['1'])
+    expect(r.preRequestScript).toBe('fp.environment.set("a","b")')
+
+    // A save of what was read writes the same bytes.
+    const reread = editorState({
+      url: r.url,
+      headers: [kv('X-Trace', '1')],
+      preRequestScript: r.preRequestScript ?? ''
+    })
+    expect(serializeRequest(reread, file.requestId)).toBe(text)
+  })
+})
+
 describe('round-trip fidelity — U+2028 / U+2029 (FMT-18)', () => {
   it.each([
     ['U+2028', ' '],

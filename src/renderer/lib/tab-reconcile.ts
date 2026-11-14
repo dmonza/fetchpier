@@ -23,12 +23,18 @@ export type ContentReconcileAction =
  * baseline equality check (`newHash === cleanHash`) suppresses the app's own
  * writes: a save pins `cleanHash` to exactly the bytes it wrote, so re-reading
  * that same file re-serializes to the identical hash.
+ *
+ * A tab whose file had no readable request (`unreadable`, `Tab.unreadableOnLoad`)
+ * has no baseline but was loaded: it never held the file's content and cannot
+ * save, so it adopts the file once the file holds a request.
  */
 export function reconcileContentChange(args: {
   cleanHash: string | undefined
   newHash: string
   isDirty: boolean
+  unreadable?: boolean
 }): ContentReconcileAction {
+  if (args.unreadable) return 'reload'
   if (args.cleanHash === undefined) return 'skip'
   if (args.newHash === args.cleanHash) return 'noop'
   return args.isDirty ? 'conflict' : 'reload'

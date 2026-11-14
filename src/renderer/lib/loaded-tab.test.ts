@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { HttpRequest, ParsedHttpFile } from '../../shared/types'
-import { loadedTabFields } from './loaded-tab'
+import { isUnreadableFile, loadedTabFields } from './loaded-tab'
 
 const request = (overrides: Partial<HttpRequest> = {}): HttpRequest => ({
   method: 'GET',
@@ -54,5 +54,23 @@ describe('loadedTabFields', () => {
 
   it('yields nothing for a file with no request', () => {
     expect(loadedTabFields(file({ requests: [] }), 'tab-id')).toBeNull()
+  })
+
+  it('clears the unreadable mark on every load (ISS-0053)', () => {
+    expect(loadedTabFields(file(), 'tab-id')?.unreadableOnLoad).toBe(false)
+  })
+})
+
+describe('isUnreadableFile (ISS-0053)', () => {
+  it('is true for a file whose content holds no request', () => {
+    expect(isUnreadableFile(file({ requests: [] }))).toBe(true)
+  })
+
+  it('is false for a blank file, which holds nothing a save could destroy', () => {
+    expect(isUnreadableFile(file({ requests: [], blank: true }))).toBe(false)
+  })
+
+  it('is false for a file with a request', () => {
+    expect(isUnreadableFile(file())).toBe(false)
   })
 })

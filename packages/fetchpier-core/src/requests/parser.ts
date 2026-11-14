@@ -335,18 +335,41 @@ function stripQueryParamsByName(rawUrl: string, name: string): string | null {
 }
 
 /**
+ * The methods a request line may carry with no URL: those of RFC 9110 plus PATCH
+ * (RFC 5789). The editor saves a request whose URL is still empty as `GET `, so
+ * these read back as a request with an empty URL. Any other bare word is not a
+ * request line. This list is deliberately not `METHOD_TOKEN` (any word): the
+ * `###` separator still requires a URL-shaped token, so it keeps its bias to not
+ * split.
+ */
+const KNOWN_METHODS: ReadonlySet<string> = new Set([
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'DELETE',
+  'CONNECT',
+  'OPTIONS',
+  'TRACE',
+  'PATCH'
+])
+
+/**
  * Parse the request line `METHOD URL [HTTP-VERSION]`. The trailing token is
  * treated as a version only when it has the shape of an HTTP version; otherwise
  * it is part of the URL, so a URL containing a literal space is preserved
- * verbatim (`.http` round-trip fidelity, CA-07).
+ * verbatim (`.http` round-trip fidelity, CA-07). A known method alone is a
+ * request with an empty URL (`KNOWN_METHODS`).
  */
 function parseRequestLine(line: string): { method: string | null; url: string } {
   const trimmed = line.trim()
   const firstSpace = trimmed.search(/\s/)
-  if (firstSpace === -1) return { method: null, url: '' }
+  if (firstSpace === -1) {
+    const method = trimmed.toUpperCase()
+    return { method: KNOWN_METHODS.has(method) ? method : null, url: '' }
+  }
   const method = trimmed.slice(0, firstSpace).toUpperCase()
   const rest = trimmed.slice(firstSpace + 1).trim()
-  if (rest === '') return { method: null, url: '' }
   // Strip a trailing HTTP-version token only when it is one; everything else
   // (including internal spaces) is the URL.
   const m = rest.match(/^(.*\S)\s+(HTTP\/\d(?:\.\d)?)$/i)
@@ -777,5 +800,8 @@ function parseHttpFileInner(content: string): ParsedHttpFile {
 
   const variablesUsed = extractVariables(normalized)
 
+  // A whitespace-only file holds nothing a save could destroy; the desktop lets
+  // such a tab save, and guards any other file that yields no request.
+  if (normalized.trim() === '') return { requests, variablesUsed, requestId, tail, blank: true }
   return { requests, variablesUsed, requestId, tail }
 }

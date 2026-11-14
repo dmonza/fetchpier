@@ -60,7 +60,8 @@ export function useFileSyncReconciliation(): void {
             const action = reconcileContentChange({
               cleanHash: tab.cleanHash,
               newHash,
-              isDirty: computeTabDirty(tab)
+              isDirty: computeTabDirty(tab),
+              unreadable: tab.unreadableOnLoad
             })
             if (action === 'reload') {
               updateTab(tab.id, { ...loaded, conflict: false })

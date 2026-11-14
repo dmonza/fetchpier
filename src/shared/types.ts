@@ -775,6 +775,14 @@ export interface Tab {
    * Transient UI flag — never persisted to the session.
    */
   conflict?: boolean
+  /**
+   * The backing file loaded with no request the editor could read, and it is not
+   * blank (`ParsedHttpFile.blank`). The tab never held the file's content, so a
+   * save is refused rather than overwrite it, and a notice says so. Cleared by any
+   * load that yields a request (an external change reloads such a tab). Transient
+   * UI flag — never persisted to the session.
+   */
+  unreadableOnLoad?: boolean
   /** Results of pre/post scripts executed alongside the last send */
   scriptResults?: ScriptResultsBundle
   /**
@@ -1202,6 +1210,12 @@ export interface ParsedHttpFile {
    * process console so an adapter can surface them. Absent when there are none.
    */
   warnings?: string[]
+  /**
+   * The file holds only whitespace (or nothing). Distinguishes a file with no
+   * content, which the desktop may save over, from one whose content holds no
+   * readable request, which it must not overwrite. Absent otherwise.
+   */
+  blank?: true
 }
 
 /**

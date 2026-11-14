@@ -28,7 +28,7 @@ import { hashString } from '@shared/lib/hash'
 import { authEcho, isAuthQueryParam } from '@shared/lib/auth-echo'
 import { implicitDefaultHeaderEntries } from './implicit-headers'
 import { serializeTab } from '../../lib/tab-dirty'
-import { loadedTabFields } from '../../lib/loaded-tab'
+import { isUnreadableFile, loadedTabFields } from '../../lib/loaded-tab'
 import { requestAfterSave } from '../../lib/request-after-save'
 import { LoadNotices } from './LoadNotices'
 import { buildHistoryEntry, viewerResponse } from '../../lib/send-result'
@@ -206,7 +206,13 @@ function RequestEditorInner(): React.JSX.Element {
         // line / relocated comment) and load warnings (a directive a save drops
         // or rewrites).
         const loaded = loadedTabFields(parsed, activeTab.requestId)
-        if (!loaded) return
+        if (!loaded) {
+          // ISS-0053: the file has content but no request the editor can read.
+          // The tab holds none of it, so mark it: a save is refused and a notice
+          // says why. A blank file stays as before (nothing to overwrite).
+          if (isUnreadableFile(parsed)) updateTab(activeTab.id, { unreadableOnLoad: true })
+          return
+        }
         const tabUpdates: Parameters<typeof updateTab>[1] = { ...loaded }
 
         // Hydrate persisted UI state (active tab, response sub-tab, script phase)
@@ -443,6 +449,9 @@ function RequestEditorInner(): React.JSX.Element {
     // unresolved, a save must not silently overwrite the external edit — the
     // conflict banner (Reload / Keep) is already shown; do nothing here.
     if (activeTab.conflict) return
+    // ISS-0053: the file loaded with no readable request, so the tab never held
+    // its content; writing would replace it. The notice explains; do nothing.
+    if (activeTab.unreadableOnLoad) return
     try {
       const content = serializeTab({
         request,
@@ -479,7 +488,15 @@ function RequestEditorInner(): React.JSX.Element {
     try {
       const parsed = await window.api.request.parseFile(activeTab.filePath)
       const loaded = loadedTabFields(parsed, activeTab.requestId)
-      if (!loaded) return
+      if (!loaded) {
+        // ISS-0053: the user chose the on-disk version, which holds no readable
+        // request. Resolve the conflict and refuse saves instead of keeping the
+        // edits armed to overwrite it.
+        if (isUnreadableFile(parsed)) {
+          updateTab(activeTab.id, { conflict: false, unreadableOnLoad: true })
+        }
+        return
+      }
       updateTab(activeTab.id, { ...loaded, conflict: false })
       markClean(activeTab.id, hashString(serializeTab(loaded)))
     } catch (err) {
@@ -644,7 +661,7 @@ function RequestEditorInner(): React.JSX.Element {
             size="sm"
             variant="ghost"
             className="ml-auto h-5 shrink-0 px-1.5 text-[11px]"
-            disabled={!activeTab.isDirty}
+            disabled={!activeTab.isDirty || activeTab.unreadableOnLoad === true}
             onClick={() => saveNow().catch(console.error)}
           >
             {t('request.save')}
@@ -824,7 +841,13 @@ function RequestEditorInner(): React.JSX.Element {
       {/* What the file said that the editor could not take as written: load
           warnings (a save drops or rewrites them) and an invalid binary
           reference (kept, but the send is refused until a file is attached). */}
-      {activeTab && <LoadNotices request={request} loadWarnings={activeTab.loadWarnings} />}
+      {activeTab && (
+        <LoadNotices
+          request={request}
+          loadWarnings={activeTab.loadWarnings}
+          unreadable={activeTab.unreadableOnLoad}
+        />
+      )}
 
       {/* Stray, non-comment/non-header content was dropped on load; a save
           normalizes it away (CA-10 / D19). */}
