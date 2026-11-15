@@ -40,6 +40,9 @@ export function UnsavedChangesModal({
   const writeAllAndProceed = async (): Promise<void> => {
     let untitledCounter = 1
     for (const tab of tabs) {
+      // ISS-0053: the tab's file holds no request the editor could read, so the
+      // tab never held its content; writing would replace it. Never save it here.
+      if (tab.unreadableOnLoad) continue
       const content = serializeTab(tab)
       if (tab.filePath) {
         await window.api.filesystem.writeFile(tab.filePath, content)

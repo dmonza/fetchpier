@@ -109,6 +109,22 @@ const tab = (name: string): HTMLElement => {
   if (!el) throw new Error(`no tab ${name}`)
   return el
 }
+/**
+ * A control inside the Appearance panel. The panel is lazy-loaded, and under a
+ * loaded parallel run its import can outlast `settle()`, so wait for it (bounded).
+ */
+async function findTab(name: string): Promise<HTMLElement> {
+  for (let i = 0; i < 100; i++) {
+    const el = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+      (b) => b.textContent === name
+    )
+    if (el) return el
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+  }
+  return tab(name)
+}
 async function selectTab(name: string): Promise<void> {
   // The tabs select on pointer down, as the platform's tab controls do.
   await act(async () => {
@@ -167,13 +183,15 @@ describe('Settings → Appearance', () => {
   it('ends a preview when another tab is chosen or Settings closes (CA-22)', async () => {
     await open()
     await selectTab('settings.tabs.appearance')
-    await act(async () => tab('settings.appearance.mode.dark').click())
+    const dark = await findTab('settings.appearance.mode.dark')
+    await act(async () => dark.click())
     expect(useThemeStore.getState().previewTheme).toBe('dark')
     await selectTab('settings.tabs.general')
     expect(useThemeStore.getState().previewTheme).toBeNull()
 
     await selectTab('settings.tabs.appearance')
-    await act(async () => tab('settings.appearance.mode.dark').click())
+    const darkAgain = await findTab('settings.appearance.mode.dark')
+    await act(async () => darkAgain.click())
     expect(useThemeStore.getState().previewTheme).toBe('dark')
     await escape()
     expect(dialog()).toBeNull()

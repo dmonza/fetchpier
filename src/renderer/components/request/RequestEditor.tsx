@@ -29,6 +29,7 @@ import { authEcho, isAuthQueryParam } from '@shared/lib/auth-echo'
 import { implicitDefaultHeaderEntries } from './implicit-headers'
 import { serializeTab } from '../../lib/tab-dirty'
 import { isUnreadableFile, loadedTabFields } from '../../lib/loaded-tab'
+import { applyReloadFromDisk } from '../../lib/reload-from-disk'
 import { requestAfterSave } from '../../lib/request-after-save'
 import { LoadNotices } from './LoadNotices'
 import { buildHistoryEntry, viewerResponse } from '../../lib/send-result'
@@ -487,22 +488,11 @@ function RequestEditorInner(): React.JSX.Element {
     if (!activeTab?.filePath) return
     try {
       const parsed = await window.api.request.parseFile(activeTab.filePath)
-      const loaded = loadedTabFields(parsed, activeTab.requestId)
-      if (!loaded) {
-        // ISS-0053: the user chose the on-disk version, which holds no readable
-        // request. Resolve the conflict and refuse saves instead of keeping the
-        // edits armed to overwrite it.
-        if (isUnreadableFile(parsed)) {
-          updateTab(activeTab.id, { conflict: false, unreadableOnLoad: true })
-        }
-        return
-      }
-      updateTab(activeTab.id, { ...loaded, conflict: false })
-      markClean(activeTab.id, hashString(serializeTab(loaded)))
+      applyReloadFromDisk(activeTab.id, parsed)
     } catch (err) {
       console.error('[RequestEditor] Failed to reload from disk:', err)
     }
-  }, [activeTab, updateTab, markClean])
+  }, [activeTab])
 
   // Resolve a conflict by keeping the unsaved edits; the next save overwrites disk.
   const keepEditing = useCallback(() => {
