@@ -222,6 +222,10 @@
       "title": "No se pudieron leer partes de este archivo",
       "detail": "Al guardar el request se van a eliminar o reescribir. Corregí el archivo primero si querés conservarlas tal como están. Detalle:"
     },
+    "unreadableFile": {
+      "title": "Este archivo no tiene un request que se pueda leer",
+      "detail": "El guardado está desactivado para no sobrescribir el archivo. Corregilo en otro editor; esta pestaña lo carga cuando tenga un request."
+    },
     "invalidBinaryRef": {
       "title": "La referencia al archivo adjunto no es válida",
       "detail": "El request no se va a enviar hasta que vuelvas a adjuntar el archivo. Al guardar se conserva la referencia tal como está: {{ref}}"

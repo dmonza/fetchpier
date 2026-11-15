@@ -29,6 +29,11 @@ describe('findRequestSeparators', () => {
     expect(findRequestSeparators(lines)).toEqual([2])
   })
 
+  it('does not split at a ### followed only by a bare method (empty URL; ISS-0053)', () => {
+    const lines = ['GET https://a/1', '', '###', 'GET', '', '###', 'POST ', '']
+    expect(findRequestSeparators(lines)).toEqual([])
+  })
+
   it('does not split on a ### line inside a body (no request line follows)', () => {
     const lines = [
       'POST https://a/1',

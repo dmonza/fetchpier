@@ -275,6 +275,77 @@ describe('parseHttpFile', () => {
     const content = ['# just a comment', '// another comment'].join('\n')
     const result = parseHttpFile(content)
     expect(result.requests).toHaveLength(0)
+    expect(result.blank).toBeUndefined()
+  })
+
+  it('marks a file that holds only whitespace as blank (ISS-0053)', () => {
+    for (const content of ['', '   ', '\n\n', '\r\n\t\r\n']) {
+      const result = parseHttpFile(content)
+      expect(result.requests).toHaveLength(0)
+      expect(result.blank).toBe(true)
+    }
+    expect(parseHttpFile('GET https://api.example.com/users\n').blank).toBeUndefined()
+  })
+
+  // ── A known method with an empty URL (ISS-0053) ───────────────────────────
+
+  it.each(['GET', 'GET ', 'GET\t', '  GET  '])(
+    'reads the request line %j as a GET with an empty URL',
+    (line) => {
+      const result = parseHttpFile(`${line}\n`)
+      expect(result.requests).toHaveLength(1)
+      expect(req(result).method).toBe('GET')
+      expect(req(result).url).toBe('')
+    }
+  )
+
+  it.each(['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'CONNECT', 'OPTIONS', 'TRACE', 'PATCH'])(
+    'accepts the known method %s with an empty URL',
+    (method) => {
+      expect(req(parseHttpFile(`${method} \n`)).method).toBe(method)
+    }
+  )
+
+  it('uppercases a lowercase known method with an empty URL', () => {
+    expect(req(parseHttpFile('patch\n')).method).toBe('PATCH')
+  })
+
+  it('keeps the metadata, headers and body of an empty-URL request', () => {
+    const content = [
+      '# @id 3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b',
+      '# @pre-request-script',
+      '# fp.environment.set("a", "b")',
+      '# @end-script',
+      'POST ',
+      'X-Trace: 1',
+      '',
+      '{ "a": 1 }',
+      ''
+    ].join('\n')
+    const result = parseHttpFile(content)
+    expect(result.requestId).toBe('3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b')
+    expect(req(result).method).toBe('POST')
+    expect(req(result).url).toBe('')
+    expect(req(result).headers['X-Trace']).toBe('1')
+    expect(req(result).preRequestScript).toBe('fp.environment.set("a", "b")')
+    expect(req(result).body).toBe('{ "a": 1 }')
+  })
+
+  it.each(['FOO', 'FOO ', 'VERSION-CONTROL', 'Hello'])(
+    'does not read the bare custom word %j as a request line',
+    (line) => {
+      const result = parseHttpFile(`# a note\n${line}\n`)
+      expect(result.requests).toHaveLength(0)
+      expect(result.blank).toBeUndefined()
+    }
+  )
+
+  it('keeps a ### followed only by a bare method in the body of the first request', () => {
+    const content = ['POST https://api.example.com/a', '', 'body line', '###', 'GET', ''].join('\n')
+    const result = parseHttpFile(content)
+    expect(result.requests).toHaveLength(1)
+    expect(req(result).body).toBe('body line\n###\nGET')
+    expect(result.tail).toBeUndefined()
   })
 
   it('includes rawText in each parsed request', () => {

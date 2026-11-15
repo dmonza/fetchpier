@@ -15,7 +15,8 @@ import { launchApp, closeApp, type ElectronAppContext } from './helpers/electron
 //
 // Catalog: FR-02 (folder move follows), FR-03 (folder delete closes), FR-04
 // (external edit reload, clean), FR-05 (external edit conflict, modified), FR-06
-// (external removal flag + deliberate re-persist). FR-01 (rename follows) lives in
+// (external removal flag + deliberate re-persist), FR-08 (a file with no readable
+// request is never saved over; an external fix loads it). FR-01 (rename follows) lives in
 // computed-dirty-guards.spec.ts next to the guard regressions.
 
 const REQUEST = 'get-httpbin'
@@ -177,5 +178,39 @@ test.describe('REQ open-tab-file-reconciliation — tabs follow their file', () 
     await expect
       .poll(() => existsSync(reqPath(ctx!, `${REQUEST}.http`)), { timeout: 8_000 })
       .toBe(true)
+  })
+
+  test('FR-08: a file with no readable request is never saved over; an external fix loads it', async () => {
+    ctx = await launchApp({ fixture: 'default', autoOpen: true })
+    const page = ctx.window
+
+    // A file whose content the editor cannot read as a request (ISS-0053).
+    const name = 'unreadable-draft'
+    const file = reqPath(ctx, `${name}.http`)
+    const original = '# a note kept by another tool\nFOO\nX-Trace: 1\n'
+    await fs.writeFile(file, original, 'utf-8')
+
+    await openPermanent(page, name)
+    const notice = page.getByText('This file has no request that can be read', { exact: true })
+    await expect(notice).toBeVisible({ timeout: 10_000 })
+
+    // An edit and an explicit save leave the file as it was.
+    const url = page.getByPlaceholder('Enter URL...')
+    await url.fill('https://example.com/edited')
+    // Leave the field: while focused it shows the typed draft, not the request.
+    await url.blur()
+    await saveActiveTab(page)
+    // A refused save has no completion signal; give a write time to land.
+    await page.waitForTimeout(500)
+    expect(await fs.readFile(file, 'utf-8')).toBe(original)
+
+    // Another tool fixes the file: the tab loads it and the notice goes.
+    await fs.writeFile(
+      file,
+      '# @id 6b1f0d2e-3c4a-4b5d-8e6f-7a8b9c0d1e2f\nGET {{baseUrl}}/anything\nX-Trace: 1\n',
+      'utf-8'
+    )
+    await expect(url).toHaveValue(/\/anything/, { timeout: 10_000 })
+    await expect(notice).toHaveCount(0)
   })
 })

@@ -89,4 +89,17 @@ describe('LoadNotices', () => {
   it('renders nothing for an empty warnings list', () => {
     expect(render({ request: DEFAULT_REQUEST_STATE, loadWarnings: [] }).childElementCount).toBe(0)
   })
+
+  it('says a file with no readable request will not be saved over (ISS-0053)', () => {
+    const el = render({ request: DEFAULT_REQUEST_STATE, unreadable: true })
+    const notice = el.querySelector('[data-notice="unreadable-file"]')!
+    expect(notice.getAttribute('role')).toBe('status')
+    expect(notice.textContent).toContain('request.unreadableFile.title')
+    expect(notice.textContent).toContain('request.unreadableFile.detail')
+  })
+
+  it('shows no unreadable-file notice for a file that loaded', () => {
+    const el = render({ request: DEFAULT_REQUEST_STATE, unreadable: false })
+    expect(el.querySelector('[data-notice="unreadable-file"]')).toBeNull()
+  })
 })

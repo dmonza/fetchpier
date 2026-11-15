@@ -210,7 +210,12 @@ export default tseslint.config(
       // Local, untracked agent/skill scaffolding. Not project source; some skill
       // assets ship their own nested `eslint.config.js` that imports plugins not
       // installed here, which would otherwise abort `eslint .` (ERR_MODULE_NOT_FOUND).
-      '.claude/**'
+      '.claude/**',
+      // Local, untracked harness, issue and docs tooling (git-ignored). Not
+      // product source; it runs outside the app's build and test pipeline.
+      'scripts/harness/**',
+      'scripts/issues/**',
+      'scripts/docs/**'
     ]
   }
 )

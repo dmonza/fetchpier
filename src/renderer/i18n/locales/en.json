@@ -222,6 +222,10 @@
       "title": "Parts of this file could not be read",
       "detail": "Saving the request will remove or rewrite them. Fix the file first to keep them as written. Details:"
     },
+    "unreadableFile": {
+      "title": "This file has no request that can be read",
+      "detail": "Saving is turned off so the file is not overwritten. Fix it in another editor; this tab loads it once it holds a request."
+    },
     "invalidBinaryRef": {
       "title": "The attached file reference is not valid",
       "detail": "The request will not be sent until you attach the file again. Saving keeps the reference as written: {{ref}}"

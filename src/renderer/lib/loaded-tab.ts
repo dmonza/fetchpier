@@ -3,7 +3,7 @@ import { mapHttpRequestToEditorState } from '../components/request/request-loade
 
 export type LoadedTabFields = Pick<
   Tab,
-  'request' | 'requestId' | 'tail' | 'normalizedOnLoad' | 'loadWarnings'
+  'request' | 'requestId' | 'tail' | 'normalizedOnLoad' | 'loadWarnings' | 'unreadableOnLoad'
 >
 
 /**
@@ -11,7 +11,8 @@ export type LoadedTabFields = Pick<
  * that (re)loads a file into an open tab: first open, reload from disk, and an
  * external change. The editor edits the first request, so only that request's
  * load warnings and normalization mark apply; the tail is re-emitted verbatim.
- * `null` when the file holds no request.
+ * A load that yields a request clears the unreadable mark. `null` when the file
+ * holds no request.
  */
 export function loadedTabFields(
   parsed: ParsedHttpFile,
@@ -24,6 +25,15 @@ export function loadedTabFields(
     requestId: parsed.requestId ?? currentRequestId,
     tail: parsed.tail,
     normalizedOnLoad: first.normalizedOnLoad,
-    loadWarnings: first.loadWarnings
+    loadWarnings: first.loadWarnings,
+    unreadableOnLoad: false
   }
+}
+
+/**
+ * The file has content but no request the editor can read (`Tab.unreadableOnLoad`).
+ * A blank file is not: it holds nothing a save could destroy.
+ */
+export function isUnreadableFile(parsed: ParsedHttpFile): boolean {
+  return parsed.requests.length === 0 && parsed.blank !== true
 }
