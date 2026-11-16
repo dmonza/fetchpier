@@ -449,20 +449,60 @@ export function serializeRequest(state: RequestEditorState, requestId?: string):
  * If all enabled params are empty placeholders (key='' and value=''), appends just '?'.
  * A fragment the base carries (FMT-01) is shown after the query, where it was typed.
  * The one exception to "not encoded": a literal `#` in a key or value is shown as
- * `%23` (outside `{{tokens}}`), because the URL bar re-splits its text on every
- * edit and a bare `#` would be cut off as the fragment.
+ * `%23` (outside `{{tokens}}`), so a `#` never reads as the start of the fragment.
+ * The text the bar holds while focused is {@link computeEditableUrl}, not this.
  */
 export function computeFullUrl(baseUrl: string, params: KeyValuePair[]): string {
+  const shown = (s: string): string => mapTokenLiterals(s, (lit) => lit.replace(/#/g, '%23'))
+  return buildUrlBarText(baseUrl, params, () => ({ key: shown, value: shown }))
+}
+
+/**
+ * The text the URL bar holds while it is being edited (ISS-0052). The bar runs
+ * every keystroke back through {@link splitUrlAndParams}, so this text must give
+ * back the same params: `splitUrlAndParams(computeEditableUrl(b, p)).params`
+ * equals the enabled keyed params of `p` (key, value, value-less flag). The
+ * decoded text of {@link computeFullUrl} is kept except for the characters the
+ * split reads as syntax, which are percent-escaped outside `{{tokens}}`: `%`,
+ * `&` and `#` in keys and values, and `=` in keys. A `malformed` pair already
+ * holds its author bytes, which re-split as the same malformed pair, so it is
+ * emitted raw (escaping it would repair it silently).
+ */
+export function computeEditableUrl(baseUrl: string, params: KeyValuePair[]): string {
+  const escape =
+    (syntax: RegExp) =>
+    (s: string): string =>
+      mapTokenLiterals(s, (lit) => lit.replace(syntax, encodeURIComponent))
+  const escaped = { key: escape(/[%&#=]/g), value: escape(/[%&#]/g) }
+  const raw = { key: (s: string): string => s, value: (s: string): string => s }
+  return buildUrlBarText(baseUrl, params, (p) => (p.malformed ? raw : escaped))
+}
+
+type ComponentText = (s: string) => string
+
+/**
+ * Shared shape of the URL-bar text: the enabled params with a key, after the
+ * base and before its fragment; a bare `?` when every enabled param is an empty
+ * placeholder; the base alone otherwise. Only how each key and value is written
+ * differs between the display and the editing text.
+ */
+function buildUrlBarText(
+  baseUrl: string,
+  params: KeyValuePair[],
+  textFor: (p: KeyValuePair) => { key: ComponentText; value: ComponentText }
+): string {
   const enabled = params.filter((p) => p.enabled)
   const withKey = enabled.filter((p) => p.key.trim() !== '')
   const { url, fragment } = splitUrlFragment(baseUrl)
   if (withKey.length > 0) {
-    const shown = (s: string): string => mapTokenLiterals(s, (lit) => lit.replace(/#/g, '%23'))
     // REQ-0124: a value-less parameter renders as its bare key, so the field
     // gives back exactly the text that was typed into it instead of silently
     // re-adding a separator the user removed.
     const qs = withKey
-      .map((p) => (p.valueless ? shown(p.key) : `${shown(p.key)}=${shown(p.value)}`))
+      .map((p) => {
+        const text = textFor(p)
+        return p.valueless ? text.key(p.key) : `${text.key(p.key)}=${text.value(p.value)}`
+      })
       .join('&')
     return `${url}?${qs}${fragment}`
   }

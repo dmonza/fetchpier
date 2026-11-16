@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { computeFullUrl, splitUrlAndParams, serializeRequest } from '@shared/lib/http-serializer'
+import {
+  computeEditableUrl,
+  computeFullUrl,
+  splitUrlAndParams,
+  serializeRequest
+} from '@shared/lib/http-serializer'
 import type { KeyValuePair, RequestEditorState } from '../../shared/types'
 import { DEFAULT_REQUEST_STATE } from '../../shared/types'
 
@@ -109,6 +114,107 @@ describe('computeFullUrl', () => {
   it('does not percent-encode values (for human-readable display)', () => {
     const params = [kv('1', 'q', 'hello world')]
     expect(computeFullUrl('https://api.com', params)).toBe('https://api.com?q=hello world')
+  })
+})
+
+// ── computeEditableUrl (ISS-0052) ───────────────────────────────────────────
+//
+// The URL bar re-splits its text on every keystroke, so the text it holds while
+// focused must give back the same params under splitUrlAndParams. Only the
+// characters the split reads as syntax are escaped: `%`, `&` and `#`, plus `=`
+// in a key. {{tokens}} are left as typed; a malformed pair keeps its raw bytes.
+
+/** What the split gives back, minus the positional ids it regenerates. */
+function shape(params: KeyValuePair[]): Array<[string, string, boolean, boolean]> {
+  return params.map((p) => [p.key, p.value, p.valueless === true, p.malformed === true])
+}
+
+describe('computeEditableUrl', () => {
+  it('escapes %, & and # in keys and values, and = in keys only', () => {
+    const params = [
+      kv('1', 'discount', '100%'),
+      kv('2', 'x', '%41'),
+      kv('3', 'redirect', 'https://app.test/cb?a=1&b=2'),
+      kv('4', 'a=b', 'c=d'),
+      kv('5', 'k&#', 'v#&'),
+      flag('6', 'f=g')
+    ]
+    expect(computeEditableUrl('https://api.test/p', params)).toBe(
+      'https://api.test/p?discount=100%25&x=%2541&redirect=https://app.test/cb?a=1%26b=2' +
+        '&a%3Db=c=d&k%26%23=v%23%26&f%3Dg'
+    )
+  })
+
+  it('leaves {{tokens}}, spaces, + and other characters as typed', () => {
+    const params = [kv('1', '{{a%b}}', '{{x#y}}'), kv('2', 'q', 'hello world+1 é/?:')]
+    expect(computeEditableUrl('https://api.test/p', params)).toBe(
+      'https://api.test/p?{{a%b}}={{x#y}}&q=hello world+1 é/?:'
+    )
+  })
+
+  it('passes a malformed pair through raw, so it re-splits as the same malformed pair', () => {
+    const params: KeyValuePair[] = [
+      { id: '1', key: '%E0', value: 'x%', enabled: true, malformed: true },
+      kv('2', 'ok', '1%')
+    ]
+    const text = computeEditableUrl('https://api.test/p', params)
+    expect(text).toBe('https://api.test/p?%E0=x%&ok=1%25')
+    expect(shape(splitUrlAndParams(text).params)).toEqual([
+      ['%E0', 'x%', false, true],
+      ['ok', '1%', false, false]
+    ])
+  })
+
+  it('keeps the display rules of computeFullUrl: no query, bare ?, fragment, disabled rows', () => {
+    expect(computeEditableUrl('https://api.test/p', [])).toBe('https://api.test/p')
+    expect(computeEditableUrl('https://api.test/p#top', [kv('1', '', '')])).toBe(
+      'https://api.test/p?#top'
+    )
+    expect(
+      computeEditableUrl('https://api.test/p#top', [kv('1', 'a', '&'), kv('2', 'b', '1', false)])
+    ).toBe('https://api.test/p?a=%26#top')
+  })
+
+  // Property: for every combination of the characters the split treats as
+  // syntax (and their neighbours), split(edit(base, params)) gives back the
+  // enabled keyed params exactly — key, value and the value-less flag.
+  it('round-trips through splitUrlAndParams for values with &, =, %, %XX and #', () => {
+    const pieces = ['a', '&', '=', '%', '%41', '%25', '#', ' ', '+', '?', '{{v}}', '{{a%b}}', 'é']
+    const words: string[] = ['']
+    for (const p of pieces) words.push(p, `x${p}`, `${p}y`)
+    for (const p of pieces) for (const q of pieces) words.push(p + q)
+    const keys = words.filter((w) => w.trim() !== '')
+
+    for (const base of ['https://api.test/p', 'https://api.test/p#frag']) {
+      for (let i = 0; i < keys.length; i++) {
+        const value = words[(i * 7) % words.length]
+        const params: KeyValuePair[] = [
+          kv('1', keys[i], value),
+          kv('2', 'next', words[(i * 13 + 5) % words.length]),
+          flag('3', keys[(i * 11 + 3) % keys.length])
+        ]
+        const text = computeEditableUrl(base, params)
+        const back = splitUrlAndParams(text)
+        expect(back.baseUrl, text).toBe(base)
+        expect(shape(back.params), text).toEqual(shape(params))
+      }
+    }
+  })
+
+  // The issue's example: open the stored request, focus the URL bar, change the
+  // host, save. Only the host changes in the file.
+  it('a host edit in the URL bar keeps every encoded param when the request is saved', () => {
+    const query =
+      'client_id=abc&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb%3Fa%3D1%26b%3D2' +
+      '&discount=100%25&x=%2541'
+    const loaded = splitUrlAndParams(`https://auth.example.com/authorize?${query}`)
+    const text = computeEditableUrl(loaded.baseUrl, loaded.params)
+    const edited = splitUrlAndParams(text.replace('auth.example.com', 'auth2.example.com'))
+    expect(shape(edited.params)).toEqual(shape(loaded.params))
+    const saved = serializeRequest(
+      makeState({ method: 'GET', url: edited.baseUrl, params: edited.params })
+    )
+    expect(saved).toContain(`GET https://auth2.example.com/authorize?${query}\n`)
   })
 })
 
