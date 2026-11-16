@@ -168,9 +168,16 @@ export function TabBar(): React.JSX.Element {
                         requestClose(tab)
                       }
                     }}
+                    onMouseDown={(e) => {
+                      if (e.button === 1) {
+                        // Prevent Chromium middle-click autoscroll inside the scrollable tab strip
+                        e.preventDefault()
+                      }
+                    }}
                     onAuxClick={(e) => {
                       if (e.button === 1) {
                         e.preventDefault()
+                        e.stopPropagation()
                         requestClose(tab)
                       }
                     }}
