@@ -121,8 +121,9 @@ async function readCertFile(dir: string, filename: string): Promise<Buffer> {
 
 /**
  * Compose the CA list for outgoing requests: Node's bundled Mozilla roots plus
- * every enabled CA from both scopes. Errors loading individual files are logged
- * and skipped — one bad CA must not break unrelated requests.
+ * every CA listed in the app, workspace and run scopes (CA entries have no
+ * enable/disable state). Errors loading individual files are logged and
+ * skipped — one bad CA must not break unrelated requests.
  */
 async function buildCaBundle(
   workspaceScope: TlsScopeSettings,
