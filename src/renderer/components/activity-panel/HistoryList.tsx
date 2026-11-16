@@ -150,22 +150,28 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
   // new tabs add chips (checked by default), closed tabs remove their chip,
   // existing chips keep their checked state. A file with no `# @id` also
   // matches its runs by path (its sends each recorded a session's own id).
-  const openChips = useMemo(
-    () =>
-      allTabs
-        .filter((t) => isHistoryChipCandidate(t) && t.requestIdSource !== undefined)
-        .map((t) => {
-          const chip: OpenRequestChip = {
-            requestId: t.requestId,
-            label: deriveChipLabel(t.filePath!, workspacePath)
-          }
-          const sourceFile =
-            t.requestIdSource === 'generated' ? workspaceRelative(t.filePath!, workspacePath) : null
-          if (sourceFile) chip.sourceFile = sourceFile
-          return chip
-        }),
-    [allTabs, workspacePath]
-  )
+  // One chip per request id, as `syncChips` keeps: two files can share an `# @id`.
+  const openChips = useMemo(() => {
+    const seen = new Set<string>()
+    return allTabs
+      .filter(
+        (t) =>
+          isHistoryChipCandidate(t) &&
+          t.requestIdSource !== undefined &&
+          !seen.has(t.requestId) &&
+          seen.add(t.requestId)
+      )
+      .map((t) => {
+        const chip: OpenRequestChip = {
+          requestId: t.requestId,
+          label: deriveChipLabel(t.filePath!, workspacePath)
+        }
+        const sourceFile =
+          t.requestIdSource === 'generated' ? workspaceRelative(t.filePath!, workspacePath) : null
+        if (sourceFile) chip.sourceFile = sourceFile
+        return chip
+      })
+  }, [allTabs, workspacePath])
   // `chips` is a dependency so a reset (workspace change) re-syncs; syncChips
   // is a no-op when nothing differs.
   useEffect(() => {

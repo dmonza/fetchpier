@@ -183,4 +183,18 @@ describe('HistoryList — chips of restored tabs (ISS-0081)', () => {
     expect(api.list.mock.calls.at(-1)![0]).toEqual({ requestIds: [ID_A], limit: 50 })
     expect(rowCount(mounted.container)).toBe(1)
   })
+
+  it('two open files sharing one # @id get one chip, without looping', async () => {
+    // e.g. a `.http` copied outside the app keeps its source's id.
+    const api = installApi([runOf('r-a', ID_A, 'requests/a.http')], async () => parsed(ID_A))
+    useRequestStore
+      .getState()
+      .restoreSession([{ path: '/ws/requests/a.http' }, { path: '/ws/requests/copy.http' }], 0)
+
+    mounted = await mount()
+
+    expect(useHistoryChipsStore.getState().chips.map((c) => c.requestId)).toEqual([ID_A])
+    expect(api.list.mock.calls.at(-1)![0]).toEqual({ requestIds: [ID_A], limit: 50 })
+    expect(rowCount(mounted.container)).toBe(1)
+  })
 })

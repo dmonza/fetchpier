@@ -45,7 +45,8 @@ export interface HistoryChipsState {
    * Reconcile chips with the currently open tabs. New tabs add a chip
    * checked-by-default; closed tabs remove their chip; existing chips
    * preserve their `checked` state (and update their label and source file if
-   * renamed). The resulting chip order matches `openChips` order (i.e. tab order).
+   * renamed). The resulting chip order matches `openChips` order (i.e. tab order);
+   * tabs sharing a request id get one chip (the first one's).
    */
   syncChips: (openChips: OpenRequestChip[]) => void
   /** Flip the checked flag for a single chip. */
@@ -57,8 +58,13 @@ export interface HistoryChipsState {
 export const useHistoryChipsStore = create<HistoryChipsState>()((set) => ({
   chips: [],
 
-  syncChips: (openChips) =>
+  syncChips: (allOpenChips) =>
     set((s) => {
+      // One chip per request id (the first tab wins): two open files can share an
+      // `# @id` (a copy made outside the app). Without this the reconcile was not
+      // idempotent and a caller syncing on `chips` looped.
+      const seen = new Set<string>()
+      const openChips = allOpenChips.filter((o) => !seen.has(o.requestId) && seen.add(o.requestId))
       const existingById = new Map(s.chips.map((c) => [c.requestId, c]))
       let mutated = openChips.length !== s.chips.length
       const next: RequestChip[] = openChips.map((o, i) => {
