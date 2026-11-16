@@ -24,6 +24,19 @@ export interface RequestChip {
   label: string
   /** Whether the chip is currently active as a history filter. */
   checked: boolean
+  /**
+   * Workspace-relative path of the request's file, set only when the file has
+   * no `# @id` (ISS-0081): its runs each recorded a session-random id, so the
+   * chip also matches runs by `@source-file` (rule: `@shared/lib/history-filter`).
+   */
+  sourceFile?: string
+}
+
+/** What a tab contributes to the chip set (`syncChips` input). */
+export interface OpenRequestChip {
+  requestId: string
+  label: string
+  sourceFile?: string
 }
 
 export interface HistoryChipsState {
@@ -31,10 +44,11 @@ export interface HistoryChipsState {
   /**
    * Reconcile chips with the currently open tabs. New tabs add a chip
    * checked-by-default; closed tabs remove their chip; existing chips
-   * preserve their `checked` state (and update their label if renamed).
-   * The resulting chip order matches `openChips` order (i.e. tab order).
+   * preserve their `checked` state (and update their label and source file if
+   * renamed). The resulting chip order matches `openChips` order (i.e. tab order);
+   * tabs sharing a request id get one chip (the first one's).
    */
-  syncChips: (openChips: Array<{ requestId: string; label: string }>) => void
+  syncChips: (openChips: OpenRequestChip[]) => void
   /** Flip the checked flag for a single chip. */
   toggleChip: (requestId: string) => void
   /** Reset everything — call when the workspace changes. */
@@ -44,19 +58,34 @@ export interface HistoryChipsState {
 export const useHistoryChipsStore = create<HistoryChipsState>()((set) => ({
   chips: [],
 
-  syncChips: (openChips) =>
+  syncChips: (allOpenChips) =>
     set((s) => {
+      // One chip per request id (the first tab wins): two open files can share an
+      // `# @id` (a copy made outside the app). Without this the reconcile was not
+      // idempotent and a caller syncing on `chips` looped.
+      const seen = new Set<string>()
+      const openChips = allOpenChips.filter((o) => !seen.has(o.requestId) && seen.add(o.requestId))
       const existingById = new Map(s.chips.map((c) => [c.requestId, c]))
       let mutated = openChips.length !== s.chips.length
       const next: RequestChip[] = openChips.map((o, i) => {
         const existing = existingById.get(o.requestId)
         if (existing) {
-          if (existing.label === o.label && s.chips[i] === existing) return existing
+          const same = existing.label === o.label && existing.sourceFile === o.sourceFile
+          if (same && s.chips[i] === existing) return existing
           mutated = true
-          return existing.label === o.label ? existing : { ...existing, label: o.label }
+          if (same) return existing
+          const updated: RequestChip = {
+            requestId: existing.requestId,
+            label: o.label,
+            checked: existing.checked
+          }
+          if (o.sourceFile !== undefined) updated.sourceFile = o.sourceFile
+          return updated
         }
         mutated = true
-        return { requestId: o.requestId, label: o.label, checked: true }
+        const chip: RequestChip = { requestId: o.requestId, label: o.label, checked: true }
+        if (o.sourceFile !== undefined) chip.sourceFile = o.sourceFile
+        return chip
       })
       return mutated ? { chips: next } : {}
     }),

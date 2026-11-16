@@ -3,7 +3,13 @@ import { mapHttpRequestToEditorState } from '../components/request/request-loade
 
 export type LoadedTabFields = Pick<
   Tab,
-  'request' | 'requestId' | 'tail' | 'normalizedOnLoad' | 'loadWarnings' | 'unreadableOnLoad'
+  | 'request'
+  | 'requestId'
+  | 'requestIdSource'
+  | 'tail'
+  | 'normalizedOnLoad'
+  | 'loadWarnings'
+  | 'unreadableOnLoad'
 >
 
 /**
@@ -23,6 +29,7 @@ export function loadedTabFields(
   return {
     request: mapHttpRequestToEditorState(first),
     requestId: parsed.requestId ?? currentRequestId,
+    requestIdSource: parsed.requestId ? 'file' : 'generated',
     tail: parsed.tail,
     normalizedOnLoad: first.normalizedOnLoad,
     loadWarnings: first.loadWarnings,

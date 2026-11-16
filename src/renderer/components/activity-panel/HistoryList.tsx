@@ -5,7 +5,17 @@ import { cn } from '../../lib/utils'
 import { useWorkspaceStore } from '../../stores/workspace'
 import { useRequestStore } from '../../stores/request'
 import { useHistoryExpansionStore } from '../../stores/historyExpansion'
-import { useHistoryChipsStore } from '../../stores/historyChips'
+import { useHistoryChipsStore, type OpenRequestChip } from '../../stores/historyChips'
+import {
+  isHistoryChipCandidate,
+  needsRequestIdResolution,
+  resolveTabRequestIds
+} from '../../lib/resolve-tab-request-ids'
+import {
+  hasHistoryRequestFilter,
+  historyEntryMatcher,
+  type HistoryRequestFilter
+} from '../../../shared/lib/history-filter'
 import { useToastStore } from '../../stores/toast'
 import {
   ContextMenu,
@@ -43,6 +53,15 @@ function deriveChipLabel(absFilePath: string, workspacePath: string | null): str
   if (parts.length === 1) return parts[0]!
   // Show parent/basename when nested — keeps the chip compact but disambiguates.
   return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`
+}
+
+/**
+ * Workspace-relative path of a request file, as a send records it in
+ * `# @source-file` (`RequestEditor`); `null` outside the workspace.
+ */
+function workspaceRelative(absFilePath: string, workspacePath: string | null): string | null {
+  if (!workspacePath || !absFilePath.startsWith(workspacePath)) return null
+  return absFilePath.slice(workspacePath.length).replace(/^[/\\]+/, '')
 }
 
 function formatTimestamp(iso: string): string {
@@ -117,30 +136,73 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
   const toggleChip = useHistoryChipsStore((s) => s.toggleChip)
   const resetChips = useHistoryChipsStore((s) => s.reset)
 
+  // ISS-0081: a restored tab carries a session-random id until its file is
+  // read. Read the unresolved tabs' `# @id` now that the history is shown (not
+  // at session restore), and leave them out of the chip set until then — a
+  // checked chip with a random id would hide the request's runs.
+  const unresolvedCount = allTabs.filter(needsRequestIdResolution).length
+  useEffect(() => {
+    if (unresolvedCount > 0) void resolveTabRequestIds()
+  }, [allTabs, unresolvedCount])
   // Mirror the open editor tabs into the chip set. Tabs without a `filePath`
   // (untitled), read-only history views, or raw `.http` views are excluded —
   // they'd be unhelpful labels with no source identity. Each render syncs:
   // new tabs add chips (checked by default), closed tabs remove their chip,
-  // existing chips keep their checked state.
+  // existing chips keep their checked state. A file with no `# @id` also
+  // matches its runs by path (its sends each recorded a session's own id).
+  // One chip per request id, as `syncChips` keeps: two files can share an `# @id`.
+  const openChips = useMemo(() => {
+    const seen = new Set<string>()
+    return allTabs
+      .filter(
+        (t) =>
+          isHistoryChipCandidate(t) &&
+          t.requestIdSource !== undefined &&
+          !seen.has(t.requestId) &&
+          seen.add(t.requestId)
+      )
+      .map((t) => {
+        const chip: OpenRequestChip = {
+          requestId: t.requestId,
+          label: deriveChipLabel(t.filePath!, workspacePath)
+        }
+        const sourceFile =
+          t.requestIdSource === 'generated' ? workspaceRelative(t.filePath!, workspacePath) : null
+        if (sourceFile) chip.sourceFile = sourceFile
+        return chip
+      })
+  }, [allTabs, workspacePath])
+  // `chips` is a dependency so a reset (workspace change) re-syncs; syncChips
+  // is a no-op when nothing differs.
   useEffect(() => {
-    const openChips = allTabs
-      .filter((t) => t.requestId && t.filePath && !t.isReadOnly && t.rawContent === undefined)
-      .map((t) => ({
-        requestId: t.requestId,
-        label: deriveChipLabel(t.filePath!, workspacePath)
-      }))
     syncChips(openChips)
-  }, [allTabs, workspacePath, syncChips])
+  }, [openChips, chips, syncChips])
 
-  // The set of requestIds the user wants to see. Empty ⇒ show all (no filter).
-  const checkedRequestIds = useMemo(() => {
-    const out = new Set<string>()
-    for (const c of chips) if (c.checked) out.add(c.requestId)
-    return out
+  // The first listing waits until every tab's id is read and the chips mirror
+  // them, so it never lists by random ids. Later, a tab opened while the panel
+  // is shown only adds its chip once read.
+  const chipsInSync =
+    chips.length === openChips.length &&
+    chips.every(
+      (c, i) => c.requestId === openChips[i]!.requestId && c.sourceFile === openChips[i]!.sourceFile
+    )
+  const [chipsReady, setChipsReady] = useState(false)
+  if (!chipsReady && unresolvedCount === 0 && chipsInSync) setChipsReady(true)
+
+  // The requests the user wants to see. Empty ⇒ show all (no filter).
+  const checkedFilter = useMemo(() => {
+    const requestIds: string[] = []
+    const sourceFiles: string[] = []
+    for (const c of chips) {
+      if (!c.checked) continue
+      requestIds.push(c.requestId)
+      if (c.sourceFile !== undefined) sourceFiles.push(c.sourceFile)
+    }
+    return { requestIds, sourceFiles }
   }, [chips])
-  const hasActiveFilter = checkedRequestIds.size > 0
+  const hasActiveFilter = hasHistoryRequestFilter(checkedFilter)
   // Stable primitive for the load effect and the page reset below ('' ⇒ no filter).
-  const checkedKey = [...checkedRequestIds].join('\n')
+  const checkedKey = hasActiveFilter ? JSON.stringify(checkedFilter) : ''
 
   const PAGE_SIZE = 50
   const [entries, setEntries] = useState<HistoryEntryListItem[]>([])
@@ -157,6 +219,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     setLoadedCount(PAGE_SIZE)
     setHasMore(true)
     setIsLoading(Boolean(workspacePath))
+    setChipsReady(false)
   }
 
   // A different chip selection is a different list: start again from the first page.
@@ -184,18 +247,23 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
   // for a new chip selection is still in flight.
   const visibleEntries = useMemo(() => {
     if (!hasActiveFilter) return entries
-    return entries.filter((e) => e.requestId !== undefined && checkedRequestIds.has(e.requestId))
-  }, [entries, hasActiveFilter, checkedRequestIds])
+    return entries.filter(historyEntryMatcher(checkedFilter))
+  }, [entries, hasActiveFilter, checkedFilter])
 
   useEffect(() => {
-    if (!workspacePath) return
+    if (!workspacePath || !chipsReady) return
     let cancelled = false
     void (async () => {
       setIsLoadingMore(true)
       try {
+        const filter: HistoryRequestFilter = checkedKey ? JSON.parse(checkedKey) : {}
         const result = await window.api.history.list(
           checkedKey
-            ? { requestIds: checkedKey.split('\n'), limit: loadedCount }
+            ? {
+                requestIds: [...(filter.requestIds ?? [])],
+                ...(filter.sourceFiles?.length ? { sourceFiles: [...filter.sourceFiles] } : {}),
+                limit: loadedCount
+              }
             : { limit: loadedCount }
         )
         if (cancelled) return
@@ -215,7 +283,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     return () => {
       cancelled = true
     }
-  }, [workspacePath, loadedCount, reloadVersion, checkedKey])
+  }, [workspacePath, loadedCount, reloadVersion, checkedKey, chipsReady])
 
   const handleScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
@@ -461,7 +529,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     )
   }
 
-  if (isLoading) {
+  if (isLoading || !chipsReady) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
