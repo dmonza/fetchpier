@@ -24,13 +24,9 @@ import {
   ContextMenuItem,
   ContextMenuSeparator
 } from '../ui/context-menu'
-import type { HistoryEntry, HistoryEntryListItem } from '../../../shared/types'
-import { historyRepeatRequest, historyViewRequest } from './history-request'
-import {
-  historyEntryFromRaw,
-  parseActivityLog,
-  type ActivityLogFile
-} from '../../../shared/lib/activity-log'
+import type { ActivityPanelRowAction, HistoryEntryListItem } from '../../../shared/types'
+import { runHistoryRowAction } from './history-row-actions'
+import { parseActivityLog, type ActivityLogFile } from '../../../shared/lib/activity-log'
 import { RunDetail } from './run-detail/RunDetail'
 import { requestsRunDetailDescriptor } from './run-detail/domains/requests-descriptor'
 
@@ -104,6 +100,11 @@ interface HistoryListProps {
    * 'panel' = wider activity-panel layout — same data, more horizontal real estate.
    */
   variant?: 'sidebar' | 'panel'
+  /**
+   * 'popout' = rendered in the detached Activity window, which has no tab bar:
+   * row actions run in the main window that owns it (ISS-0164).
+   */
+  mode?: 'docked' | 'popout'
 }
 
 /**
@@ -116,10 +117,12 @@ interface HistoryListProps {
  * row. Multiple rows may be expanded simultaneously; expansion state is
  * per-session (resets on workspace change, never persisted).
  */
-export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.Element {
+export function HistoryList({
+  variant = 'panel',
+  mode = 'docked'
+}: HistoryListProps): React.JSX.Element {
   const { t } = useTranslation()
   const workspacePath = useWorkspaceStore((s) => s.workspacePath)
-  const openTab = useRequestStore((s) => s.openTab)
   const pushToast = useToastStore((s) => s.push)
 
   const expandedIds = useHistoryExpansionStore((s) => s.expandedIds)
@@ -312,75 +315,45 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     }
   }, [workspacePath, t, resetExpansion])
 
-  const openViewForEntry = useCallback(
-    (entry: HistoryEntry) => {
-      const { method, url } = entry.request
-      const title = `${method} ${url.length > 40 ? url.slice(0, 40) + '…' : url}`
-      openTab({
-        title,
-        filePath: null,
-        isDirty: false,
-        isReadOnly: true,
-        historyEntryId: entry.id,
-        historyTimestamp: entry.timestamp,
-        response: entry.response,
-        isLoading: false,
-        error: null,
-        request: historyViewRequest(entry),
-        scriptResults: entry.scriptResults
-      })
-    },
-    [openTab]
-  )
-
   /**
-   * Read the raw `.http` of the entry, rebuild the in-memory shape, and call
-   * `consume`. Errors are logged; callers fail open (no toast — keeps the
-   * activity-panel cheap; the next refresh will retry implicitly).
+   * Row actions (Open, Raw .http, Repeat, Open source file) open tabs, so they
+   * run in a window with a tab bar: here when docked; in the main window that
+   * owns the popout when popped out (ISS-0164) — the popout's own tab store is
+   * never shown. Failures are logged or toasted by the action itself.
    */
-  const withReconstructedEntry = useCallback(
-    async (item: HistoryEntryListItem, consume: (full: HistoryEntry) => void): Promise<void> => {
+  const dispatchRowAction = useCallback(
+    (action: ActivityPanelRowAction): void => {
       if (!workspacePath) return
-      try {
-        const raw = await window.api.history.get(item.id)
-        consume(historyEntryFromRaw(raw))
-      } catch (err) {
-        console.error('[HistoryList] Failed to reconstruct entry:', err)
+      if (mode === 'popout') {
+        window.api.activityPanel
+          .openInOwner(action)
+          .then((delivered) => {
+            if (!delivered) console.error('[HistoryList] The main window did not take the action')
+          })
+          .catch((err: unknown) =>
+            console.error('[HistoryList] Failed to reach the main window:', err)
+          )
+        return
       }
+      void runHistoryRowAction(action, { workspacePath, t, pushToast })
     },
-    [workspacePath]
+    [mode, workspacePath, t, pushToast]
   )
 
   const handleViewEntry = useCallback(
-    (item: HistoryEntryListItem) => {
-      void withReconstructedEntry(item, openViewForEntry)
-    },
-    [openViewForEntry, withReconstructedEntry]
+    (item: HistoryEntryListItem) => dispatchRowAction({ kind: 'view', entryId: item.id }),
+    [dispatchRowAction]
   )
 
   const handleOpenRaw = useCallback(
-    async (item: HistoryEntryListItem) => {
-      if (!workspacePath) return
-      const url = item.request.url
-      const title = t('history.rawTabTitle', {
+    (item: HistoryEntryListItem) =>
+      dispatchRowAction({
+        kind: 'raw',
+        entryId: item.id,
         method: item.request.method,
-        url: url.length > 30 ? url.slice(0, 30) + '…' : url
-      })
-      try {
-        const rawContent = await window.api.history.get(item.id)
-        openTab({
-          title,
-          filePath: null,
-          isDirty: false,
-          isReadOnly: true,
-          historyEntryId: `raw:${item.id}`,
-          rawContent
-        })
-      } catch (err) {
-        console.error('[HistoryList] Failed to read raw .http:', err)
-      }
-    },
-    [workspacePath, openTab, t]
+        url: item.request.url
+      }),
+    [dispatchRowAction]
   )
 
   const handleDeleteEntry = useCallback(
@@ -396,81 +369,15 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
     [workspacePath]
   )
 
-  const repeatFromEntry = useCallback(
-    (entry: HistoryEntry) => {
-      const { method, url } = entry.request
-      const absSourceFile =
-        entry.sourceFile && workspacePath
-          ? (() => {
-              const sep = workspacePath.includes('\\') ? '\\' : '/'
-              const rel = entry.sourceFile!.replace(/[/\\]/g, sep)
-              return workspacePath + sep + rel
-            })()
-          : (entry.sourceFile ?? null)
-      const existing = absSourceFile
-        ? useRequestStore.getState().tabs.find((t) => t.filePath === absSourceFile)
-        : undefined
-      if (existing) {
-        openTab({ filePath: absSourceFile ?? undefined })
-        return
-      }
-      openTab({
-        title: `${method} ${url.slice(0, 30)}`,
-        filePath: null,
-        request: historyRepeatRequest(entry)
-      })
-    },
-    [workspacePath, openTab]
-  )
-
   const handleRepeat = useCallback(
-    (item: HistoryEntryListItem) => {
-      void withReconstructedEntry(item, repeatFromEntry)
-    },
-    [repeatFromEntry, withReconstructedEntry]
+    (item: HistoryEntryListItem) => dispatchRowAction({ kind: 'repeat', entryId: item.id }),
+    [dispatchRowAction]
   )
 
-  /**
-   * Workspace-relative `@source-file` → absolute path on the current OS.
-   * Mirrors the join used by Repeat (HistoryList legacy logic).
-   */
-  const resolveSourceAbsPath = useCallback(
-    (relativePath: string): string | null => {
-      if (!workspacePath) return null
-      const sep = workspacePath.includes('\\') ? '\\' : '/'
-      const rel = relativePath.replace(/[/\\]/g, sep)
-      return workspacePath + sep + rel
-    },
-    [workspacePath]
-  )
-
-  /**
-   * Q1 (REQ-0069 §10): soft-fail on missing source file. Pre-check existence
-   * via `filesystem:fileExists` and toast an error if it's gone; otherwise
-   * open the source `.http` as a tab — same mechanism Repeat uses.
-   */
   const handleOpenSourceFile = useCallback(
-    async (relativePath: string) => {
-      const abs = resolveSourceAbsPath(relativePath)
-      if (!abs) return
-      try {
-        const exists = await window.api.filesystem.fileExists(abs)
-        if (!exists) {
-          pushToast(t('history.expansion.errors.sourceFileMissing', { path: relativePath }), {
-            type: 'error'
-          })
-          return
-        }
-      } catch (err) {
-        console.error('[HistoryList] fileExists failed:', err)
-        pushToast(t('history.expansion.errors.sourceFileMissing', { path: relativePath }), {
-          type: 'error'
-        })
-        return
-      }
-      openTab({ filePath: abs })
-    },
-    [resolveSourceAbsPath, openTab, pushToast, t]
+    (relativePath: string) =>
+      dispatchRowAction({ kind: 'open-source-file', sourceFile: relativePath }),
+    [dispatchRowAction]
   )
 
   /**
@@ -704,9 +611,7 @@ export function HistoryList({ variant = 'panel' }: HistoryListProps): React.JSX.
                         <RunDetail
                           file={parsedFile}
                           descriptor={requestsRunDetailDescriptor}
-                          onOpenSourceFile={(p) => {
-                            void handleOpenSourceFile(p)
-                          }}
+                          onOpenSourceFile={handleOpenSourceFile}
                         />
                       )}
                     </>

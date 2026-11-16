@@ -83,7 +83,7 @@ export function ActivityPanel({ mode }: ActivityPanelProps): React.JSX.Element {
 
       {/* Active tab content */}
       <div className="flex min-h-0 flex-1 flex-col">
-        {activeTab === 'requests' && <RequestsActivityTab />}
+        {activeTab === 'requests' && <RequestsActivityTab mode={mode} />}
       </div>
     </div>
   )

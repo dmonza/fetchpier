@@ -42,20 +42,31 @@ function computeSession(state: ReturnType<typeof useRequestStore.getState>): Liv
   return { tabs, activeTabIndex }
 }
 
-// Install the write subscription once. It is gated on `ready` so the restore in
-// `hydrateSession` (which runs with `ready === false`) never writes the seed
-// back to disk.
-useRequestStore.subscribe((state) => {
-  if (!ready || !currentWorkspace) return
-  const session = computeSession(state)
-  const signature = JSON.stringify(session)
-  if (signature === lastSignature) return
-  lastSignature = signature
-  window.api.workspaceState.setSession(session).catch(console.error)
-})
+let subscribed = false
+
+/**
+ * Install the write subscription once, on the first hydrate — never at import.
+ * A renderer that never hydrates (the detached Activity window, ISS-0164) is
+ * then not a writer of the main window's session at all. It is gated on
+ * `ready` so the restore in `hydrateSession` (which runs with `ready ===
+ * false`) never writes the seed back to disk.
+ */
+function ensureSubscribed(): void {
+  if (subscribed) return
+  subscribed = true
+  useRequestStore.subscribe((state) => {
+    if (!ready || !currentWorkspace) return
+    const session = computeSession(state)
+    const signature = JSON.stringify(session)
+    if (signature === lastSignature) return
+    lastSignature = signature
+    window.api.workspaceState.setSession(session).catch(console.error)
+  })
+}
 
 /** Read and restore the persisted session for `workspacePath`. */
 export async function hydrateSession(workspacePath: string): Promise<void> {
+  ensureSubscribed()
   ready = false
   currentWorkspace = workspacePath
   try {

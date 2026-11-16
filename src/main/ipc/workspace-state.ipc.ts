@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { WorkspaceSessionTab, WorkspaceStateView } from '../../shared/types'
 import { getView, setActiveEnvironment, setSession } from '../state/workspace-state-store'
+import { isMainWindowSender } from './window.ipc'
 
 /**
  * IPC for the workspace-level personal state
@@ -17,7 +18,16 @@ export function registerWorkspaceStateHandlers(): void {
 
   ipcMain.handle(
     'workspace-state:setSession',
-    async (_e, session: { tabs: WorkspaceSessionTab[]; activeTabIndex: number }): Promise<void> => {
+    async (e, session: { tabs: WorkspaceSessionTab[]; activeTabIndex: number }): Promise<void> => {
+      // ISS-0164: only the main window owns the open-tab session. The Activity
+      // popout shares the preload; a write from it would replace the main
+      // window's session with its own snapshot. Ignored, logged without payload.
+      if (!isMainWindowSender(e.sender)) {
+        console.warn(
+          '[workspace-state] Ignored "workspace-state:setSession" from a non-main window'
+        )
+        return
+      }
       if (!session || typeof session !== 'object') return
       const tabs = Array.isArray(session.tabs) ? session.tabs : []
       const activeTabIndex =

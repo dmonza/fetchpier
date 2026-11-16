@@ -39,6 +39,7 @@ import type {
   ClientCertEntry,
   ClientCertPreview,
   ActivityPanelPopoutEvent,
+  ActivityPanelRowAction,
   RequestUiState,
   RequestUiStateMap,
   StagedBinaryEntry,
@@ -315,6 +316,8 @@ declare global {
         focusPopout: () => Promise<boolean>
         isPoppedOut: () => Promise<boolean>
         onPopoutChanged: (callback: (event: ActivityPanelPopoutEvent) => void) => () => void
+        openInOwner: (action: ActivityPanelRowAction) => Promise<boolean>
+        onRowAction: (callback: (action: ActivityPanelRowAction) => void) => () => void
       }
       uiState: {
         read: (requestId: string) => Promise<RequestUiState | null>

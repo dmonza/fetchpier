@@ -41,6 +41,8 @@ function makeMockApi(active: string | null) {
     workspace: {
       getActive: vi.fn(async (): Promise<string | null> => active),
       getLast: vi.fn(),
+      getRecent: vi.fn(async (): Promise<string[]> => []),
+      openPath: vi.fn(async (path: string) => ({ ok: true as const, path })),
       getRequestsRoot: vi.fn(async (): Promise<string> => `${active}/requests`),
       onActiveChanged: vi.fn((cb: ActiveListener) => {
         listeners.add(cb)
@@ -135,6 +137,22 @@ describe('workspace store — followActiveWorkspace (detached Activity window, H
     expect(store.getState().workspacePath).toBeNull()
   })
 
+  // ISS-0164: the detached window has no tab bar or editor. Restoring the tab
+  // session there armed a second writer of the main window's session.
+  it('never restores or tears down the tab session while binding, switching or clearing', async () => {
+    await setup('/ws-a')
+    store.getState().followActiveWorkspace()
+    await settle()
+    api.workspace.getRequestsRoot.mockResolvedValue('/ws-b/requests')
+    api.emit('/ws-b')
+    await settle()
+    api.emit(null)
+    await settle()
+
+    expect(h.hydrateSession).not.toHaveBeenCalled()
+    expect(h.teardownSession).not.toHaveBeenCalled()
+  })
+
   it('stops following once unsubscribed', async () => {
     await setup('/ws-a')
     const stop = store.getState().followActiveWorkspace()
@@ -146,5 +164,22 @@ describe('workspace store — followActiveWorkspace (detached Activity window, H
 
     expect(api.listeners.size).toBe(0)
     expect(store.getState().workspacePath).toBe('/ws-a')
+  })
+})
+
+describe('workspace store — the main window keeps its tab session (ISS-0164)', () => {
+  it('opening a workspace restores its tab session', async () => {
+    await setup('/ws-a')
+    await store.getState().openRecentWorkspace('/ws-b')
+
+    expect(h.hydrateSession).toHaveBeenCalledWith('/ws-b')
+  })
+
+  it('closing the workspace tears the tab session down', async () => {
+    await setup('/ws-a')
+    ;(api.workspace as Record<string, unknown>).close = vi.fn(async () => {})
+    store.getState().closeWorkspace()
+
+    expect(h.teardownSession).toHaveBeenCalledTimes(1)
   })
 })

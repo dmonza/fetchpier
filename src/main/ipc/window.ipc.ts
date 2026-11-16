@@ -95,6 +95,17 @@ let quitRequested = false
 let closeAckTimer: NodeJS.Timeout | null = null
 let globalHandlersRegistered = false
 
+/**
+ * Whether `sender` is the current main window's contents — the window
+ * `registerWindowHandlers` last targeted. Main-window-only handlers (the
+ * open-tab session write, ISS-0164) check it, since the Activity popout shares
+ * the same preload and could otherwise call them.
+ */
+export function isMainWindowSender(sender: { id: number }): boolean {
+  const win = currentWindow
+  return !!win && !win.isDestroyed() && win.webContents.id === sender.id
+}
+
 function clearCloseAckTimer(): void {
   if (closeAckTimer) {
     clearTimeout(closeAckTimer)

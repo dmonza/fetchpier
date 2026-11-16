@@ -31,6 +31,24 @@ const createdWindows: FakeWindow[] = []
 let nextWindowId = 100
 let webContentsByOwner: Map<number, FakeWindow['webContents']> = new Map()
 
+interface FakeOwnerWindow {
+  isDestroyed: () => boolean
+  isMinimized: ReturnType<typeof vi.fn>
+  restore: ReturnType<typeof vi.fn>
+  focus: ReturnType<typeof vi.fn>
+}
+/** Owner BrowserWindows by webContents id, for the bring-to-front checks. */
+const ownerWindows = new Map<number, FakeOwnerWindow>()
+
+// `resolveInsideActiveWorkspace` stand-in: throws like the real one when there
+// is no active workspace or the path escapes it.
+const resolveInside = vi.hoisted(() => ({
+  fn: vi.fn((rel: string): string => `/ws/${rel}`)
+}))
+vi.mock('../fs/safe-path', () => ({
+  resolveInsideActiveWorkspace: (rel: string) => resolveInside.fn(rel)
+}))
+
 function makeFakeWindow(): FakeWindow {
   const id = nextWindowId++
   const listeners: Record<string, Array<() => void>> = {}
@@ -65,10 +83,10 @@ vi.mock('electron', () => {
   return {
     BrowserWindow: {
       fromWebContents: (wc: { id: number }) => {
-        // Return a stand-in main window with matching id; not used by the IPC
-        // module beyond being passed to createActivityPanelWindow as `parent`,
-        // which we mock below.
-        return { webContents: wc, id: wc.id }
+        // A stand-in main window with matching id: passed to
+        // createActivityPanelWindow as `parent` (mocked below), and brought to
+        // the front by `activityPanel:openInOwner`.
+        return ownerWindows.get(wc.id) ?? { webContents: wc, id: wc.id }
       }
     },
     ipcMain: {
@@ -97,6 +115,9 @@ beforeEach(async () => {
   handlers.clear()
   createdWindows.length = 0
   webContentsByOwner = new Map()
+  ownerWindows.clear()
+  resolveInside.fn.mockReset()
+  resolveInside.fn.mockImplementation((rel: string): string => `/ws/${rel}`)
   vi.resetModules()
   mod = await import('./activity-panel.ipc')
   mod.registerActivityPanelHandlers()
@@ -118,11 +139,12 @@ function registerOwner(senderId: number): { sender: { id: number } } {
 }
 
 describe('activity-panel IPC handlers', () => {
-  it('registers the four expected channels', () => {
+  it('registers the five expected channels', () => {
     expect(handlers.has('activityPanel:popout')).toBe(true)
     expect(handlers.has('activityPanel:dock')).toBe(true)
     expect(handlers.has('activityPanel:focusPopout')).toBe(true)
     expect(handlers.has('activityPanel:isPoppedOut')).toBe(true)
+    expect(handlers.has('activityPanel:openInOwner')).toBe(true)
   })
 
   it('popout creates a window and broadcasts detached=true to the owner only', async () => {
@@ -217,5 +239,103 @@ describe('activity-panel IPC handlers', () => {
     }
     expect(result.ok).toBe(true)
     expect(createdWindows).toHaveLength(2)
+  })
+})
+
+// ISS-0164: a History row action taken in the popout runs in the main window
+// that owns it, which comes to the front.
+describe('activityPanel:openInOwner', () => {
+  const VIEW = { kind: 'view', entryId: 'run-1' }
+
+  async function popOut(ownerId = 42): Promise<{
+    popoutEvent: { sender: { id: number } }
+    ownerWc: FakeWindow['webContents']
+    ownerWin: FakeOwnerWindow
+  }> {
+    const ownerWin: FakeOwnerWindow = {
+      isDestroyed: () => false,
+      isMinimized: vi.fn(() => false),
+      restore: vi.fn(),
+      focus: vi.fn()
+    }
+    ownerWindows.set(ownerId, ownerWin)
+    await handlers.get('activityPanel:popout')!(registerOwner(ownerId))
+    const ownerWc = webContentsByOwner.get(ownerId)!
+    ownerWc.send.mockClear()
+    return { popoutEvent: { sender: { id: createdWindows[0]!.webContents.id } }, ownerWc, ownerWin }
+  }
+
+  function openInOwner(event: { sender: { id: number } }, payload: unknown): unknown {
+    return handlers.get('activityPanel:openInOwner')!(event, payload)
+  }
+
+  it('forwards the action to the owner only and brings it to the front', async () => {
+    const { popoutEvent, ownerWc, ownerWin } = await popOut()
+    expect(await openInOwner(popoutEvent, VIEW)).toBe(true)
+    expect(ownerWc.send).toHaveBeenCalledWith('activity-panel:row-action', VIEW)
+    expect(createdWindows[0]!.webContents.send).not.toHaveBeenCalled()
+    expect(ownerWin.focus).toHaveBeenCalledTimes(1)
+    expect(ownerWin.restore).not.toHaveBeenCalled()
+  })
+
+  it('restores a minimized owner before focusing it', async () => {
+    const { popoutEvent, ownerWin } = await popOut()
+    ownerWin.isMinimized.mockReturnValue(true)
+    await openInOwner(popoutEvent, VIEW)
+    expect(ownerWin.restore).toHaveBeenCalledTimes(1)
+    expect(ownerWin.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards the validated copy, not the payload as sent', async () => {
+    const { popoutEvent, ownerWc } = await popOut()
+    await openInOwner(popoutEvent, { ...VIEW, extra: 'x' })
+    expect(ownerWc.send).toHaveBeenCalledWith('activity-panel:row-action', VIEW)
+  })
+
+  it('a source file is checked inside the active workspace before it is forwarded', async () => {
+    const { popoutEvent, ownerWc } = await popOut()
+    const action = { kind: 'open-source-file', sourceFile: 'requests/a.http' }
+    expect(await openInOwner(popoutEvent, action)).toBe(true)
+    expect(resolveInside.fn).toHaveBeenCalledWith('requests/a.http')
+    expect(ownerWc.send).toHaveBeenCalledWith('activity-panel:row-action', action)
+  })
+
+  it.each([
+    ['a sender other than the popout (the owner itself)', 'owner'],
+    ['an unrelated sender', 'other']
+  ])('refuses %s', async (_label, who) => {
+    const { ownerWc } = await popOut()
+    const event = who === 'owner' ? { sender: { id: 42 } } : { sender: { id: 7 } }
+    expect(await openInOwner(event, VIEW)).toBe(false)
+    expect(ownerWc.send).not.toHaveBeenCalled()
+  })
+
+  it('refuses an invalid payload', async () => {
+    const { popoutEvent, ownerWc } = await popOut()
+    expect(await openInOwner(popoutEvent, { kind: 'delete', entryId: 'run-1' })).toBe(false)
+    expect(await openInOwner(popoutEvent, null)).toBe(false)
+    expect(ownerWc.send).not.toHaveBeenCalled()
+  })
+
+  it('refuses a source file the active workspace does not contain (or with none open)', async () => {
+    const { popoutEvent, ownerWc } = await popOut()
+    resolveInside.fn.mockImplementation(() => {
+      throw new Error('Path escapes workspace')
+    })
+    const action = { kind: 'open-source-file', sourceFile: 'requests/a.http' }
+    expect(await openInOwner(popoutEvent, action)).toBe(false)
+    expect(ownerWc.send).not.toHaveBeenCalled()
+  })
+
+  it('refuses when no popout exists', async () => {
+    registerOwner(42)
+    expect(await openInOwner({ sender: { id: 100 } }, VIEW)).toBe(false)
+  })
+
+  it('refuses when the owner is gone', async () => {
+    const { popoutEvent, ownerWc } = await popOut()
+    ;(ownerWc as unknown as { isDestroyed: () => boolean }).isDestroyed = () => true
+    expect(await openInOwner(popoutEvent, VIEW)).toBe(false)
+    expect(ownerWc.send).not.toHaveBeenCalled()
   })
 })

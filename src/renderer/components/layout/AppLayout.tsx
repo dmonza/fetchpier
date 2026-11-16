@@ -31,6 +31,7 @@ import { useFileSyncReconciliation } from '../../hooks/useFileSyncReconciliation
 import { mruCycle } from '../../lib/tab-mru'
 import { nextInOrder } from '../../lib/tab-order'
 import { ActivityPanelHost } from '../activity-panel/ActivityPanelHost'
+import { subscribeToForwardedRowActions } from '../activity-panel/forwarded-row-actions'
 import { basenameOfPath } from '../../lib/path'
 import {
   SEND_REQUEST_EVENT,
@@ -128,6 +129,18 @@ export function AppLayout(): React.JSX.Element {
     const unsub = window.api.activityPanel.onPopoutChanged(applyActivityPanelPopoutEvent)
     return unsub
   }, [hydrateActivityPanel, applyActivityPanelPopoutEvent])
+
+  // ISS-0164: History row actions taken in the popped-out panel open here —
+  // the popout has no tab bar. Main brings this window to the front.
+  useEffect(
+    () =>
+      subscribeToForwardedRowActions(() => ({
+        workspacePath: useWorkspaceStore.getState().workspacePath,
+        t: (key, options) => t(key, options),
+        pushToast: useToastStore.getState().push
+      })),
+    [t]
+  )
 
   // ── Close guard ─────────────────────────────────────────────────────────
   // REQ-0095: route the window/app-close path through the shared guard so it

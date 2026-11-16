@@ -70,12 +70,25 @@ interface WorkspaceState {
   /**
    * Detached Activity window only: bind to the workspace main has open (a
    * read, never a restore) and follow every later open / switch / close.
-   * Returns the unsubscribe.
+   * Never restores or writes the open-tab session (ISS-0164). Returns the
+   * unsubscribe.
    */
   followActiveWorkspace: () => () => void
 }
 
-async function applyWorkspace(path: string | null): Promise<{
+interface ApplyWorkspaceOptions {
+  /**
+   * Restore (and on close, tear down) the open-tab session. Only the main
+   * window owns the session; the detached Activity window has no tab bar or
+   * editor and must never become a second writer of it (ISS-0164).
+   */
+  session: boolean
+}
+
+async function applyWorkspace(
+  path: string | null,
+  { session }: ApplyWorkspaceOptions = { session: true }
+): Promise<{
   workspacePath: string | null
   requestsRoot: string | null
 }> {
@@ -83,7 +96,7 @@ async function applyWorkspace(path: string | null): Promise<{
     useUiStateStore.getState().clear()
     useTreeStateStore.getState().clear()
     // REQ-0084: closing the workspace clears the open-tab session (empty state).
-    teardownSession()
+    if (session) teardownSession()
     return { workspacePath: null, requestsRoot: null }
   }
   // Eagerly hydrate the renderer's UI-state cache so openTab can stay sync.
@@ -92,7 +105,7 @@ async function applyWorkspace(path: string | null): Promise<{
   // against the actual folder set once the tree loads.
   void useTreeStateStore.getState().load(path)
   // REQ-0084: restore the open-tab session for this workspace.
-  void hydrateSession(path)
+  if (session) void hydrateSession(path)
   try {
     const requestsRoot = await window.api.workspace.getRequestsRoot()
     return { workspacePath: path, requestsRoot }
@@ -224,7 +237,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
 
   followActiveWorkspace: () => {
     const bind = async (seq: number, path: string | null): Promise<void> => {
-      const resolved = await applyWorkspace(path)
+      const resolved = await applyWorkspace(path, { session: false })
       if (seq === followSeq) set(resolved)
     }
     const off = window.api.workspace.onActiveChanged(({ workspacePath }) => {
