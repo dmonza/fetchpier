@@ -8,7 +8,9 @@ import type {
   HttpRequest,
   BodyType,
   RawSubtype,
-  AuthConfig
+  AuthConfig,
+  MultipartPart,
+  MultipartTextPart
 } from '@shared/types'
 import { DEFAULT_REQUEST_STATE } from '@shared/types'
 import { splitUrlAndParams } from '@shared/lib/query-string'
@@ -46,9 +48,12 @@ type PostmanHeader = PostmanKeyValue
 
 interface PostmanFormDataEntry {
   key: string
-  value?: string
+  /** A string in exports; a hand-edited file may hold a number or a boolean. */
+  value?: unknown
   type?: 'text' | 'file'
+  /** A path on the exporter's machine; never imported. */
   src?: string | string[] | null
+  contentType?: string
   disabled?: boolean
 }
 
@@ -285,6 +290,13 @@ interface MappedBody {
   body: string
   formFields: KeyValuePair[]
   extraContentType?: string
+  multipartParts?: MultipartPart[]
+}
+
+/** A form value as text: a number or boolean keeps its spelling; missing is empty. */
+function formValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  return value == null ? '' : String(value)
 }
 
 function mapBody(
@@ -361,22 +373,36 @@ function mapBody(
       }
     }
     case 'formdata': {
-      const lines: string[] = []
-      for (const entry of body.formdata ?? []) {
+      // One multipart part per entry, in order. A file entry cannot carry its
+      // file (a part references a workspace-staged file, and `src` is a path on
+      // the exporter's machine), so it becomes a disabled empty text part named
+      // after the field, left in the editor for the user to attach a file.
+      // No Content-Type is added: the encoder owns the multipart header.
+      const parts: MultipartTextPart[] = []
+      for (const entry of Array.isArray(body.formdata) ? body.formdata : []) {
         if (!entry || typeof entry.key !== 'string') continue
-        const prefix = entry.disabled ? '# disabled: ' : ''
-        if (entry.type === 'file') {
+        const isFile = entry.type === 'file'
+        if (isFile) {
           warnings.push({
             kind: 'body-binary-placeholder',
-            message: `Field "${entry.key}" is a file upload; replaced with <binary> placeholder`,
+            message: `Field "${entry.key}" is a file upload; imported as a disabled empty text field — attach the file in the editor`,
             location
           })
-          lines.push(`${prefix}${entry.key}=<binary>`)
-        } else {
-          lines.push(`${prefix}${entry.key}=${entry.value ?? ''}`)
         }
+        const contentType =
+          typeof entry.contentType === 'string' && entry.contentType !== ''
+            ? entry.contentType
+            : undefined
+        parts.push({
+          kind: 'text',
+          id: `mp-${parts.length}`,
+          name: entry.key,
+          value: isFile ? '' : formValue(entry.value),
+          ...(contentType !== undefined && { contentType }),
+          ...((isFile || entry.disabled === true) && { disabled: true })
+        })
       }
-      return { bodyType: 'raw', body: lines.join('\n'), formFields: [] }
+      return { bodyType: 'multipart-form', body: '', formFields: [], multipartParts: parts }
     }
     case 'graphql': {
       const g = body.graphql ?? {}
@@ -637,7 +663,8 @@ function buildOperation(
     formFields: body.formFields,
     auth: authConfig,
     preRequestScript: preRequest,
-    postResponseScript: postResponse
+    postResponseScript: postResponse,
+    ...(body.multipartParts && { multipartParts: body.multipartParts })
   }
 
   const httpRequest: HttpRequest = {
@@ -645,7 +672,11 @@ function buildOperation(
     url: urlWithVars,
     headers: headerRecord,
     body: body.body || undefined,
-    formFields: body.bodyType === 'x-www-form-urlencoded' ? body.formFields : undefined
+    formFields: body.bodyType === 'x-www-form-urlencoded' ? body.formFields : undefined,
+    ...(body.multipartParts && {
+      bodyType: body.bodyType,
+      multipartParts: body.multipartParts
+    })
   }
 
   const folderKey = folderPath.join('/')
