@@ -104,6 +104,9 @@ interface ApiMock {
   filesystem: {
     fileExists: ReturnType<typeof vi.fn>
   }
+  activityPanel: {
+    openInOwner: ReturnType<typeof vi.fn>
+  }
   /** The callback HistoryList handed to `history.onChanged`, if any. */
   emitChanged: () => void
   unsubscribeChanged: ReturnType<typeof vi.fn>
@@ -129,6 +132,9 @@ function installApi(
     filesystem: {
       fileExists: vi.fn().mockResolvedValue(true)
     },
+    activityPanel: {
+      openInOwner: vi.fn().mockResolvedValue(true)
+    },
     emitChanged: () => changedCallback?.(),
     unsubscribeChanged
   }
@@ -136,12 +142,14 @@ function installApi(
   return api
 }
 
-async function mountList(): Promise<{ container: HTMLDivElement; root: Root }> {
+async function mountList(
+  mode: 'docked' | 'popout' = 'docked'
+): Promise<{ container: HTMLDivElement; root: Root }> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   await act(async () => {
-    root.render(<HistoryList variant="panel" />)
+    root.render(<HistoryList variant="panel" mode={mode} />)
   })
   // Flush pending microtasks (history:list resolution + re-render)
   await act(async () => {
@@ -429,5 +437,106 @@ describe('HistoryList — reloads when any window changes the runs', () => {
     expect(container.textContent).toContain('https://api.example.com/bar')
     unmount(root, container)
     expect(api.unsubscribeChanged).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ISS-0164: the popout has no tab bar. Its row actions go to the main window
+// that owns it instead of opening tabs nobody sees in the popout's own store.
+describe('HistoryList — popout row actions run in the owning main window', () => {
+  beforeEach(() => {
+    document.body.replaceChildren()
+    useHistoryExpansionStore.getState().reset()
+    requestStoreState.openTab.mockClear()
+  })
+
+  async function contextMenuItem(container: HTMLElement, label: string): Promise<void> {
+    act(() => {
+      findRowByText(container, 'https://api.example.com/foo').dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, button: 2 })
+      )
+    })
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === label
+    ) as HTMLElement
+    await act(async () => {
+      item.click()
+    })
+    await flush()
+  }
+
+  it('Open sends the run id to the owner', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList('popout')
+    await contextMenuItem(container, 'history.contextMenu.open')
+    expect(api.activityPanel.openInOwner).toHaveBeenCalledWith({ kind: 'view', entryId: 'run-1' })
+    expect(api.history.get).not.toHaveBeenCalled()
+    expect(requestStoreState.openTab).not.toHaveBeenCalled()
+    unmount(root, container)
+  })
+
+  it("Raw .http sends the run id with the row's method and URL", async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList('popout')
+    await contextMenuItem(container, 'history.contextMenu.raw')
+    expect(api.activityPanel.openInOwner).toHaveBeenCalledWith({
+      kind: 'raw',
+      entryId: 'run-1',
+      method: 'GET',
+      url: 'https://api.example.com/foo'
+    })
+    expect(requestStoreState.openTab).not.toHaveBeenCalled()
+    unmount(root, container)
+  })
+
+  it('Repeat sends the run id to the owner', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList('popout')
+    const repeat = container.querySelector('button[title="history.repeat"]') as HTMLButtonElement
+    await act(async () => {
+      repeat.click()
+    })
+    await flush()
+    expect(api.activityPanel.openInOwner).toHaveBeenCalledWith({
+      kind: 'repeat',
+      entryId: 'run-1'
+    })
+    expect(requestStoreState.openTab).not.toHaveBeenCalled()
+    unmount(root, container)
+  })
+
+  it('Open file sends the workspace-relative source path to the owner', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList('popout')
+    await clickRow(container, 'https://api.example.com/foo')
+    // Run-detail sections start collapsed: expand Metadata to reach Open file.
+    const metadata = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('history.expansion.metadata.title')
+    ) as HTMLButtonElement
+    act(() => {
+      metadata.click()
+    })
+    const openFile = container.querySelector(
+      'button[title="history.expansion.metadata.openFile"]'
+    ) as HTMLButtonElement
+    await act(async () => {
+      openFile.click()
+    })
+    await flush()
+    expect(api.activityPanel.openInOwner).toHaveBeenCalledWith({
+      kind: 'open-source-file',
+      sourceFile: 'requests/foo.http'
+    })
+    expect(api.filesystem.fileExists).not.toHaveBeenCalled()
+    expect(requestStoreState.openTab).not.toHaveBeenCalled()
+    unmount(root, container)
+  })
+
+  it('the docked list still opens the tab in its own window', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList('docked')
+    await contextMenuItem(container, 'history.contextMenu.open')
+    expect(api.activityPanel.openInOwner).not.toHaveBeenCalled()
+    expect(requestStoreState.openTab).toHaveBeenCalledTimes(1)
+    unmount(root, container)
   })
 })

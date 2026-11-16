@@ -17,10 +17,12 @@ interface FakeWindow {
   unmaximize: ReturnType<typeof vi.fn>
   isMaximized: ReturnType<typeof vi.fn>
   setTitle: ReturnType<typeof vi.fn>
-  webContents: { send: ReturnType<typeof vi.fn> }
+  webContents: { id: number; send: ReturnType<typeof vi.fn> }
   on: (event: string, cb: (...a: unknown[]) => void) => void
   __emit: (event: string, ...a: unknown[]) => void
 }
+
+let nextWebContentsId = 1
 
 function makeFakeWindow(): FakeWindow {
   const listeners: Record<string, Array<(...a: unknown[]) => void>> = {}
@@ -32,7 +34,7 @@ function makeFakeWindow(): FakeWindow {
     unmaximize: vi.fn(),
     isMaximized: vi.fn(() => false),
     setTitle: vi.fn(),
-    webContents: { send: vi.fn() },
+    webContents: { id: nextWebContentsId++, send: vi.fn() },
     on: (event, cb) => {
       ;(listeners[event] ??= []).push(cb)
     },
@@ -219,5 +221,35 @@ describe('window.ipc — close guard fallback', () => {
     await ipcHandlers.get('window:close-confirmed')!({})
     expect(appQuit).toHaveBeenCalledTimes(1)
     expect(win.close).not.toHaveBeenCalled()
+  })
+})
+
+// ISS-0164: the main-window identity that main-window-only handlers check.
+describe('window.ipc — isMainWindowSender', () => {
+  it('is false before any main window is registered', () => {
+    expect(mod.isMainWindowSender({ id: 1 })).toBe(false)
+  })
+
+  it("is true for the registered main window's contents only", () => {
+    const win = makeFakeWindow()
+    mod.registerWindowHandlers(win as never)
+    expect(mod.isMainWindowSender({ id: win.webContents.id })).toBe(true)
+    expect(mod.isMainWindowSender({ id: win.webContents.id + 1000 })).toBe(false)
+  })
+
+  it('follows a re-registered main window and drops the previous one', () => {
+    const first = makeFakeWindow()
+    mod.registerWindowHandlers(first as never)
+    const second = makeFakeWindow()
+    mod.registerWindowHandlers(second as never)
+    expect(mod.isMainWindowSender({ id: second.webContents.id })).toBe(true)
+    expect(mod.isMainWindowSender({ id: first.webContents.id })).toBe(false)
+  })
+
+  it('is false once the main window is destroyed', () => {
+    const win = makeFakeWindow()
+    mod.registerWindowHandlers(win as never)
+    win.isDestroyed.mockReturnValue(true)
+    expect(mod.isMainWindowSender({ id: win.webContents.id })).toBe(false)
   })
 })

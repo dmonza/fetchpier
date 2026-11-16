@@ -47,6 +47,7 @@ import type {
   ClientCertEntry,
   ClientCertPreview,
   ActivityPanelPopoutEvent,
+  ActivityPanelRowAction,
   RequestUiState,
   RequestUiStateMap,
   StagedBinaryEntry,
@@ -563,6 +564,16 @@ const api = {
         callback(payload)
       ipcRenderer.on('activity-panel:popout-changed', handler)
       return () => ipcRenderer.removeListener('activity-panel:popout-changed', handler)
+    },
+    /** Popout only: run a History row action in the owning main window (ISS-0164). */
+    openInOwner: (action: ActivityPanelRowAction): Promise<boolean> =>
+      invoke('activityPanel:openInOwner', action),
+    /** Main window: a row action the popout forwarded, to run here. */
+    onRowAction: (callback: (action: ActivityPanelRowAction) => void): (() => void) => {
+      const handler = (_: Electron.IpcRendererEvent, payload: ActivityPanelRowAction): void =>
+        callback(payload)
+      ipcRenderer.on('activity-panel:row-action', handler)
+      return () => ipcRenderer.removeListener('activity-panel:row-action', handler)
     }
   },
 

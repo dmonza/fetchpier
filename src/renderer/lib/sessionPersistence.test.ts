@@ -41,6 +41,31 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// ISS-0164: a renderer that never hydrates (the detached Activity window) must
+// not even listen to its tab store — it is not a writer of the session.
+describe('session write subscription — installed only by a hydrate', () => {
+  it('importing the module does not subscribe to the tab store', async () => {
+    vi.resetModules()
+    const requestMod = await import('../stores/request')
+    const subscribe = vi.spyOn(requestMod.useRequestStore, 'subscribe')
+    await import('./sessionPersistence')
+    expect(subscribe).not.toHaveBeenCalled()
+  })
+
+  it('a tab change before any hydrate writes nothing', async () => {
+    store.getState().openTab({ filePath: '/ws/requests/a.http' })
+    await Promise.resolve()
+    expect(setSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('a second hydrate keeps a single subscription (one write per change)', async () => {
+    await mod.hydrateSession('/ws')
+    await mod.hydrateSession('/ws')
+    store.getState().openTab({ filePath: '/ws/requests/a.http' })
+    expect(setSessionMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('hydrateSession — restore (CA-03/04/06/10)', () => {
   it('restores the persisted file-backed tabs in order with the active index', async () => {
     readMock.mockResolvedValue({

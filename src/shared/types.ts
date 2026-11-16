@@ -1796,6 +1796,20 @@ export interface ActivityPanelPopoutEvent {
   openAfter?: boolean
 }
 
+/**
+ * A History row action taken in the Activity popout, run by the main window
+ * that owns it (popout → `activityPanel:openInOwner` → owner's
+ * `activity-panel:row-action`). Carries ids, not run content: the owner reads
+ * the run itself. Validated by `parseActivityPanelRowAction`.
+ */
+export type ActivityPanelRowAction =
+  /** Open the run as a read-only tab, or repeat it. */
+  | { kind: 'view' | 'repeat'; entryId: string }
+  /** Open the run's `.http` verbatim; `method` / `url` only title the tab. */
+  | { kind: 'raw'; entryId: string; method: string; url: string }
+  /** Open the request file the run was sent from (workspace-relative). */
+  | { kind: 'open-source-file'; sourceFile: string }
+
 // ── Updates ────────────────────────────────────────────────────────────────
 
 /** Global update-check preferences stored inside `AppSettings.updates`. */
