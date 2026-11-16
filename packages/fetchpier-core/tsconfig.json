@@ -13,7 +13,11 @@
     "types": ["node"],
     "ignoreDeprecations": "6.0",
     "paths": {
-      "@shared/*": ["../../src/shared/*"]
+      "@shared/*": ["../../src/shared/*"],
+      // Reached through `@shared/lib/activity-log` (imported by a core test).
+      // Left unmapped it resolves via the package `exports` to the gitignored
+      // `dist/` and typecheck fails on a fresh clone (CI). See tsconfig.node.json.
+      "@fetchpier/core/activity-log": ["./src/activity-log/index.ts"]
     }
   },
   "include": ["src/**/*", "test/**/*", "tsup.config.ts"]
