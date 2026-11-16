@@ -6,6 +6,7 @@ import { importPostman, isPostmanCollection } from './postman'
 import { serializeRequest } from '@shared/lib/http-serializer'
 import { splitUrlAndParams } from '@shared/lib/query-string'
 import { parseHttpFile } from '../../requests/parser'
+import type { MultipartPart } from '@shared/types'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const FIXTURES = join(here, '__fixtures__', 'postman')
@@ -130,11 +131,23 @@ describe('importPostman — nested collection', () => {
     expect(login.editorState.formFields.map((f) => f.key)).toEqual(['username', 'password'])
   })
 
-  it('emits binary placeholder warning for formdata file fields', () => {
+  it('maps formdata to multipart parts, a file field as a disabled empty text part with a warning', () => {
     const upload = schema.operations.find((o) => o.displayName === 'Upload avatar')!
-    expect(upload.editorState.bodyType).toBe('raw')
-    expect(upload.editorState.body).toContain('avatar=<binary>')
-    expect(warnings.some((w) => w.kind === 'body-binary-placeholder')).toBe(true)
+    expect(upload.editorState.bodyType).toBe('multipart-form')
+    expect(upload.editorState.body).toBe('')
+    expect(
+      upload.editorState.multipartParts!.map((p) => ({
+        kind: p.kind,
+        name: p.name,
+        value: p.kind === 'text' ? p.value : undefined,
+        disabled: p.disabled ?? false
+      }))
+    ).toEqual([
+      { kind: 'text', name: 'avatar', value: '', disabled: true },
+      { kind: 'text', name: 'label', value: 'primary', disabled: false }
+    ])
+    const placeholder = warnings.filter((w) => w.kind === 'body-binary-placeholder')
+    expect(placeholder.some((w) => w.message.includes('"avatar"'))).toBe(true)
   })
 
   it('normalizes graphql bodies to json payloads', () => {
@@ -393,6 +406,142 @@ describe('importPostman — malformed and edge inputs', () => {
     expect(() => importPostman(makeMinimalCollection({ info: {} as never }))).toThrow(
       /Not a recognizable Postman collection/
     )
+  })
+})
+
+describe('importPostman — form-data bodies', () => {
+  function importFormData(formdata: unknown, header: unknown[] = []) {
+    const payload = JSON.stringify({
+      info: { name: 'X', schema: POSTMAN_V21_SCHEMA },
+      item: [
+        {
+          name: 'Upload',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/upload',
+            header,
+            body: { mode: 'formdata', formdata }
+          }
+        }
+      ]
+    })
+    return importPostman(payload)
+  }
+
+  /** The parts as the editor model holds them, without the UI-local ids. */
+  function shape(parts: MultipartPart[] | undefined) {
+    return (parts ?? []).map((p) => ({
+      kind: p.kind,
+      name: p.name,
+      value: p.kind === 'text' ? p.value : undefined,
+      contentType: p.contentType,
+      disabled: p.disabled ?? false
+    }))
+  }
+
+  it('maps text entries to enabled text parts in order, with no raw body and no added Content-Type', () => {
+    const { schema, warnings } = importFormData([
+      { key: 'a', value: '1', type: 'text' },
+      { key: 'b', value: '2' }
+    ])
+    const state = schema.operations[0].editorState
+    expect(state.bodyType).toBe('multipart-form')
+    expect(state.body).toBe('')
+    expect(shape(state.multipartParts)).toEqual([
+      { kind: 'text', name: 'a', value: '1', contentType: undefined, disabled: false },
+      { kind: 'text', name: 'b', value: '2', contentType: undefined, disabled: false }
+    ])
+    expect(state.headers.some((h) => h.key.toLowerCase() === 'content-type')).toBe(false)
+    expect(warnings.some((w) => w.kind === 'body-binary-placeholder')).toBe(false)
+  })
+
+  it('keeps a disabled entry as a disabled part instead of writing it into the body', () => {
+    const { schema } = importFormData([
+      { key: 'a', value: '1' },
+      { key: 'b', value: '2', disabled: true }
+    ])
+    const state = schema.operations[0].editorState
+    expect(shape(state.multipartParts).map((p) => [p.name, p.disabled])).toEqual([
+      ['a', false],
+      ['b', true]
+    ])
+    expect(state.body).not.toContain('disabled')
+  })
+
+  it("keeps each entry's contentType, text and file alike", () => {
+    const { schema } = importFormData([
+      { key: 'meta', value: '{"x":1}', contentType: 'application/json' },
+      { key: 'doc', type: 'file', src: '/home/someone/doc.pdf', contentType: 'application/pdf' }
+    ])
+    expect(shape(schema.operations[0].editorState.multipartParts)).toEqual([
+      {
+        kind: 'text',
+        name: 'meta',
+        value: '{"x":1}',
+        contentType: 'application/json',
+        disabled: false
+      },
+      { kind: 'text', name: 'doc', value: '', contentType: 'application/pdf', disabled: true }
+    ])
+  })
+
+  it('turns a file entry into a disabled empty text part named after the field, never carrying its src', () => {
+    const { schema, warnings } = importFormData([
+      { key: 'avatar', type: 'file', src: ['/home/someone/a.png', '/home/someone/b.png'] }
+    ])
+    const parts = schema.operations[0].editorState.multipartParts!
+    expect(shape(parts)).toEqual([
+      { kind: 'text', name: 'avatar', value: '', contentType: undefined, disabled: true }
+    ])
+    expect(JSON.stringify(schema.operations[0])).not.toContain('/home/someone')
+    const placeholder = warnings.filter((w) => w.kind === 'body-binary-placeholder')
+    expect(placeholder).toHaveLength(1)
+    expect(placeholder[0].message).toContain('"avatar"')
+    expect(placeholder[0].location).toBe('/Upload')
+  })
+
+  it('maps an empty formdata list to a multipart body with no parts', () => {
+    const { schema } = importFormData([])
+    const state = schema.operations[0].editorState
+    expect(state.bodyType).toBe('multipart-form')
+    expect(state.multipartParts).toEqual([])
+  })
+
+  it('skips entries without a string key and stringifies non-string values', () => {
+    const { schema } = importFormData([
+      null,
+      { value: 'orphan' },
+      { key: 'n', value: 42 },
+      { key: 'flag', value: true },
+      { key: 'empty' }
+    ])
+    expect(
+      shape(schema.operations[0].editorState.multipartParts).map((p) => [p.name, p.value])
+    ).toEqual([
+      ['n', '42'],
+      ['flag', 'true'],
+      ['empty', '']
+    ])
+  })
+
+  it('round-trips through the .http file: same parts, no raw JSON body, no manual multipart header', () => {
+    const { schema } = importFormData(
+      [
+        { key: 'a', value: '1' },
+        { key: 'b', value: '2', disabled: true },
+        { key: 'note', value: 'line one\nline two', contentType: 'text/plain' },
+        { key: 'f', type: 'file', src: '/tmp/f.bin' }
+      ],
+      [{ key: 'Content-Type', value: 'multipart/form-data' }]
+    )
+    const state = schema.operations[0].editorState
+    const text = serializeRequest(state)
+    expect(text).not.toContain('@rawSubtype')
+    expect(text).not.toContain('# disabled:')
+    expect(text).not.toMatch(/^Content-Type: multipart\/form-data$/m)
+    const loaded = parseHttpFile(text).requests[0]
+    expect(loaded.bodyType).toBe('multipart-form')
+    expect(shape(loaded.multipartParts)).toEqual(shape(state.multipartParts))
   })
 })
 
