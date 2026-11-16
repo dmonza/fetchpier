@@ -320,8 +320,21 @@ describe('HistoryList — Raw .http tab title (HIS-22)', () => {
 
 describe('HistoryList — request chips filter on disk, before the page limit', () => {
   const savedTabs = requestStoreState.tabs
-  const TAB_A = { ...TAB, id: 'tab-a', requestId: 'req-1', filePath: '/ws/requests/a.http' }
-  const TAB_B = { ...TAB, id: 'tab-b', requestId: 'req-2', filePath: '/ws/requests/b.http' }
+  // Loaded tabs: their ids were read from their files (ISS-0081).
+  const TAB_A = {
+    ...TAB,
+    id: 'tab-a',
+    requestId: 'req-1',
+    requestIdSource: 'file' as const,
+    filePath: '/ws/requests/a.http'
+  }
+  const TAB_B = {
+    ...TAB,
+    id: 'tab-b',
+    requestId: 'req-2',
+    requestIdSource: 'file' as const,
+    filePath: '/ws/requests/b.http'
+  }
 
   // A disk of `count` runs, newest first, that honours `requestIds` then `limit`.
   function diskList(count: number, requestId = 'req-1') {

@@ -317,6 +317,40 @@ describe('workspace.history (REQ-0068)', () => {
     expect((await list(ws, { requestIds: [] }))[0]!.id).toBe(uuid('o3'))
   })
 
+  it('list({ sourceFiles }) adds the runs of those files that recorded a request id, before the limit', async () => {
+    // Oldest first: an id-less file's desktop runs (each a different session id),
+    // a CLI run of the same file (no request id), a run of another request, then
+    // newer runs of a third request that would fill a page on their own.
+    const runs: Array<[string, string | undefined, string]> = [
+      ['n1', 'random-1', 'requests/col/noid.http'],
+      ['n2', 'random-2', 'requests\\col\\noid.http'],
+      ['c1', undefined, 'requests/col/noid.http'],
+      ['k1', 'req-k', 'requests/col/known.http'],
+      ['o1', 'req-other', 'requests/other.http'],
+      ['o2', 'req-other', 'requests/other.http']
+    ]
+    for (const [i, [seed, requestId, sourceFile]] of runs.entries()) {
+      await save(
+        ws,
+        buildEntry({
+          id: uuid(seed),
+          requestId,
+          sourceFile,
+          timestamp: `2026-05-15T14:23:0${i}.000Z`
+        })
+      )
+    }
+    const byPath = await list(ws, { sourceFiles: ['requests/col/noid.http'] })
+    expect(byPath.map((e) => e.id)).toEqual([uuid('n2'), uuid('n1')])
+    const union = await list(ws, {
+      requestIds: ['req-k'],
+      sourceFiles: ['requests/col/noid.http'],
+      limit: 2
+    })
+    expect(union.map((e) => e.id)).toEqual([uuid('k1'), uuid('n2')])
+    expect(await list(ws, { sourceFiles: [], limit: 2 })).toHaveLength(2)
+  })
+
   it('clear() removes `.http` files but leaves stale `.json` alone', async () => {
     await save(ws, buildEntry())
     await fs.writeFile(

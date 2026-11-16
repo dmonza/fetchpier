@@ -155,7 +155,9 @@ interface RequestState {
   /**
    * Replace the whole tab set with a restored session (REQ-0084). Each entry is
    * a file-backed request tab; its `.http` content and stable `requestId` load
-   * lazily on activation, exactly like opening from the tree. `activeIndex` of
+   * lazily on activation, exactly like opening from the tree — no file is read
+   * here. The History panel reads the `requestId` of tabs not yet activated when
+   * it is shown (`lib/resolve-tab-request-ids.ts`, ISS-0081). `activeIndex` of
    * `-1` (or out of range) leaves no active tab. A `preview` entry is restored as
    * a preview tab (REQ-0085); at most one preview survives (the first wins).
    */

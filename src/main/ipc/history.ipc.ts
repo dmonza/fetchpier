@@ -18,14 +18,13 @@ function validateListFilter(filter: unknown): HistoryListFilter | undefined {
     throw new Error('Invalid history filter')
   }
   if (typeof filter !== 'object' || Array.isArray(filter)) invalid()
-  const { requestId, requestIds, limit } = filter as Record<string, unknown>
+  const { requestId, requestIds, sourceFiles, limit } = filter as Record<string, unknown>
   if (requestId !== undefined && typeof requestId !== 'string') invalid()
-  if (
-    requestIds !== undefined &&
-    (!Array.isArray(requestIds) || requestIds.some((id) => typeof id !== 'string'))
-  ) {
-    invalid()
-  }
+  const isStringList = (v: unknown): boolean =>
+    Array.isArray(v) && v.every((item) => typeof item === 'string')
+  if (requestIds !== undefined && !isStringList(requestIds)) invalid()
+  // Compared against each run's `# @source-file`, never used as a filesystem path.
+  if (sourceFiles !== undefined && !isStringList(sourceFiles)) invalid()
   if (limit !== undefined && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0)) {
     invalid()
   }

@@ -736,6 +736,15 @@ export interface Tab {
   /** Stable UUID that identifies this request definition across sessions */
   requestId: string
   /**
+   * Where `requestId` came from (ISS-0081). `'file'`: the file's `# @id`.
+   * `'generated'`: the file has no `# @id`, so the id is this tab's own until a
+   * save writes it — the History panel then also matches the file's runs by
+   * path. `undefined`: not known yet — a file-backed tab whose file has not been
+   * read (a restored tab never activated; the History list resolves it lazily)
+   * or an untitled tab. Runtime only — never persisted.
+   */
+  requestIdSource?: 'file' | 'generated'
+  /**
    * Baseline hash of the serialized request captured at load / last save
    * (REQ-0095). `isDirty` is derived by comparing the live content's hash against
    * this. `undefined` means no baseline yet (a lazy file-backed tab not loaded
@@ -1634,13 +1643,17 @@ export interface HistoryEntryListItem {
 }
 
 /**
- * Filter for `window.api.history.list`. `requestId` / `requestIds` keep only
- * runs of those requests (an empty `requestIds` is no filter); both apply
- * before `limit`, so a page holds up to `limit` matching runs, newest first.
+ * Filter for `window.api.history.list`. `requestId` keeps only runs of that
+ * request. `requestIds` / `sourceFiles` keep the runs of those requests, or of
+ * those workspace-relative files that recorded a request id (the fallback for
+ * a file with no `# @id`; rule in `@shared/lib/history-filter`); both empty is
+ * no filter. All apply before `limit`, so a page holds up to `limit` matching
+ * runs, newest first.
  */
 export interface HistoryListFilter {
   requestId?: string
   requestIds?: string[]
+  sourceFiles?: string[]
   limit?: number
 }
 

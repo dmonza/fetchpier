@@ -31,6 +31,11 @@ describe('loadedTabFields', () => {
     expect(loadedTabFields(file(), 'tab-id')?.requestId).toBe('tab-id')
   })
 
+  it('records whether the id came from the file (ISS-0081)', () => {
+    expect(loadedTabFields(file({ requestId: 'file-id' }), 'tab-id')?.requestIdSource).toBe('file')
+    expect(loadedTabFields(file(), 'tab-id')?.requestIdSource).toBe('generated')
+  })
+
   it("carries the first request's load warnings and normalization mark", () => {
     const fields = loadedTabFields(
       file({

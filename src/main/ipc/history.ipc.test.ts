@@ -67,6 +67,19 @@ describe('history:list — filter', () => {
     expect(historyOps.list).toHaveBeenCalledWith({ requestIds: ['req-a', 'req-b'], limit: 50 })
   })
 
+  it('passes the source files through with the request ids', async () => {
+    await call('history:list', {
+      requestIds: ['req-a'],
+      sourceFiles: ['requests/a.http'],
+      limit: 50
+    })
+    expect(historyOps.list).toHaveBeenCalledWith({
+      requestIds: ['req-a'],
+      sourceFiles: ['requests/a.http'],
+      limit: 50
+    })
+  })
+
   it('accepts no filter', async () => {
     await call('history:list')
     expect(historyOps.list).toHaveBeenCalledWith(undefined)
@@ -77,6 +90,8 @@ describe('history:list — filter', () => {
     ['requestIds that is not an array', { requestIds: 'req-a' }],
     ['a requestIds entry that is not a string', { requestIds: ['req-a', 7] }],
     ['a requestId that is not a string', { requestId: 7 }],
+    ['sourceFiles that is not an array', { sourceFiles: 'requests/a.http' }],
+    ['a sourceFiles entry that is not a string', { sourceFiles: ['requests/a.http', null] }],
     ['a negative limit', { limit: -1 }],
     ['a limit that is not a number', { limit: '50' }]
   ])('rejects %s without listing', async (_label, filter) => {
