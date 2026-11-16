@@ -23,7 +23,12 @@ const ScriptsEditor = lazy(() =>
 )
 import { VariableHighlightInput } from '../ui/VariableHighlightInput'
 import { SaveRequestDialog } from './SaveRequestDialog'
-import { serializeRequest, splitUrlAndParams, computeFullUrl } from '@shared/lib/http-serializer'
+import {
+  serializeRequest,
+  splitUrlAndParams,
+  computeFullUrl,
+  computeEditableUrl
+} from '@shared/lib/http-serializer'
 import { hashString } from '@shared/lib/hash'
 import { authEcho, isAuthQueryParam } from '@shared/lib/auth-echo'
 import { implicitDefaultHeaderEntries } from './implicit-headers'
@@ -546,7 +551,7 @@ function RequestEditorInner(): React.JSX.Element {
     }
     const onFocusUrl = (): void => {
       const { url, params } = requestRef.current
-      setRawUrlInput(computeFullUrl(url, params))
+      setRawUrlInput(computeEditableUrl(url, params))
       setIsEditingUrl(true)
       urlInputRef.current?.focus()
       urlInputRef.current?.select()
@@ -695,13 +700,15 @@ function RequestEditorInner(): React.JSX.Element {
           </SelectContent>
         </Select>
 
-        {/* URL input — shows full URL (base + params); bidirectional sync with Params tab */}
+        {/* URL input — shows full URL (base + params); bidirectional sync with Params tab.
+            While focused it holds the editable text, which every keystroke re-splits:
+            computeEditableUrl escapes what the split reads as syntax (ISS-0052). */}
         <VariableHighlightInput
           ref={urlInputRef}
           value={isEditingUrl ? rawUrlInput : computeFullUrl(request.url, request.params)}
           onFocus={() => {
             if (isReadOnly) return
-            setRawUrlInput(computeFullUrl(request.url, request.params))
+            setRawUrlInput(computeEditableUrl(request.url, request.params))
             setIsEditingUrl(true)
           }}
           onChange={(e) => {
