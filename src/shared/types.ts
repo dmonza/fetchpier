@@ -1441,6 +1441,16 @@ export interface SecretsSetupResult {
   keyId: string
 }
 
+/** Result of a key rotation (`secrets:rotate`). */
+export interface SecretsRotateResult extends SecretsSetupResult {
+  /**
+   * Present only when the rotation failed and could not be fully undone: the
+   * workspace-relative files left encrypted under this new key while the rest
+   * of the workspace stays on the previous one. Absent on a completed rotation.
+   */
+  strandedFiles?: string[]
+}
+
 /** Result of submitting a key to the enter-key dialog. */
 export interface SecretsEnterKeyResult {
   ok: boolean

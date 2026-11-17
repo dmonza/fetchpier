@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, KeyRound, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, Copy, KeyRound, ShieldAlert } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { useToastStore } from '../../stores/toast'
@@ -11,6 +11,11 @@ interface Props {
   keyId: string
   /** Title/intro variant: first-time setup vs. post-rotation. */
   variant: 'setup' | 'rotated'
+  /**
+   * Rotation only: the workspace-relative files a failed rotation could not put
+   * back, left encrypted under this key (ISS-0135). Empty or absent: none.
+   */
+  strandedFiles?: string[]
   onAcknowledge: () => void
 }
 
@@ -23,11 +28,19 @@ export function SecretSetupDialog({
   workspaceKey,
   keyId,
   variant,
+  strandedFiles,
   onAcknowledge
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const pushToast = useToastStore((s) => s.push)
   const [acknowledged, setAcknowledged] = useState(false)
+  const stranded = variant === 'rotated' && strandedFiles && strandedFiles.length > 0
+  const title =
+    variant === 'setup'
+      ? t('secrets.setup.title')
+      : stranded
+        ? t('secrets.rotate.incompleteTitle')
+        : t('secrets.rotate.doneTitle')
 
   const handleCopy = (): void => {
     navigator.clipboard.writeText(workspaceKey).then(
@@ -47,11 +60,29 @@ export function SecretSetupDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-primary" />
-            {variant === 'setup' ? t('secrets.setup.title') : t('secrets.rotate.doneTitle')}
+            {title}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 text-sm">
+          {stranded && (
+            <div
+              role="alert"
+              data-rotation-stranded
+              className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-foreground"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <div className="min-w-0 space-y-2">
+                <p>{t('secrets.rotate.incompleteBody')}</p>
+                <ul className="list-disc space-y-0.5 pl-4 font-mono break-all">
+                  {strandedFiles.map((file) => (
+                    <li key={file}>{file}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
           <p className="text-muted-foreground">{t('secrets.setup.intro')}</p>
 
           <div className="rounded-md border border-border bg-surface-2 p-3">

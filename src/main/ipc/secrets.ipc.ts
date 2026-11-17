@@ -5,6 +5,7 @@ import type {
   EnvironmentLocalView,
   SecretsAddKeyResult,
   SecretsEnterKeyResult,
+  SecretsRotateResult,
   SecretsSetupResult,
   SecretsStatus,
   WorkspaceKeysListing
@@ -85,7 +86,7 @@ export function registerSecretsHandlers(): void {
     }
   )
 
-  ipcMain.handle('secrets:rotate', async (): Promise<SecretsSetupResult> => {
+  ipcMain.handle('secrets:rotate', async (): Promise<SecretsRotateResult> => {
     return service.rotateKey(requireActiveWorkspaceHandle().path)
   })
 

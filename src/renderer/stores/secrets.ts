@@ -3,6 +3,7 @@ import type {
   Environment,
   SecretsAddKeyResult,
   SecretsEnterKeyResult,
+  SecretsRotateResult,
   SecretsSetupResult,
   SecretsStatus,
   WorkspaceKeyMetadata,
@@ -28,7 +29,7 @@ interface SecretsState {
   /** REQ-0077: delete a secret variable directly (both layers, no decryption). */
   deleteSecret: (envId: string, name: string) => Promise<Environment>
   /** Rotate the workspace key. Returns the new one-time backup key. */
-  rotate: () => Promise<SecretsSetupResult>
+  rotate: () => Promise<SecretsRotateResult>
 
   // ── REQ-0073: Workspace keys management slice (metadata only) ──────────────
   /** Listed keystore entries (metadata, never key material). */

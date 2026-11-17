@@ -56,6 +56,7 @@ beforeEach(async () => {
   await makeWorkspace()
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   lockAll()
   await fs.rm(userDataDir, { recursive: true, force: true })
   await fs.rm(ws, { recursive: true, force: true })
@@ -435,6 +436,130 @@ describe('secrets service', () => {
     expect((await workspace.openWorkspace(ws).secrets.readManifest())?.encryption.keyId).toBe(
       setup.keyId
     )
+  })
+
+  // ── ISS-0135: rotation is all-or-nothing across the rename phase ──────────
+
+  const devConfig = (): string => join(ws, 'environments', 'dev', 'config.json')
+  const manifestKeyId = async (): Promise<string | undefined> =>
+    (await workspace.openWorkspace(ws).secrets.readManifest())?.encryption.keyId
+
+  /** Pass renames through, except those `fail` picks, which reject with EIO. */
+  function failRenames(
+    fail: (from: string, to: string) => boolean,
+    onRename?: (from: string) => Promise<void>
+  ): void {
+    const realRename = fs.rename.bind(fs)
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      await onRename?.(String(from))
+      if (fail(String(from), String(to))) {
+        throw Object.assign(new Error('EIO: i/o error, rename'), { code: 'EIO' })
+      }
+      await realRename(from, to)
+    })
+  }
+
+  async function leftovers(): Promise<string[]> {
+    const dirs = [
+      join(ws, '.fetchpier'),
+      join(ws, 'environments', 'dev'),
+      join(ws, 'environments', 'dev', '.state')
+    ]
+    const names = (await Promise.all(dirs.map((d) => fs.readdir(d).catch(() => [])))).flat()
+    return names.filter((n) => n.includes('.rotate-') || n.includes('.bak-'))
+  }
+
+  it('rotateKey refuses when two environment folders share an id, naming both, writing nothing', async () => {
+    const setup = await service.setupKey(ws)
+    await service.setSecret(ws, 'dev', 'apiToken', 'PLAINTOKEN')
+    await localValues.setLocalValue(ws, 'dev', 'apiToken', 'LOCAL-TOKEN')
+    await fs.cp(join(ws, 'environments', 'dev'), join(ws, 'environments', 'dev-copy'), {
+      recursive: true
+    })
+    const before = await fs.readFile(devConfig(), 'utf-8')
+    const keysBefore = (await listKeyEntries()).map((k) => k.keyId)
+
+    const err = await service.rotateKey(ws).catch((e) => e)
+
+    expect(err).toMatchObject({ code: 'WORKSPACE_INVALID' })
+    expect(err.message).toContain('"dev"')
+    expect(err.message).toContain('"dev-copy"')
+    expect(await manifestKeyId()).toBe(setup.keyId)
+    expect(await fs.readFile(devConfig(), 'utf-8')).toBe(before)
+    expect((await listKeyEntries()).map((k) => k.keyId)).toEqual(keysBefore)
+    expect(await service.revealValue(ws, 'dev', 'apiToken')).toBe('PLAINTOKEN')
+    expect(await localValues.revealLocalValue(ws, 'dev', 'apiToken')).toBe('LOCAL-TOKEN')
+  })
+
+  it('rotateKey that cannot finish its renames leaves the workspace on the old key', async () => {
+    const setup = await service.setupKey(ws)
+    await service.setSecret(ws, 'dev', 'apiToken', 'PLAINTOKEN')
+    await localValues.setLocalValue(ws, 'dev', 'apiToken', 'LOCAL-TOKEN')
+    const before = await fs.readFile(devConfig(), 'utf-8')
+    // The manifest is the last entry: every config and local file was already renamed.
+    failRenames((from) => from.includes('secrets.json.rotate-'))
+
+    await expect(service.rotateKey(ws)).rejects.toThrow(/not rotated.*nothing was changed/is)
+    vi.restoreAllMocks()
+
+    expect(await manifestKeyId()).toBe(setup.keyId)
+    expect(await fs.readFile(devConfig(), 'utf-8')).toBe(before)
+    expect(await service.revealValue(ws, 'dev', 'apiToken')).toBe('PLAINTOKEN')
+    expect(await localValues.revealLocalValue(ws, 'dev', 'apiToken')).toBe('LOCAL-TOKEN')
+    expect(await leftovers()).toEqual([])
+  })
+
+  it('rotateKey stores the new key before the first file is renamed', async () => {
+    const setup = await service.setupKey(ws)
+    await service.setSecret(ws, 'dev', 'apiToken', 'PLAINTOKEN')
+    let keysAtFirstRename: string[] | null = null
+    failRenames(
+      () => false,
+      async (from) => {
+        if (keysAtFirstRename === null && from.includes('.rotate-')) {
+          keysAtFirstRename = (await listKeyEntries()).map((k) => k.keyId)
+        }
+      }
+    )
+
+    const rotated = await service.rotateKey(ws)
+
+    expect(keysAtFirstRename).toEqual(expect.arrayContaining([setup.keyId, rotated.keyId]))
+  })
+
+  it('rotateKey whose rollback fails returns the new key and the files left under it', async () => {
+    const setup = await service.setupKey(ws)
+    await service.setSecret(ws, 'dev', 'apiToken', 'PLAINTOKEN')
+    // The manifest rename fails, and so does putting dev's previous config back.
+    failRenames(
+      (from, to) =>
+        from.includes('secrets.json.rotate-') || (from.includes('.bak-') && to === devConfig())
+    )
+
+    const result = await service.rotateKey(ws)
+    vi.restoreAllMocks()
+
+    expect(result.strandedFiles).toEqual(['environments/dev/config.json'])
+    expect(result.keyId).not.toBe(setup.keyId)
+    expect(await manifestKeyId()).toBe(setup.keyId)
+    // The stranded file opens with the returned key, which is in the keystore too.
+    const stranded = JSON.parse(await fs.readFile(devConfig(), 'utf-8'))
+    expect(
+      await secrets.decryptValue(
+        secrets.parseKey(result.key),
+        'apiToken',
+        stranded.variables.apiToken
+      )
+    ).toBe('PLAINTOKEN')
+    expect((await listKeyEntries()).map((k) => k.keyId)).toContain(result.keyId)
+  })
+
+  it('a completed rotation reports no stranded files', async () => {
+    await service.setupKey(ws)
+    await service.setSecret(ws, 'dev', 'apiToken', 'PLAINTOKEN')
+    const rotated = await service.rotateKey(ws)
+    expect(rotated.strandedFiles).toBeUndefined()
+    expect(await leftovers()).toEqual([])
   })
 
   // ── REQ-0077: direct secret deletion ──────────────────────────────────────

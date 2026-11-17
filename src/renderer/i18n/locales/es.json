@@ -1356,7 +1356,9 @@
       "warnTeammates": "Se generará una clave nueva y se recifrarán todos los secretos. Tenés que compartir la nueva clave con cada compañero.",
       "warnNoRevoke": "Rotar la clave del workspace NO revoca a quien ya tuvo acceso — puede seguir conociendo los valores secretos. Para revocar de verdad, rotá las credenciales subyacentes en sus proveedores.",
       "confirm": "Rotar clave",
-      "doneTitle": "Nueva clave del workspace"
+      "doneTitle": "Nueva clave del workspace",
+      "incompleteTitle": "La rotación de la clave no pudo terminar",
+      "incompleteBody": "La rotación falló y no se pudo deshacer por completo. El resto del workspace sigue con la clave anterior, pero estos archivos quedaron cifrados con la clave nueva de abajo. Guardá esta clave: es la única forma de leerlos. Junto a cada archivo queda una copia oculta de su versión anterior (llamada .<archivo>.bak-…)."
     },
     "gitNote": {
       "title": "Antes de cifrar",
