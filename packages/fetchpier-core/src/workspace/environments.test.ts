@@ -144,10 +144,28 @@ describe('assertEnvironmentNameAvailable (IMP-15)', () => {
     await expect(fs.access(join(ws, 'environments'))).rejects.toBeTruthy()
   })
 
-  it('treats a folder with no config.json as taken, case-insensitively', async () => {
+  // ISS-0170 (owner decision 1a): a folder git left holding only `.state/` is free.
+  // The check writes nothing: the state is set aside only by the create that follows.
+  it('treats a config-less folder holding only .state/ as free, case-insensitively, writing nothing', async () => {
     const ws = newWorkspace()
-    await fs.mkdir(join(ws, 'environments', 'Pets', '.state'), { recursive: true })
-    await expect(assertEnvironmentNameAvailable(ws, 'pets')).rejects.toThrow(
+    const state = join(ws, 'environments', 'Pets', '.state')
+    await fs.mkdir(state, { recursive: true })
+    await fs.writeFile(join(state, 'cookies.json'), '{}')
+    await expect(assertEnvironmentNameAvailable(ws, 'pets')).resolves.toBe('pets')
+    expect(await fs.readdir(state)).toEqual(['cookies.json'])
+    await expect(fs.access(join(ws, '.fetchpier'))).rejects.toBeTruthy()
+  })
+
+  it('treats a folder with an unreadable config.json, or with other content, as taken', async () => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, 'environments', 'pets'), { recursive: true })
+    await fs.writeFile(join(ws, 'environments', 'pets', 'config.json'), '{ not json')
+    await fs.mkdir(join(ws, 'environments', 'shop', '.state'), { recursive: true })
+    await fs.writeFile(join(ws, 'environments', 'shop', 'notes.txt'), 'mine')
+    await expect(assertEnvironmentNameAvailable(ws, 'Pets')).rejects.toThrow(
+      /^ENVIRONMENT_NAME_CONFLICT/
+    )
+    await expect(assertEnvironmentNameAvailable(ws, 'Shop')).rejects.toThrow(
       /^ENVIRONMENT_NAME_CONFLICT/
     )
   })

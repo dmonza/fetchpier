@@ -583,3 +583,168 @@ describe('machine-local state resolves through the identifier (CA-19, §6.10)', 
     expect(await folderExists(ws, 'staging')).toBe(false)
   })
 })
+
+// ── ISS-0170 — a folder git left holding only the ignored .state/ ────────────
+
+describe('leftover folder with only .state/ (ISS-0170, owner decision 1a 2c)', () => {
+  const SET_ASIDE = join('.fetchpier', '.state', 'set-aside-environments')
+
+  /** What git leaves after pulling a teammate's delete: the ignored state, no config. */
+  async function seedLeftover(ws: string, folder: string): Promise<void> {
+    const state = join(ws, 'environments', folder, '.state')
+    await fs.mkdir(state, { recursive: true })
+    await fs.writeFile(join(state, 'cookies.json'), '{"environmentId":"old","cookies":[]}')
+    await fs.writeFile(join(state, 'localvalues.json'), '{"version":1,"variables":{"t":"x"}}')
+  }
+
+  async function setAsideFolders(ws: string): Promise<string[]> {
+    return fs.readdir(join(ws, SET_ASIDE)).catch(() => [])
+  }
+
+  /** Assert exactly one set-aside copy of `folder` holding the leftover bytes verbatim. */
+  async function expectSetAside(ws: string, folder: string): Promise<void> {
+    const entries = await setAsideFolders(ws)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatch(new RegExp(`^${folder}-\\d{8}T\\d{9}Z-[0-9a-f]{8}$`))
+    const dir = join(ws, SET_ASIDE, entries[0])
+    expect(await fs.readFile(join(dir, 'cookies.json'), 'utf-8')).toBe(
+      '{"environmentId":"old","cookies":[]}'
+    )
+    expect(await fs.readFile(join(dir, 'localvalues.json'), 'utf-8')).toBe(
+      '{"version":1,"variables":{"t":"x"}}'
+    )
+  }
+
+  it('lets create land on the leftover, setting its state aside instead of inheriting it', async () => {
+    const ws = newWorkspace()
+    await seedLeftover(ws, 'staging')
+
+    const env = await createEnvironmentFile(ws, 'Staging')
+
+    expect(env.folder).toBe('staging')
+    expect(JSON.parse(await fs.readFile(configOf(ws, 'staging'), 'utf-8')).id).toBe(env.id)
+    // The new environment starts with no machine-local state.
+    expect(await folderExists(ws, join('staging', '.state'))).toBe(false)
+    await expectSetAside(ws, 'staging')
+    // The set-aside copy sits under a `.state/` segment (gitignored by default) and
+    // is not an environment.
+    expect(SET_ASIDE.split(/[\\/]/)).toContain('.state')
+    expect((await listEnvironments(ws)).map((e) => e.folder)).toEqual(['staging'])
+  })
+
+  it('lets rename land on the leftover; the renamed environment keeps its own state', async () => {
+    const ws = newWorkspace()
+    await seed(ws, 'prod', { id: 'P', name: 'Prod' })
+    const own = join(ws, 'environments', 'prod', '.state')
+    await fs.mkdir(own, { recursive: true })
+    await fs.writeFile(join(own, 'cookies.json'), 'mine')
+    await seedLeftover(ws, 'staging')
+
+    const renamed = await renameEnvironment(ws, 'P', 'staging')
+
+    expect(renamed).toMatchObject({ id: 'P', folder: 'staging', name: 'staging' })
+    expect(await folderExists(ws, 'prod')).toBe(false)
+    expect(
+      await fs.readFile(join(ws, 'environments', 'staging', '.state', 'cookies.json'), 'utf-8')
+    ).toBe('mine')
+    expect(
+      await fs
+        .access(join(ws, 'environments', 'staging', '.state', 'localvalues.json'))
+        .then(() => true)
+        .catch(() => false)
+    ).toBe(false)
+    await expectSetAside(ws, 'staging')
+  })
+
+  it('lets duplicate land on the leftover', async () => {
+    const ws = newWorkspace()
+    await seed(ws, 'dev', { id: 'D', name: 'Dev', variables: { a: '1' } })
+    await seedLeftover(ws, 'staging')
+
+    const copy = await duplicateEnvironment(ws, 'D', 'STAGING')
+
+    expect(copy.folder).toBe('staging')
+    expect(copy.variables).toEqual({ a: '1' })
+    await expectSetAside(ws, 'staging')
+  })
+
+  it('matches the leftover case-insensitively and lands in the derived folder', async () => {
+    const ws = newWorkspace()
+    await seedLeftover(ws, 'Staging')
+
+    const env = await createEnvironmentFile(ws, 'staging')
+
+    expect(env.folder).toBe('staging')
+    expect(await fs.readdir(join(ws, 'environments'))).toEqual(['staging'])
+    await expectSetAside(ws, 'Staging')
+  })
+
+  it('reclaims an empty .state/ or an empty folder without setting anything aside', async () => {
+    const ws = newWorkspace()
+    await fs.mkdir(join(ws, 'environments', 'qa', '.state'), { recursive: true })
+    await fs.mkdir(join(ws, 'environments', 'uat'), { recursive: true })
+
+    await createEnvironmentFile(ws, 'QA')
+    await createEnvironmentFile(ws, 'UAT')
+
+    expect((await listEnvironments(ws)).map((e) => e.folder).sort()).toEqual(['qa', 'uat'])
+    expect(await setAsideFolders(ws)).toEqual([])
+  })
+
+  it('keeps every set-aside copy when the same name is reclaimed twice', async () => {
+    const ws = newWorkspace()
+    await seedLeftover(ws, 'staging')
+    const first = await createEnvironmentFile(ws, 'Staging')
+    // A later pull deletes it again, leaving fresh state behind.
+    await fs.rm(configOf(ws, 'staging'))
+    await seedLeftover(ws, 'staging')
+    expect(first.folder).toBe('staging')
+
+    await createEnvironmentFile(ws, 'Staging')
+
+    expect(await setAsideFolders(ws)).toHaveLength(2)
+  })
+
+  it('still treats a config-less folder holding anything besides .state/ as taken, moving nothing', async () => {
+    const ws = newWorkspace()
+    await seedLeftover(ws, 'staging')
+    await fs.writeFile(join(ws, 'environments', 'staging', 'notes.txt'), 'mine')
+
+    await expect(createEnvironmentFile(ws, 'Staging')).rejects.toThrow(/ENVIRONMENT_NAME_CONFLICT/)
+
+    expect(await setAsideFolders(ws)).toEqual([])
+    expect(await fs.readdir(join(ws, 'environments', 'staging', '.state'))).toHaveLength(2)
+  })
+
+  it('still treats a folder with an unreadable config.json as taken, moving nothing', async () => {
+    const ws = newWorkspace()
+    await seedLeftover(ws, 'staging')
+    await fs.writeFile(configOf(ws, 'staging'), '{ <<<<<<< merge conflict')
+    await seed(ws, 'dev', { id: 'D', name: 'Dev' })
+
+    await expect(createEnvironmentFile(ws, 'Staging')).rejects.toThrow(/ENVIRONMENT_NAME_CONFLICT/)
+    await expect(renameEnvironment(ws, 'D', 'Staging')).rejects.toThrow(/ENVIRONMENT_NAME_CONFLICT/)
+    expect(await folderExists(ws, 'dev')).toBe(true)
+
+    expect(await setAsideFolders(ws)).toEqual([])
+    expect(await fs.readFile(configOf(ws, 'staging'), 'utf-8')).toBe('{ <<<<<<< merge conflict')
+  })
+
+  it('fails without creating anything when the state cannot be set aside, leaving it in place', async () => {
+    const ws = newWorkspace()
+    await seedLeftover(ws, 'staging')
+    vi.spyOn(fs, 'rename').mockRejectedValue(
+      Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    )
+
+    await expect(createEnvironmentFile(ws, 'Staging')).rejects.toThrow(/EACCES/)
+
+    expect(await fs.readdir(join(ws, 'environments', 'staging', '.state'))).toHaveLength(2)
+    expect(
+      await fs
+        .access(configOf(ws, 'staging'))
+        .then(() => true)
+        .catch(() => false)
+    ).toBe(false)
+  })
+})
