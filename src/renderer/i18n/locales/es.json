@@ -1173,6 +1173,7 @@
   "schemaImport": {
     "title": "Importar esquema",
     "target": "Importando en: {{path}}",
+    "useWorkspaceRoot": "Usar raíz del workspace",
     "source": {
       "file": "Archivo",
       "url": "URL",

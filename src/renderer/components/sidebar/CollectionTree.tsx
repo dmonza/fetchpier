@@ -779,7 +779,11 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
               )}
               style={{ paddingLeft: `${rowPaddingLeftPx(depth)}px` }}
               onClick={() => {
-                useTreeSelectionStore.getState().setSelected(node.path, 'folder')
+                if (isSelectedFolder) {
+                  useTreeSelectionStore.getState().clearSelection()
+                } else {
+                  useTreeSelectionStore.getState().setSelected(node.path, 'folder')
+                }
                 setIsOpen(!isOpen)
               }}
             >
@@ -1620,6 +1624,14 @@ export function CollectionTree({
     // Tab-switch / global chords are not tree navigation.
     if (e.ctrlKey || e.metaKey || e.altKey) return
 
+    if (e.key === 'Escape') {
+      if (useTreeSelectionStore.getState().selectedPath !== null) {
+        e.preventDefault()
+        useTreeSelectionStore.getState().clearSelection()
+      }
+      return
+    }
+
     const visible = flattenVisible(tree, (p) => useTreeStateStore.getState().isExpanded(p))
     if (visible.length === 0) return
     const focused = useTreeSelectionStore.getState().focusedPath
@@ -1750,6 +1762,11 @@ export function CollectionTree({
         // row (roving tabindex). focus:outline-none — the row's own ring is the cue.
         tabIndex={focusedPath ? -1 : 0}
         onKeyDown={handleTreeKeyDown}
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest('[role="treeitem"], input, textarea, button')) {
+            useTreeSelectionStore.getState().clear()
+          }
+        }}
         className={cn(
           'flex-1 overflow-y-auto p-1 focus:outline-none',
           isRootDragOver && 'ring-1 ring-inset ring-primary rounded'
