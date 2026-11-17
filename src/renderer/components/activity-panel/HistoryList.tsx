@@ -3,14 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { RefreshCw, Trash2, Clock, Loader2, ChevronRight, ChevronDown, Check } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useWorkspaceStore } from '../../stores/workspace'
-import { useRequestStore } from '../../stores/request'
 import { useHistoryExpansionStore } from '../../stores/historyExpansion'
-import { useHistoryChipsStore, type OpenRequestChip } from '../../stores/historyChips'
-import {
-  isHistoryChipCandidate,
-  needsRequestIdResolution,
-  resolveTabRequestIds
-} from '../../lib/resolve-tab-request-ids'
+import { useHistoryChipsStore } from '../../stores/historyChips'
+import { useOpenTabChips } from './useOpenTabChips'
+import { useMirroredChips } from './useMirroredChips'
 import {
   hasHistoryRequestFilter,
   historyEntryMatcher,
@@ -29,36 +25,6 @@ import { runHistoryRowAction } from './history-row-actions'
 import { parseActivityLog, type ActivityLogFile } from '../../../shared/lib/activity-log'
 import { RunDetail } from './run-detail/RunDetail'
 import { requestsRunDetailDescriptor } from './run-detail/domains/requests-descriptor'
-
-/**
- * Build a display label for a request chip. Uses the file basename when the
- * request lives at the requests root; otherwise prefixes with the immediate
- * parent folder so two files with the same basename (e.g. two
- * `transcription.http` in different folders) get visually distinct chips.
- */
-function deriveChipLabel(absFilePath: string, workspacePath: string | null): string {
-  const sepCandidates = /[/\\]/
-  let rel = absFilePath
-  if (workspacePath && absFilePath.startsWith(workspacePath)) {
-    rel = absFilePath.slice(workspacePath.length).replace(/^[/\\]+/, '')
-  }
-  // Strip the "requests/" prefix (common to every request file) and the .http suffix.
-  rel = rel.replace(/^requests[/\\]/i, '').replace(/\.http$/i, '')
-  const parts = rel.split(sepCandidates).filter(Boolean)
-  if (parts.length === 0) return absFilePath
-  if (parts.length === 1) return parts[0]!
-  // Show parent/basename when nested — keeps the chip compact but disambiguates.
-  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`
-}
-
-/**
- * Workspace-relative path of a request file, as a send records it in
- * `# @source-file` (`RequestEditor`); `null` outside the workspace.
- */
-function workspaceRelative(absFilePath: string, workspacePath: string | null): string | null {
-  if (!workspacePath || !absFilePath.startsWith(workspacePath)) return null
-  return absFilePath.slice(workspacePath.length).replace(/^[/\\]+/, '')
-}
 
 function formatTimestamp(iso: string): string {
   try {
@@ -102,7 +68,8 @@ interface HistoryListProps {
   variant?: 'sidebar' | 'panel'
   /**
    * 'popout' = rendered in the detached Activity window, which has no tab bar:
-   * row actions run in the main window that owns it (ISS-0164).
+   * row actions run in the main window that owns it (ISS-0164), and the chips
+   * are the main window's, toggled there (ISS-0073).
    */
   mode?: 'docked' | 'popout'
 }
@@ -133,64 +100,41 @@ export function HistoryList({
   const setExpansionError = useHistoryExpansionStore((s) => s.setError)
   const resetExpansion = useHistoryExpansionStore((s) => s.reset)
 
-  const allTabs = useRequestStore((s) => s.tabs)
   const chips = useHistoryChipsStore((s) => s.chips)
-  const syncChips = useHistoryChipsStore((s) => s.syncChips)
   const toggleChip = useHistoryChipsStore((s) => s.toggleChip)
-  const resetChips = useHistoryChipsStore((s) => s.reset)
 
-  // ISS-0081: a restored tab carries a session-random id until its file is
-  // read. Read the unresolved tabs' `# @id` now that the history is shown (not
-  // at session restore), and leave them out of the chip set until then — a
-  // checked chip with a random id would hide the request's runs.
-  const unresolvedCount = allTabs.filter(needsRequestIdResolution).length
-  useEffect(() => {
-    if (unresolvedCount > 0) void resolveTabRequestIds()
-  }, [allTabs, unresolvedCount])
-  // Mirror the open editor tabs into the chip set. Tabs without a `filePath`
-  // (untitled), read-only history views, or raw `.http` views are excluded —
-  // they'd be unhelpful labels with no source identity. Each render syncs:
-  // new tabs add chips (checked by default), closed tabs remove their chip,
-  // existing chips keep their checked state. A file with no `# @id` also
-  // matches its runs by path (its sends each recorded a session's own id).
-  // One chip per request id, as `syncChips` keeps: two files can share an `# @id`.
-  const openChips = useMemo(() => {
-    const seen = new Set<string>()
-    return allTabs
-      .filter(
-        (t) =>
-          isHistoryChipCandidate(t) &&
-          t.requestIdSource !== undefined &&
-          !seen.has(t.requestId) &&
-          seen.add(t.requestId)
-      )
-      .map((t) => {
-        const chip: OpenRequestChip = {
-          requestId: t.requestId,
-          label: deriveChipLabel(t.filePath!, workspacePath)
-        }
-        const sourceFile =
-          t.requestIdSource === 'generated' ? workspaceRelative(t.filePath!, workspacePath) : null
-        if (sourceFile) chip.sourceFile = sourceFile
-        return chip
-      })
-  }, [allTabs, workspacePath])
-  // `chips` is a dependency so a reset (workspace change) re-syncs; syncChips
-  // is a no-op when nothing differs.
-  useEffect(() => {
-    syncChips(openChips)
-  }, [openChips, chips, syncChips])
+  // Docked, the chips follow this window's open tabs. In the popout (no tabs)
+  // they are the main window's set, mirrored over IPC (ISS-0073).
+  const ownChipsInSync = useOpenTabChips(mode === 'docked')
+  const mirrorArrived = useMirroredChips(mode === 'popout')
 
-  // The first listing waits until every tab's id is read and the chips mirror
-  // them, so it never lists by random ids. Later, a tab opened while the panel
-  // is shown only adds its chip once read.
-  const chipsInSync =
-    chips.length === openChips.length &&
-    chips.every(
-      (c, i) => c.requestId === openChips[i]!.requestId && c.sourceFile === openChips[i]!.sourceFile
-    )
+  // The first listing waits until the chip set is complete — every tab's id
+  // read and the chips mirroring them, or the main window's set received — so
+  // it never lists by random ids or by no filter at all. Later, a tab opened
+  // while the panel is shown only adds its chip once read.
+  const chipSetComplete = mode === 'popout' ? mirrorArrived : ownChipsInSync
   const [chipsReady, setChipsReady] = useState(false)
-  if (!chipsReady && unresolvedCount === 0 && chipsInSync) setChipsReady(true)
+  if (!chipsReady && chipSetComplete) setChipsReady(true)
+
+  // A chip click: the popout's set belongs to the main window, which toggles
+  // it and publishes the result back.
+  const handleChipClick = useCallback(
+    (requestId: string): void => {
+      if (mode === 'docked') {
+        toggleChip(requestId)
+        return
+      }
+      window.api.activityPanel
+        .toggleChipInOwner(requestId)
+        .then((delivered) => {
+          if (!delivered) console.error('[HistoryList] The main window did not take the chip')
+        })
+        .catch((err: unknown) =>
+          console.error('[HistoryList] Failed to reach the main window:', err)
+        )
+    },
+    [mode, toggleChip]
+  )
 
   // The requests the user wants to see. Empty ⇒ show all (no filter).
   const checkedFilter = useMemo(() => {
@@ -233,17 +177,16 @@ export function HistoryList({
     setHasMore(true)
   }
 
-  // Reset expansion + chip state ONLY on a real workspace change. The initial
-  // mount must not reset — otherwise it would wipe chips populated by the
-  // sync-with-open-tabs effect (or wipe expansion cache from another open
-  // panel instance).
+  // Reset expansion state ONLY on a real workspace change. The initial mount
+  // must not reset — otherwise it would wipe the expansion cache from another
+  // open panel instance. The chips reset in `useOpenTabChips` (docked); the
+  // popout's set is replaced by the main window's next one.
   const prevWorkspaceForResetRef = useRef(workspacePath)
   useEffect(() => {
     if (prevWorkspaceForResetRef.current === workspacePath) return
     prevWorkspaceForResetRef.current = workspacePath
     resetExpansion()
-    resetChips()
-  }, [workspacePath, resetExpansion, resetChips])
+  }, [workspacePath, resetExpansion])
 
   // The IPC filters by the checked chips before its `limit`, so each page holds
   // only matching runs. Filtering here too keeps the rows right while a reload
@@ -452,7 +395,7 @@ export function HistoryList({
         <button
           key={chip.requestId}
           type="button"
-          onClick={() => toggleChip(chip.requestId)}
+          onClick={() => handleChipClick(chip.requestId)}
           aria-pressed={chip.checked}
           title={chip.checked ? t('history.chips.uncheck') : t('history.chips.check')}
           className={cn(

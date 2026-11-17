@@ -15,6 +15,10 @@ import { createRoot, type Root } from 'react-dom/client'
 vi.mock('./ActivityPanel', () => ({
   ActivityPanel: (): null => null
 }))
+// Covered by PopoutChipsPublisher.test.tsx; only runs while detached.
+vi.mock('./PopoutChipsPublisher', () => ({
+  PopoutChipsPublisher: (): null => null
+}))
 
 import { ActivityPanelHost } from './ActivityPanelHost'
 import { useActivityPanelStore } from '../../stores/activityPanel'

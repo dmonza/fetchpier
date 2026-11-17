@@ -1810,6 +1810,23 @@ export type ActivityPanelRowAction =
   /** Open the request file the run was sent from (workspace-relative). */
   | { kind: 'open-source-file'; sourceFile: string }
 
+/**
+ * One request chip of the History list, as the main window mirrors its chip
+ * set to the Activity popout (owner → `activityPanel:publishChips` → popout's
+ * `activity-panel:chips-changed`), ISS-0073. Validated by
+ * `parseActivityPanelChips`.
+ */
+export interface ActivityPanelChip {
+  /** The request's stable id (matches `HistoryEntryListItem.requestId`). */
+  requestId: string
+  /** Display label (`folder/name`). */
+  label: string
+  /** Whether the chip filters the list. */
+  checked: boolean
+  /** Workspace-relative path, only for a file with no `# @id` (its runs match by path). */
+  sourceFile?: string
+}
+
 // ── Updates ────────────────────────────────────────────────────────────────
 
 /** Global update-check preferences stored inside `AppSettings.updates`. */

@@ -5,6 +5,7 @@ import {
   useActivityPanelStore
 } from '../../stores/activityPanel'
 import { LazyBoundary } from '../ui/LazyBoundary'
+import { PopoutChipsPublisher } from './PopoutChipsPublisher'
 
 // Code-split off the renderer cold path (PLAN-0121): the activity panel is opt-in
 // and closed at launch, yet its run-detail view statically pulls the CodeMirror
@@ -15,7 +16,8 @@ const ActivityPanel = lazy(() =>
 
 /**
  * Docked host for the activity panel. Mounted once at the top of <AppLayout/>.
- * Renders nothing unless the panel is open AND not detached.
+ * Renders the panel only when it is open AND not detached; while detached it
+ * runs the chip publisher for the popout (no DOM).
  *
  * The panel is positioned as an absolute overlay anchored to the bottom of the
  * main content area — it covers the editor/response split but sits BELOW the
@@ -94,6 +96,8 @@ export function ActivityPanelHost(): React.JSX.Element | null {
     return () => window.removeEventListener('resize', onResize)
   }, [isVisible, setHeight])
 
+  // Detached: the popout shows this window's request chips (ISS-0073).
+  if (isDetached) return <PopoutChipsPublisher />
   if (!isVisible) return null
 
   return (

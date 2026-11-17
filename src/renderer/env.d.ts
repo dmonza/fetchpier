@@ -40,6 +40,7 @@ import type {
   ClientCertPreview,
   ActivityPanelPopoutEvent,
   ActivityPanelRowAction,
+  ActivityPanelChip,
   RequestUiState,
   RequestUiStateMap,
   StagedBinaryEntry,
@@ -318,6 +319,11 @@ declare global {
         onPopoutChanged: (callback: (event: ActivityPanelPopoutEvent) => void) => () => void
         openInOwner: (action: ActivityPanelRowAction) => Promise<boolean>
         onRowAction: (callback: (action: ActivityPanelRowAction) => void) => () => void
+        publishChips: (chips: ActivityPanelChip[]) => Promise<boolean>
+        getChips: () => Promise<ActivityPanelChip[] | null>
+        onChipsChanged: (callback: (chips: ActivityPanelChip[]) => void) => () => void
+        toggleChipInOwner: (requestId: string) => Promise<boolean>
+        onChipToggle: (callback: (requestId: string) => void) => () => void
       }
       uiState: {
         read: (requestId: string) => Promise<RequestUiState | null>

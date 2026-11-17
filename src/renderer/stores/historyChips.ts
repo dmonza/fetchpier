@@ -14,6 +14,9 @@
 //     whose `requestId` matches a checked chip.
 //   - When no chip is checked, the History list shows all entries.
 //   - Never persisted. Cleared when the workspace changes.
+//   - The Activity popout has no tabs: its set is the main window's, applied
+//     with `applyMirror` from the owner's broadcasts (ISS-0073), and its chip
+//     clicks go to the owner instead of `toggleChip`.
 
 import { create } from 'zustand'
 
@@ -41,6 +44,8 @@ export interface OpenRequestChip {
 
 export interface HistoryChipsState {
   chips: RequestChip[]
+  /** Popout only: whether a set mirrored from the main window has arrived. */
+  mirrored: boolean
   /**
    * Reconcile chips with the currently open tabs. New tabs add a chip
    * checked-by-default; closed tabs remove their chip; existing chips
@@ -51,12 +56,15 @@ export interface HistoryChipsState {
   syncChips: (openChips: OpenRequestChip[]) => void
   /** Flip the checked flag for a single chip. */
   toggleChip: (requestId: string) => void
+  /** Popout only: replace the set with the main window's (ISS-0073). */
+  applyMirror: (chips: RequestChip[]) => void
   /** Reset everything — call when the workspace changes. */
   reset: () => void
 }
 
 export const useHistoryChipsStore = create<HistoryChipsState>()((set) => ({
   chips: [],
+  mirrored: false,
 
   syncChips: (allOpenChips) =>
     set((s) => {
@@ -95,5 +103,7 @@ export const useHistoryChipsStore = create<HistoryChipsState>()((set) => ({
       chips: s.chips.map((c) => (c.requestId === requestId ? { ...c, checked: !c.checked } : c))
     })),
 
-  reset: () => set({ chips: [] })
+  applyMirror: (chips) => set({ chips: chips.map((c) => ({ ...c })), mirrored: true }),
+
+  reset: () => set({ chips: [], mirrored: false })
 }))

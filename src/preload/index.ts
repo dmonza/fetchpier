@@ -48,6 +48,7 @@ import type {
   ClientCertPreview,
   ActivityPanelPopoutEvent,
   ActivityPanelRowAction,
+  ActivityPanelChip,
   RequestUiState,
   RequestUiStateMap,
   StagedBinaryEntry,
@@ -574,6 +575,27 @@ const api = {
         callback(payload)
       ipcRenderer.on('activity-panel:row-action', handler)
       return () => ipcRenderer.removeListener('activity-panel:row-action', handler)
+    },
+    /** Main window, while detached: publish its request chip set to the popout (ISS-0073). */
+    publishChips: (chips: ActivityPanelChip[]): Promise<boolean> =>
+      invoke('activityPanel:publishChips', chips),
+    /** Popout only: the owner's last published chip set, or `null` before one. */
+    getChips: (): Promise<ActivityPanelChip[] | null> => invoke('activityPanel:getChips'),
+    /** Popout: the owner published a new chip set. */
+    onChipsChanged: (callback: (chips: ActivityPanelChip[]) => void): (() => void) => {
+      const handler = (_: Electron.IpcRendererEvent, payload: ActivityPanelChip[]): void =>
+        callback(payload)
+      ipcRenderer.on('activity-panel:chips-changed', handler)
+      return () => ipcRenderer.removeListener('activity-panel:chips-changed', handler)
+    },
+    /** Popout only: toggle a mirrored chip in the owner, which owns the set. */
+    toggleChipInOwner: (requestId: string): Promise<boolean> =>
+      invoke('activityPanel:toggleChipInOwner', requestId),
+    /** Main window: a chip toggled in the popout, to toggle here. */
+    onChipToggle: (callback: (requestId: string) => void): (() => void) => {
+      const handler = (_: Electron.IpcRendererEvent, requestId: string): void => callback(requestId)
+      ipcRenderer.on('activity-panel:chip-toggle', handler)
+      return () => ipcRenderer.removeListener('activity-panel:chip-toggle', handler)
     }
   },
 

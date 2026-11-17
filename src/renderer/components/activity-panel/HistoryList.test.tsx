@@ -106,10 +106,16 @@ interface ApiMock {
   }
   activityPanel: {
     openInOwner: ReturnType<typeof vi.fn>
+    getChips: ReturnType<typeof vi.fn>
+    onChipsChanged: ReturnType<typeof vi.fn>
+    toggleChipInOwner: ReturnType<typeof vi.fn>
   }
   /** The callback HistoryList handed to `history.onChanged`, if any. */
   emitChanged: () => void
   unsubscribeChanged: ReturnType<typeof vi.fn>
+  /** Deliver a chip set as the owner's broadcast would (ISS-0073). */
+  emitChips: (chips: unknown) => void
+  unsubscribeChips: ReturnType<typeof vi.fn>
 }
 
 function installApi(
@@ -118,6 +124,8 @@ function installApi(
 ): ApiMock {
   let changedCallback: (() => void) | null = null
   const unsubscribeChanged = vi.fn()
+  let chipsCallback: ((chips: unknown) => void) | null = null
+  const unsubscribeChips = vi.fn()
   const api: ApiMock = {
     history: {
       list: vi.fn().mockResolvedValue(items),
@@ -133,10 +141,19 @@ function installApi(
       fileExists: vi.fn().mockResolvedValue(true)
     },
     activityPanel: {
-      openInOwner: vi.fn().mockResolvedValue(true)
+      openInOwner: vi.fn().mockResolvedValue(true),
+      // The owner has published an empty set (no open request tabs).
+      getChips: vi.fn().mockResolvedValue([]),
+      onChipsChanged: vi.fn((cb: (chips: unknown) => void) => {
+        chipsCallback = cb
+        return unsubscribeChips
+      }),
+      toggleChipInOwner: vi.fn().mockResolvedValue(true)
     },
     emitChanged: () => changedCallback?.(),
-    unsubscribeChanged
+    unsubscribeChanged,
+    emitChips: (chips) => chipsCallback?.(chips),
+    unsubscribeChips
   }
   ;(window as unknown as { api: ApiMock }).api = api
   return api
@@ -446,6 +463,7 @@ describe('HistoryList — popout row actions run in the owning main window', () 
   beforeEach(() => {
     document.body.replaceChildren()
     useHistoryExpansionStore.getState().reset()
+    useHistoryChipsStore.getState().reset()
     requestStoreState.openTab.mockClear()
   })
 
@@ -537,6 +555,151 @@ describe('HistoryList — popout row actions run in the owning main window', () 
     await contextMenuItem(container, 'history.contextMenu.open')
     expect(api.activityPanel.openInOwner).not.toHaveBeenCalled()
     expect(requestStoreState.openTab).toHaveBeenCalledTimes(1)
+    unmount(root, container)
+  })
+})
+
+// ISS-0073: the popout has no tabs. It shows the main window's chip set, filters
+// by it, and a chip clicked there is toggled by the main window.
+describe('HistoryList — the popout shows and filters by the main window chips', () => {
+  const savedTabs = requestStoreState.tabs
+  const MIRROR = [
+    { requestId: 'req-1', label: 'auth/bearer', checked: true },
+    { requestId: 'req-2', label: 'other', checked: false },
+    { requestId: 'req-3', label: 'notes', checked: true, sourceFile: 'requests/notes.http' }
+  ]
+  const lastListArg = (api: ApiMock): unknown => api.history.list.mock.calls.at(-1)?.[0]
+  const chipButtons = (container: HTMLElement): HTMLButtonElement[] =>
+    Array.from(container.querySelectorAll('button[aria-pressed]'))
+
+  beforeEach(() => {
+    document.body.replaceChildren()
+    useHistoryExpansionStore.getState().reset()
+    useHistoryChipsStore.getState().reset()
+  })
+  afterEach(() => {
+    requestStoreState.tabs = savedTabs
+    useHistoryChipsStore.getState().reset()
+  })
+
+  it('lists nothing until the main window set arrives, then lists by it', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    api.activityPanel.getChips.mockResolvedValue(null)
+    const { container, root } = await mountList('popout')
+    expect(api.history.list).not.toHaveBeenCalled()
+    expect(container.querySelector('.animate-spin')).not.toBeNull()
+    await act(async () => {
+      api.emitChips(MIRROR)
+    })
+    await flush()
+    expect(lastListArg(api)).toEqual({
+      requestIds: ['req-1', 'req-3'],
+      sourceFiles: ['requests/notes.http'],
+      limit: 50
+    })
+    unmount(root, container)
+  })
+
+  it('shows the mirrored chips with their checked state and filters by the checked ones', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    api.activityPanel.getChips.mockResolvedValue(MIRROR)
+    const { container, root } = await mountList('popout')
+    expect(api.history.list).toHaveBeenCalledTimes(1)
+    expect(lastListArg(api)).toEqual({
+      requestIds: ['req-1', 'req-3'],
+      sourceFiles: ['requests/notes.http'],
+      limit: 50
+    })
+    expect(
+      chipButtons(container).map((b) => [b.textContent, b.getAttribute('aria-pressed')])
+    ).toEqual([
+      ['auth/bearer', 'true'],
+      ['other', 'false'],
+      ['notes', 'true']
+    ])
+    expect(container.textContent).toContain('https://api.example.com/foo')
+    unmount(root, container)
+  })
+
+  it('with no mirrored chip checked, lists every run', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    api.activityPanel.getChips.mockResolvedValue(MIRROR.map((c) => ({ ...c, checked: false })))
+    const { container, root } = await mountList('popout')
+    expect(lastListArg(api)).toEqual({ limit: 50 })
+    unmount(root, container)
+  })
+
+  it('a later set from the main window re-filters the list', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    api.activityPanel.getChips.mockResolvedValue(MIRROR)
+    const { container, root } = await mountList('popout')
+    await act(async () => {
+      api.emitChips([{ requestId: 'req-2', label: 'other', checked: true }])
+    })
+    await flush()
+    expect(lastListArg(api)).toEqual({ requestIds: ['req-2'], limit: 50 })
+    expect(chipButtons(container).map((b) => b.textContent)).toEqual(['other'])
+    unmount(root, container)
+  })
+
+  it('a chip click asks the main window to toggle it and changes nothing here', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    api.activityPanel.getChips.mockResolvedValue(MIRROR)
+    const { container, root } = await mountList('popout')
+    const listCalls = api.history.list.mock.calls.length
+    await act(async () => {
+      chipButtons(container)[0]!.click()
+    })
+    await flush()
+    expect(api.activityPanel.toggleChipInOwner).toHaveBeenCalledWith('req-1')
+    expect(chipButtons(container)[0]!.getAttribute('aria-pressed')).toBe('true')
+    expect(api.history.list.mock.calls.length).toBe(listCalls)
+    unmount(root, container)
+  })
+
+  it('a pull answered after a broadcast does not replace the newer set', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    let answerPull: (chips: unknown) => void = () => {}
+    api.activityPanel.getChips.mockReturnValue(
+      new Promise((resolve) => {
+        answerPull = resolve
+      })
+    )
+    const { container, root } = await mountList('popout')
+    await act(async () => {
+      api.emitChips([{ requestId: 'req-2', label: 'other', checked: true }])
+    })
+    await flush()
+    await act(async () => {
+      answerPull(MIRROR)
+    })
+    await flush()
+    expect(lastListArg(api)).toEqual({ requestIds: ['req-2'], limit: 50 })
+    unmount(root, container)
+  })
+
+  it("ignores the popout's own tab store, and stops listening once unmounted", async () => {
+    requestStoreState.tabs = [
+      { ...TAB, requestId: 'req-own', filePath: '/ws/requests/own.http' } as typeof TAB
+    ]
+    const api = installApi([ITEM_A], async () => RAW)
+    api.activityPanel.getChips.mockResolvedValue(MIRROR)
+    const { container, root } = await mountList('popout')
+    expect(chipButtons(container).map((b) => b.textContent)).toEqual([
+      'auth/bearer',
+      'other',
+      'notes'
+    ])
+    expect(useHistoryChipsStore.getState().chips.some((c) => c.requestId === 'req-own')).toBe(false)
+    unmount(root, container)
+    expect(api.unsubscribeChips).toHaveBeenCalledTimes(1)
+  })
+
+  it('the docked list neither pulls nor listens for a mirrored set', async () => {
+    const api = installApi([ITEM_A], async () => RAW)
+    const { container, root } = await mountList('docked')
+    expect(api.activityPanel.getChips).not.toHaveBeenCalled()
+    expect(api.activityPanel.onChipsChanged).not.toHaveBeenCalled()
     unmount(root, container)
   })
 })

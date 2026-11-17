@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain, webContents } from 'electron'
-import type { ActivityPanelPopoutEvent } from '../../shared/types'
+import type { ActivityPanelChip, ActivityPanelPopoutEvent } from '../../shared/types'
 import { parseActivityPanelRowAction } from '../../shared/lib/activity-panel-row-action'
+import { parseActivityPanelChips, parseChipRequestId } from '../../shared/lib/activity-panel-chips'
 import { resolveInsideActiveWorkspace } from '../fs/safe-path'
 import { createActivityPanelWindow } from '../window/create-activity-panel-window'
 
@@ -12,6 +13,12 @@ import { createActivityPanelWindow } from '../window/create-activity-panel-windo
  */
 let popoutWindow: BrowserWindow | null = null
 let ownerWebContentsId: number | null = null
+/**
+ * ISS-0073: the owner's request chip set, as it last published it while the
+ * popout is open. The popout pulls it on mount (a broadcast sent before its
+ * renderer listened is lost). Cleared whenever the popout goes.
+ */
+let mirroredChips: ActivityPanelChip[] | null = null
 
 function broadcastToOwner(payload: ActivityPanelPopoutEvent): void {
   if (ownerWebContentsId === null) return
@@ -32,6 +39,23 @@ function isAlive(win: BrowserWindow | null): win is BrowserWindow {
 export function __resetActivityPanelState(): void {
   popoutWindow = null
   ownerWebContentsId = null
+  mirroredChips = null
+}
+
+/** The live owner's contents, or `null` when it is gone. */
+function ownerContents(): Electron.WebContents | null {
+  const target = ownerWebContentsId !== null ? webContents.fromId(ownerWebContentsId) : null
+  return target && !target.isDestroyed() ? target : null
+}
+
+function isPopoutSender(sender: { id: number }): boolean {
+  return isAlive(popoutWindow) && sender.id === popoutWindow.webContents.id
+}
+
+/** Logs a refused call by channel and reason — never the payload. */
+function refuseCall(channel: string, why: string): false {
+  console.warn(`[activity-panel] Refused "${channel}": ${why}`)
+  return false
 }
 
 export function registerActivityPanelHandlers(): void {
@@ -41,6 +65,7 @@ export function registerActivityPanelHandlers(): void {
     }
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
     ownerWebContentsId = event.sender.id
+    mirroredChips = null
     popoutWindow = createActivityPanelWindow(owner)
 
     const ownerIdSnapshot = ownerWebContentsId
@@ -51,6 +76,7 @@ export function registerActivityPanelHandlers(): void {
       if (popoutWindow && popoutWindow.isDestroyed()) {
         popoutWindow = null
         ownerWebContentsId = null
+        mirroredChips = null
       }
     })
     // Use 'close' (fires before destruction) so we can still reach the owner.
@@ -70,6 +96,7 @@ export function registerActivityPanelHandlers(): void {
       }
       popoutWindow = null
       ownerWebContentsId = null
+      mirroredChips = null
     })
 
     broadcastToOwner({ detached: true })
@@ -95,6 +122,7 @@ export function registerActivityPanelHandlers(): void {
       } satisfies ActivityPanelPopoutEvent)
     }
     ownerWebContentsId = null
+    mirroredChips = null
     win.close()
     return { ok: true }
   })
@@ -141,6 +169,49 @@ export function registerActivityPanelHandlers(): void {
       if (ownerWindow.isMinimized()) ownerWindow.restore()
       ownerWindow.focus()
     }
+    return true
+  })
+
+  /**
+   * ISS-0073: the owner publishes its request chip set while the popout is
+   * open; main keeps the validated copy and sends it to the popout only.
+   * Accepted only from the owner's contents. Returns whether it was taken.
+   */
+  ipcMain.handle('activityPanel:publishChips', (event, payload: unknown): boolean => {
+    const channel = 'activityPanel:publishChips'
+    if (!isAlive(popoutWindow)) return refuseCall(channel, 'no popout')
+    if (ownerWebContentsId === null || event.sender.id !== ownerWebContentsId) {
+      return refuseCall(channel, 'sender is not the owner')
+    }
+    const chips = parseActivityPanelChips(payload)
+    if (!chips) return refuseCall(channel, 'invalid chip set')
+    mirroredChips = chips
+    if (!popoutWindow.webContents.isDestroyed()) {
+      popoutWindow.webContents.send('activity-panel:chips-changed', chips)
+    }
+    return true
+  })
+
+  /** The popout's pull of the owner's last published chip set (`null`: none yet). */
+  ipcMain.handle('activityPanel:getChips', (event): ActivityPanelChip[] | null =>
+    isPopoutSender(event.sender) ? mirroredChips : null
+  )
+
+  /**
+   * A chip toggled in the popout is toggled by the owner, which owns the set
+   * and publishes the result. Accepted only from the popout, for an id of the
+   * mirrored set. Opens nothing, so the owner is not brought to the front.
+   */
+  ipcMain.handle('activityPanel:toggleChipInOwner', (event, payload: unknown): boolean => {
+    const channel = 'activityPanel:toggleChipInOwner'
+    if (!isPopoutSender(event.sender)) return refuseCall(channel, 'sender is not the popout')
+    const requestId = parseChipRequestId(payload)
+    if (requestId === null || !mirroredChips?.some((c) => c.requestId === requestId)) {
+      return refuseCall(channel, 'not a mirrored chip')
+    }
+    const target = ownerContents()
+    if (!target) return refuseCall(channel, 'owner window is gone')
+    target.send('activity-panel:chip-toggle', requestId)
     return true
   })
 }

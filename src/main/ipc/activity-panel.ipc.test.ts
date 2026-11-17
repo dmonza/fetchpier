@@ -139,12 +139,16 @@ function registerOwner(senderId: number): { sender: { id: number } } {
 }
 
 describe('activity-panel IPC handlers', () => {
-  it('registers the five expected channels', () => {
+  it('registers the eight expected channels', () => {
     expect(handlers.has('activityPanel:popout')).toBe(true)
     expect(handlers.has('activityPanel:dock')).toBe(true)
     expect(handlers.has('activityPanel:focusPopout')).toBe(true)
     expect(handlers.has('activityPanel:isPoppedOut')).toBe(true)
     expect(handlers.has('activityPanel:openInOwner')).toBe(true)
+    expect(handlers.has('activityPanel:publishChips')).toBe(true)
+    expect(handlers.has('activityPanel:getChips')).toBe(true)
+    expect(handlers.has('activityPanel:toggleChipInOwner')).toBe(true)
+    expect(handlers.size).toBe(8)
   })
 
   it('popout creates a window and broadcasts detached=true to the owner only', async () => {
@@ -337,5 +341,157 @@ describe('activityPanel:openInOwner', () => {
     ;(ownerWc as unknown as { isDestroyed: () => boolean }).isDestroyed = () => true
     expect(await openInOwner(popoutEvent, VIEW)).toBe(false)
     expect(ownerWc.send).not.toHaveBeenCalled()
+  })
+})
+
+// ISS-0073: the popout shows the owner's request chips. The owner publishes its
+// set, main caches it and sends it to the popout; a chip toggled in the popout
+// goes back to the owner, which owns the state.
+describe('activity panel chip mirror', () => {
+  const CHIPS = [
+    { requestId: 'req-1', label: 'auth/bearer', checked: true },
+    { requestId: 'req-2', label: 'notes', checked: false, sourceFile: 'requests/notes.http' }
+  ]
+  const OWNER = { sender: { id: 42 } }
+
+  async function popOut(): Promise<{
+    popoutEvent: { sender: { id: number } }
+    ownerWc: FakeWindow['webContents']
+    popoutWc: FakeWindow['webContents']
+    ownerWin: FakeOwnerWindow
+  }> {
+    const ownerWin: FakeOwnerWindow = {
+      isDestroyed: () => false,
+      isMinimized: vi.fn(() => false),
+      restore: vi.fn(),
+      focus: vi.fn()
+    }
+    ownerWindows.set(42, ownerWin)
+    await handlers.get('activityPanel:popout')!(registerOwner(42))
+    const ownerWc = webContentsByOwner.get(42)!
+    ownerWc.send.mockClear()
+    const popoutWc = createdWindows.at(-1)!.webContents
+    return { popoutEvent: { sender: { id: popoutWc.id } }, ownerWc, popoutWc, ownerWin }
+  }
+
+  const publish = (event: { sender: { id: number } }, payload: unknown): unknown =>
+    handlers.get('activityPanel:publishChips')!(event, payload)
+  const getChips = (event: { sender: { id: number } }): unknown =>
+    handlers.get('activityPanel:getChips')!(event)
+  const toggle = (event: { sender: { id: number } }, id: unknown): unknown =>
+    handlers.get('activityPanel:toggleChipInOwner')!(event, id)
+
+  describe('activityPanel:publishChips', () => {
+    it("sends the owner's validated set to the popout only", async () => {
+      const { ownerWc, popoutWc } = await popOut()
+      const sent = [{ ...CHIPS[0], extra: 'x' }, CHIPS[1]]
+      expect(await publish(OWNER, sent)).toBe(true)
+      expect(popoutWc.send).toHaveBeenCalledTimes(1)
+      expect(popoutWc.send).toHaveBeenCalledWith('activity-panel:chips-changed', CHIPS)
+      expect(ownerWc.send).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['the popout itself', 'popout'],
+      ['an unrelated sender', 'other']
+    ])('refuses a set from %s', async (_label, who) => {
+      const { popoutEvent, popoutWc } = await popOut()
+      const event = who === 'popout' ? popoutEvent : { sender: { id: 7 } }
+      expect(await publish(event, CHIPS)).toBe(false)
+      expect(popoutWc.send).not.toHaveBeenCalled()
+      expect(await getChips(popoutEvent)).toBeNull()
+    })
+
+    it('refuses an invalid set and keeps the last valid one', async () => {
+      const { popoutEvent, popoutWc } = await popOut()
+      await publish(OWNER, CHIPS)
+      popoutWc.send.mockClear()
+      expect(await publish(OWNER, [{ requestId: 'req-1', label: 'x', checked: 'yes' }])).toBe(false)
+      expect(await publish(OWNER, null)).toBe(false)
+      expect(popoutWc.send).not.toHaveBeenCalled()
+      expect(await getChips(popoutEvent)).toEqual(CHIPS)
+    })
+
+    it('refuses a set when no popout exists', async () => {
+      registerOwner(42)
+      expect(await publish(OWNER, CHIPS)).toBe(false)
+    })
+  })
+
+  describe('activityPanel:getChips', () => {
+    it('gives the popout the last published set, and nothing before one', async () => {
+      const { popoutEvent } = await popOut()
+      expect(await getChips(popoutEvent)).toBeNull()
+      await publish(OWNER, CHIPS)
+      expect(await getChips(popoutEvent)).toEqual(CHIPS)
+    })
+
+    it('gives any other sender nothing', async () => {
+      await popOut()
+      await publish(OWNER, CHIPS)
+      expect(await getChips(OWNER)).toBeNull()
+      expect(await getChips({ sender: { id: 7 } })).toBeNull()
+    })
+
+    it.each(['dock', 'close'])('forgets the set once the popout goes (%s)', async (how) => {
+      await popOut()
+      await publish(OWNER, CHIPS)
+      if (how === 'dock') await handlers.get('activityPanel:dock')!(OWNER)
+      else createdWindows[0]!.__emit('close')
+      const { popoutEvent } = await popOut()
+      expect(await getChips(popoutEvent)).toBeNull()
+    })
+  })
+
+  describe('activityPanel:toggleChipInOwner', () => {
+    it('forwards a mirrored id to the owner only, without bringing it to the front', async () => {
+      const { popoutEvent, ownerWc, popoutWc, ownerWin } = await popOut()
+      await publish(OWNER, CHIPS)
+      popoutWc.send.mockClear()
+      expect(await toggle(popoutEvent, 'req-2')).toBe(true)
+      expect(ownerWc.send).toHaveBeenCalledWith('activity-panel:chip-toggle', 'req-2')
+      expect(popoutWc.send).not.toHaveBeenCalled()
+      expect(ownerWin.focus).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['the owner itself', OWNER],
+      ['an unrelated sender', { sender: { id: 7 } }]
+    ])('refuses a toggle from %s', async (_label, event) => {
+      const { ownerWc } = await popOut()
+      await publish(OWNER, CHIPS)
+      expect(await toggle(event, 'req-1')).toBe(false)
+      expect(ownerWc.send).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['an id the set does not hold', 'req-9'],
+      ['an invalid id', { id: 'req-1' }],
+      ['an empty id', '']
+    ])('refuses %s', async (_label, id) => {
+      const { popoutEvent, ownerWc } = await popOut()
+      await publish(OWNER, CHIPS)
+      expect(await toggle(popoutEvent, id)).toBe(false)
+      expect(ownerWc.send).not.toHaveBeenCalled()
+    })
+
+    it('refuses before any set was published', async () => {
+      const { popoutEvent, ownerWc } = await popOut()
+      expect(await toggle(popoutEvent, 'req-1')).toBe(false)
+      expect(ownerWc.send).not.toHaveBeenCalled()
+    })
+
+    it('refuses when no popout exists', async () => {
+      registerOwner(42)
+      expect(await toggle({ sender: { id: 100 } }, 'req-1')).toBe(false)
+    })
+
+    it('refuses when the owner is gone', async () => {
+      const { popoutEvent, ownerWc } = await popOut()
+      await publish(OWNER, CHIPS)
+      ;(ownerWc as unknown as { isDestroyed: () => boolean }).isDestroyed = () => true
+      expect(await toggle(popoutEvent, 'req-1')).toBe(false)
+      expect(ownerWc.send).not.toHaveBeenCalled()
+    })
   })
 })
