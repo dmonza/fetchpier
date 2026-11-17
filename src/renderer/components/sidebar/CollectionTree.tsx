@@ -15,7 +15,7 @@ import { tabsAffectedBy } from './tabs-affected'
 import { resolveRenameBlur } from './rename-blur'
 import { flattenVisible, resolveTreeKey, typeAheadMatch } from './tree-nav'
 import { treeRowStateClass } from './tree-row-style'
-import { treeNameErrorMessage } from './tree-name-error'
+import { treeMutationErrorToast, treeNameErrorMessage } from './tree-name-error'
 import { beginRepoint, endRepoint } from '../../lib/repoint-guard'
 import { collectAllPaths } from '../../lib/tree-paths'
 import { useEnvironmentStore } from '../../stores/environment'
@@ -1245,12 +1245,12 @@ export function CollectionTree({
           lift()
         }
       } catch (err) {
-        const nameError = treeNameErrorMessage(err, finalName.replace(/\.http$/, ''), t)
-        if (nameError) {
-          useToastStore.getState().push(nameError, { type: 'error' })
-        } else {
+        // ISS-0175: every failure is shown (a non-name one used to be console-only).
+        const name = finalName.replace(/\.http$/, '')
+        if (!treeNameErrorMessage(err, name, t))
           console.error('[CollectionTree] Failed to rename:', err)
-        }
+        const { message, durationMs } = treeMutationErrorToast(err, 'rename', name, t)
+        useToastStore.getState().push(message, { type: 'error', durationMs })
       }
     },
     [workspacePath, toRelPath, t]
@@ -1334,14 +1334,12 @@ export function CollectionTree({
     setMovingNode(node)
   }, [])
 
-  /** Map an `fs:move` rejection to a user-facing message via its MOVE_* token. */
-  const describeMoveError = useCallback(
-    (err: unknown, sourcePath: string): string => {
+  /** Toast an `fs:move` rejection (MOVE_* tokens, a failed undo, or the generic message). */
+  const toastMoveError = useCallback(
+    (err: unknown, sourcePath: string): void => {
       const name = (sourcePath.split(/[\\/]/).pop() ?? sourcePath).replace(/\.http$/, '')
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('MOVE_CONFLICT')) return t('collection.errors.moveConflict', { name })
-      if (msg.includes('MOVE_INTO_SELF')) return t('collection.errors.moveIntoItself')
-      return t('collection.errors.move')
+      const { message, durationMs } = treeMutationErrorToast(err, 'move', name, t)
+      useToastStore.getState().push(message, { type: 'error', durationMs })
     },
     [t]
   )
@@ -1374,10 +1372,10 @@ export function CollectionTree({
         }
       } catch (err) {
         console.error('[CollectionTree] Failed to move:', err)
-        useToastStore.getState().push(describeMoveError(err, node.path), { type: 'error' })
+        toastMoveError(err, node.path)
       }
     },
-    [movingNode, workspacePath, toRelPath, describeMoveError]
+    [movingNode, workspacePath, toRelPath, toastMoveError]
   )
 
   const handleCreateIn = useCallback((parentPath: string, type: 'collection' | 'request'): void => {
@@ -1571,10 +1569,10 @@ export function CollectionTree({
         }
       } catch (err) {
         console.error('[CollectionTree] Failed to drop-move:', err)
-        useToastStore.getState().push(describeMoveError(err, sourcePath), { type: 'error' })
+        toastMoveError(err, sourcePath)
       }
     },
-    [workspacePath, toRelPath, tree, describeMoveError]
+    [workspacePath, toRelPath, tree, toastMoveError]
   )
 
   // Inline name-conflict verdicts come from the core over IPC (InlineInput's

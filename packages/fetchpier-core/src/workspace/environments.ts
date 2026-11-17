@@ -8,7 +8,7 @@ import { CoreError } from '../shared/context'
 import { describeError } from '../shared/describe-error'
 import { isEncryptedValue } from '../secrets/crypto'
 import { assertSafeIdentifier, resolveInsideWorkspace } from './safe-path'
-import { atomicWriteFile } from './atomic-write'
+import { atomicWriteFile, renameWithRetry } from './atomic-write'
 
 /** Top-level workspace folder that holds one sub-folder per environment. */
 export const ENVIRONMENTS_DIR = 'environments'
@@ -294,7 +294,9 @@ export async function renameEnvironment(
   await assertFolderAvailable(workspacePath, nextFolder, currentFolder)
 
   if (nextFolder.toLowerCase() !== currentFolder.toLowerCase()) {
-    await fs.rename(
+    // Retried through a transient lock (an indexer or AV holding a file inside
+    // the folder) like every other workspace rename (ISS-0175).
+    await renameWithRetry(
       resolveInsideWorkspace(workspacePath, envFolderPath(workspacePath, currentFolder)),
       resolveInsideWorkspace(workspacePath, envFolderPath(workspacePath, nextFolder))
     )
