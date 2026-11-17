@@ -8,13 +8,14 @@
  * generic `workspace.atomicWriteBatch` primitive. The crypto stays here.
  */
 
-import { basename, resolve } from 'node:path'
+import { basename, relative, resolve, sep } from 'node:path'
 import { secrets, workspace, CoreError } from '@fetchpier/core'
 import { isReservedVariableName } from '../../shared/lib/dynamic-variables'
 import type {
   Environment,
   HttpRequest,
   SecretsEnterKeyResult,
+  SecretsRotateResult,
   SecretsSetupResult,
   SecretsStatus
 } from '../../shared/types'
@@ -399,16 +400,37 @@ export async function resolvePassphraseSecrets(
  * Rotate the workspace key (§6.7): generate a new key, re-encrypt every secret
  * across all environments and the challenge, update keyId, store + return the
  * new key. Atomic across files: everything is re-encrypted to temp files first,
- * then renamed together. A single corrupt value aborts before any rename, naming
- * the offending environment/variable, and the workspace stays fully on the old
- * key. The old keystore entry is retained (harmless; other checkouts keep
- * unlocking until they pull).
+ * then renamed together by `atomicWriteBatch`, which puts every file back if a
+ * rename fails, so the workspace stays fully on the old key. A corrupt value,
+ * an unreadable environment or two environment folders sharing an id refuse
+ * before anything is written. The new key is stored before the first rename,
+ * so a crash mid-rename never leaves ciphertext under a key that exists
+ * nowhere; if the rollback itself fails, the result still carries the new key
+ * and names the files left under it (ISS-0135). The old keystore entry is
+ * retained (harmless; other checkouts keep unlocking until they pull), and so
+ * is the new one after a rolled-back rotation.
  */
-export async function rotateKey(workspacePath: string): Promise<SecretsSetupResult> {
+export async function rotateKey(workspacePath: string): Promise<SecretsRotateResult> {
   return withWorkspaceKeyLock(workspacePath, () => rotateKeyLocked(workspacePath))
 }
 
-async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResult> {
+/** Folders of every environment id listed more than once, keyed by the id. */
+function duplicateEnvironmentIds(
+  environments: ReadonlyArray<{ id: string; folder: string }>
+): Array<{ id: string; folders: string[] }> {
+  const byId = new Map<string, string[]>()
+  for (const env of environments) byId.set(env.id, [...(byId.get(env.id) ?? []), env.folder])
+  return [...byId.entries()]
+    .filter(([, folders]) => folders.length > 1)
+    .map(([id, folders]) => ({ id, folders: [...folders].sort() }))
+}
+
+/** A workspace-relative, forward-slash path for display. */
+function workspaceRelative(workspacePath: string, filePath: string): string {
+  return relative(workspacePath, filePath).split(sep).join('/')
+}
+
+async function rotateKeyLocked(workspacePath: string): Promise<SecretsRotateResult> {
   const ws = workspace.openWorkspace(workspacePath)
   const oldKey = await requireKey(ws)
   const newKey = await secrets.generateWorkspaceKey()
@@ -434,17 +456,41 @@ async function rotateKeyLocked(workspacePath: string): Promise<SecretsSetupResul
     )
   }
 
-  // Every environment's `localvalues.json` is re-read below and replaced by the
-  // batch: hold their locks from the read until the batch has renamed, so a
-  // script or editor write landing in between is not overwritten (SEC-03).
-  await withLocalValuesLocks(
-    workspacePath,
-    environments.map((e) => e.id),
-    () => buildAndWriteRotation(ws, environments, oldKey, newKey, newKeyId, stamp, manifest)
-  )
+  // Two folders with the same id (a folder copied by hand) resolve to the same
+  // local file, and which config an id names is ambiguous. Refuse up front.
+  const duplicates = duplicateEnvironmentIds(environments)
+  if (duplicates.length > 0) {
+    const names = duplicates
+      .map((d) => `${d.folders.map((f) => `"${f}"`).join(' and ')} (id "${d.id}")`)
+      .join(', ')
+    throw new CoreError(
+      'WORKSPACE_INVALID',
+      `The workspace key was not rotated: these environment folders share an id: ${names}. ` +
+        `Give each environment its own id and rotate again.`,
+      { duplicates }
+    )
+  }
 
-  await storeWorkspaceKey(manifest.encryption.keyId, newKey, workspaceHint(workspacePath))
-  return { key: secrets.formatKey(newKey), keyId: manifest.encryption.keyId }
+  const result: SecretsRotateResult = { key: secrets.formatKey(newKey), keyId: newKeyId }
+  try {
+    // Every environment's `localvalues.json` is re-read below and replaced by the
+    // batch: hold their locks from the read until the batch has renamed, so a
+    // script or editor write landing in between is not overwritten (SEC-03).
+    await withLocalValuesLocks(
+      workspacePath,
+      environments.map((e) => e.id),
+      () => buildAndWriteRotation(ws, environments, oldKey, newKey, newKeyId, stamp, manifest)
+    )
+  } catch (err) {
+    if (!(err instanceof workspace.AtomicBatchRollbackError)) throw err
+    // The rollback could not put every file back: those files are under the new
+    // key (already stored), so it is shown like after any rotation, with them.
+    return {
+      ...result,
+      strandedFiles: err.stranded.map((s) => workspaceRelative(workspacePath, s.finalPath))
+    }
+  }
+  return result
 }
 
 /** The rotation's re-encryption and its atomic batch; the caller holds the local-values locks. */
@@ -512,10 +558,26 @@ async function buildAndWriteRotation(
     content: secrets.serializeManifest(manifest)
   })
 
-  // Two-phase atomic batch (write all temps, then rename) — owned by core so the
-  // adapter performs no direct workspace fs (REQ Core-owned workspace handle). The
-  // crypto (decrypt/encrypt above) stays here; only the batch I/O moved.
-  await workspace.atomicWriteBatch(writes)
+  // The new key reaches the keystore before any file is renamed: a crash or a
+  // failed rollback mid-batch must never leave ciphertext under a key that was
+  // never saved. A rotation that is then rolled back leaves only an extra
+  // keystore entry, which is harmless (ISS-0135).
+  await storeWorkspaceKey(newKeyId, newKey, workspaceHint(ws.path))
+
+  // Two-phase atomic batch (write all temps, then rename; a failed rename puts
+  // every file back) — owned by core so the adapter performs no direct workspace
+  // fs (REQ Core-owned workspace handle). The crypto (decrypt/encrypt above)
+  // stays here; only the batch I/O moved.
+  try {
+    await workspace.atomicWriteBatch(writes)
+  } catch (err) {
+    if (err instanceof workspace.AtomicBatchRollbackError) throw err
+    const reason = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `The workspace key was not rotated: ${reason}. Nothing was changed; try again.`,
+      { cause: err }
+    )
+  }
 }
 
 // ── REQ-0073: Workspace keys management surface ──────────────────────────────

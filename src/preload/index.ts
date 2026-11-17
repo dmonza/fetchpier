@@ -54,6 +54,7 @@ import type {
   StagedBinaryEntry,
   SecretsStatus,
   SecretsSetupResult,
+  SecretsRotateResult,
   SecretsEnterKeyResult,
   SecretsAddKeyResult,
   WorkspaceKeysListing,
@@ -348,7 +349,7 @@ const api = {
     // REQ-0077 — delete a secret directly (both layers, no decryption).
     deleteSecret: (envId: string, name: string): Promise<Environment> =>
       invoke('secrets:deleteSecret', envId, name),
-    rotate: (): Promise<SecretsSetupResult> => invoke('secrets:rotate'),
+    rotate: (): Promise<SecretsRotateResult> => invoke('secrets:rotate'),
     // REQ-0073 — Workspace keys management (metadata only).
     listKeys: (): Promise<WorkspaceKeysListing> => invoke('secrets:listKeys'),
     deleteKey: (keyId: string): Promise<void> => invoke('secrets:deleteKey', keyId),

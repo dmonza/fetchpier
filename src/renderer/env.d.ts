@@ -46,6 +46,7 @@ import type {
   StagedBinaryEntry,
   SecretsStatus,
   SecretsSetupResult,
+  SecretsRotateResult,
   SecretsEnterKeyResult,
   SecretsAddKeyResult,
   WorkspaceKeysListing,
@@ -172,7 +173,7 @@ declare global {
         unsetSecret: (envId: string, name: string) => Promise<Environment>
         clearSecret: (envId: string, name: string) => Promise<Environment>
         deleteSecret: (envId: string, name: string) => Promise<Environment>
-        rotate: () => Promise<SecretsSetupResult>
+        rotate: () => Promise<SecretsRotateResult>
         listKeys: () => Promise<WorkspaceKeysListing>
         deleteKey: (keyId: string) => Promise<void>
         addKey: (key: string, hint?: string, replace?: boolean) => Promise<SecretsAddKeyResult>

@@ -1356,7 +1356,9 @@
       "warnTeammates": "A new key will be generated and every secret re-encrypted. You must share the new key with every teammate.",
       "warnNoRevoke": "Rotating the workspace key does NOT revoke anyone who already had access — they may still know the secret values. To truly revoke access, rotate the underlying credentials at their providers.",
       "confirm": "Rotate key",
-      "doneTitle": "New workspace key"
+      "doneTitle": "New workspace key",
+      "incompleteTitle": "Key rotation could not finish",
+      "incompleteBody": "The rotation failed and could not be fully undone. The rest of the workspace is still on the previous key, but these files are now encrypted with the new key below. Save this key: it is the only way to read them. A hidden copy of each file's previous version (named .<file>.bak-…) is kept beside it."
     },
     "gitNote": {
       "title": "Before encrypting",

@@ -6,6 +6,7 @@ import { Button } from '../ui/button'
 import { useSecretsStore } from '../../stores/secrets'
 import { useToastStore } from '../../stores/toast'
 import { SecretSetupDialog } from './SecretSetupDialog'
+import type { SecretsRotateResult } from '../../../shared/types'
 
 interface Props {
   onClose: () => void
@@ -23,7 +24,7 @@ export function RotateKeyDialog({ onClose, onRotated }: Props): React.JSX.Elemen
   const rotate = useSecretsStore((s) => s.rotate)
   const pushToast = useToastStore((s) => s.push)
   const [busy, setBusy] = useState(false)
-  const [rotated, setRotated] = useState<{ key: string; keyId: string } | null>(null)
+  const [rotated, setRotated] = useState<SecretsRotateResult | null>(null)
 
   const handleRotate = async (): Promise<void> => {
     if (busy) return
@@ -45,6 +46,7 @@ export function RotateKeyDialog({ onClose, onRotated }: Props): React.JSX.Elemen
         workspaceKey={rotated.key}
         keyId={rotated.keyId}
         variant="rotated"
+        strandedFiles={rotated.strandedFiles}
         onAcknowledge={() => {
           onRotated()
           onClose()

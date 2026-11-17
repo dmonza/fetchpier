@@ -4,7 +4,12 @@ import { mkdtemp, rm, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { atomicWriteBatch, atomicWriteFile, atomicWriteFileSync } from './atomic-write'
+import {
+  AtomicBatchRollbackError,
+  atomicWriteBatch,
+  atomicWriteFile,
+  atomicWriteFileSync
+} from './atomic-write'
 
 // The sync variant uses the named `node:fs` exports, which cannot be spied on
 // in place; pass-through wrappers record the order of its flush and rename.
@@ -250,6 +255,163 @@ describe('atomicWriteFile', () => {
 
     // Never retried into a hang, and the original content survives untouched.
     expect(readFileSync(target, 'utf-8')).toBe('OLD')
+  })
+})
+
+// ISS-0135: the batch is all-or-nothing across its rename phase too. A rename
+// that still fails after the retries puts every target back as it was.
+describe('atomicWriteBatch rename-phase rollback', () => {
+  const eio = (): NodeJS.ErrnoException =>
+    Object.assign(new Error('EIO: i/o error, rename'), { code: 'EIO' })
+
+  /** Pass renames through, except those `fail` picks, which reject with `err()`. */
+  function failRenames(
+    fail: (from: string, to: string, call: number) => boolean,
+    err: () => Error = eio
+  ): ReturnType<typeof vi.spyOn> {
+    const realRename = fsp.rename.bind(fsp)
+    let call = 0
+    return vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      call++
+      if (fail(String(from), String(to), call)) throw err()
+      await realRename(from, to)
+    })
+  }
+
+  function entries(
+    ...names: string[]
+  ): Array<{ finalPath: string; tmpPath: string; content: string }> {
+    return names.map((n) => ({
+      finalPath: join(dir, n),
+      tmpPath: join(dir, `${n}.rotate-1`),
+      content: `NEW-${n}`
+    }))
+  }
+
+  async function seed(...names: string[]): Promise<void> {
+    for (const n of names) await fsp.writeFile(join(dir, n), `OLD-${n}`)
+  }
+
+  const read = (n: string): string => readFileSync(join(dir, n), 'utf-8')
+
+  it('restores every renamed target when a later rename fails, leaving no temp or backup', async () => {
+    await seed('a.json', 'b.json', 'c.json')
+    failRenames((from) => from.endsWith('c.json.rotate-1'))
+
+    await expect(atomicWriteBatch(entries('a.json', 'b.json', 'c.json'))).rejects.toThrow(/EIO/)
+
+    expect([read('a.json'), read('b.json'), read('c.json')]).toEqual([
+      'OLD-a.json',
+      'OLD-b.json',
+      'OLD-c.json'
+    ])
+    expect((await readdir(dir)).sort()).toEqual(['a.json', 'b.json', 'c.json'])
+  })
+
+  it('removes a target the batch created when it rolls back', async () => {
+    await seed('a.json')
+    failRenames((from) => from.endsWith('b.json.rotate-1'))
+
+    await expect(atomicWriteBatch(entries('new.json', 'a.json', 'b.json'))).rejects.toThrow(/EIO/)
+
+    expect(existsSync(join(dir, 'new.json'))).toBe(false)
+    expect((await readdir(dir)).sort()).toEqual(['a.json'])
+    expect(read('a.json')).toBe('OLD-a.json')
+  })
+
+  it('changes nothing when the first rename fails', async () => {
+    await seed('a.json', 'b.json')
+    failRenames((from) => from.endsWith('a.json.rotate-1'))
+
+    await expect(atomicWriteBatch(entries('a.json', 'b.json'))).rejects.toThrow(/EIO/)
+
+    expect([read('a.json'), read('b.json')]).toEqual(['OLD-a.json', 'OLD-b.json'])
+    expect((await readdir(dir)).sort()).toEqual(['a.json', 'b.json'])
+  })
+
+  it('retries a transient rename error and completes, leaving no backup', async () => {
+    await seed('a.json', 'b.json')
+    const busy = (): Error => Object.assign(new Error('EBUSY: busy, rename'), { code: 'EBUSY' })
+    failRenames((from, _to, call) => from.endsWith('b.json.rotate-1') && call === 2, busy)
+
+    await atomicWriteBatch(entries('a.json', 'b.json'))
+
+    expect([read('a.json'), read('b.json')]).toEqual(['NEW-a.json', 'NEW-b.json'])
+    expect((await readdir(dir)).sort()).toEqual(['a.json', 'b.json'])
+  })
+
+  it('a completed batch over existing targets leaves no backup behind', async () => {
+    await seed('a.json')
+
+    await atomicWriteBatch(entries('a.json', 'b.json'))
+
+    expect([read('a.json'), read('b.json')]).toEqual(['NEW-a.json', 'NEW-b.json'])
+    expect((await readdir(dir)).sort()).toEqual(['a.json', 'b.json'])
+  })
+
+  it('names a target it could not restore and keeps its backup with the previous content', async () => {
+    await seed('a.json', 'b.json', 'c.json')
+    // c's rename fails; then restoring a (a backup renamed onto a.json) fails too.
+    failRenames(
+      (from, to) =>
+        from.endsWith('c.json.rotate-1') ||
+        (to === join(dir, 'a.json') && !from.endsWith('.rotate-1'))
+    )
+
+    const err = await atomicWriteBatch(entries('a.json', 'b.json', 'c.json')).catch((e) => e)
+
+    expect(err).toBeInstanceOf(AtomicBatchRollbackError)
+    const rollback = err as AtomicBatchRollbackError
+    expect(rollback.cause).toMatchObject({ code: 'EIO' })
+    expect(rollback.stranded).toHaveLength(1)
+    expect(rollback.stranded[0].finalPath).toBe(join(dir, 'a.json'))
+    const backup = rollback.stranded[0].backupPath as string
+    expect(basename(backup).startsWith('.')).toBe(true)
+    expect(readFileSync(backup, 'utf-8')).toBe('OLD-a.json')
+    // a still holds the new content; b and c are back; no temp is left.
+    expect([read('a.json'), read('b.json'), read('c.json')]).toEqual([
+      'NEW-a.json',
+      'OLD-b.json',
+      'OLD-c.json'
+    ])
+    expect((await readdir(dir)).sort()).toEqual(
+      ['a.json', basename(backup), 'b.json', 'c.json'].sort()
+    )
+  })
+
+  it('rejects a batch with two entries for the same target before writing anything', async () => {
+    await seed('a.json')
+    const [a] = entries('a.json')
+
+    await expect(
+      atomicWriteBatch([a, { ...a, tmpPath: join(dir, 'a.json.rotate-2') }])
+    ).rejects.toThrow(/same target/i)
+
+    expect(read('a.json')).toBe('OLD-a.json')
+    expect(await readdir(dir)).toEqual(['a.json'])
+  })
+
+  it('rejects a batch with two entries sharing a temp path before writing anything', async () => {
+    const [a, b] = entries('a.json', 'b.json')
+
+    await expect(atomicWriteBatch([a, { ...b, tmpPath: a.tmpPath }])).rejects.toThrow(/same temp/i)
+
+    expect(await readdir(dir)).toEqual([])
+  })
+
+  it('a target that cannot be backed up fails before any rename and removes the temps', async () => {
+    await seed('a.json')
+    await fsp.mkdir(join(dir, 'b.json'))
+
+    await expect(atomicWriteBatch(entries('a.json', 'b.json'))).rejects.toThrow()
+
+    expect(read('a.json')).toBe('OLD-a.json')
+    expect((await readdir(dir)).sort()).toEqual(['a.json', 'b.json'])
+  })
+
+  it('an empty batch resolves and writes nothing', async () => {
+    await atomicWriteBatch([])
+    expect(await readdir(dir)).toEqual([])
   })
 })
 
