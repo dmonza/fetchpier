@@ -1,7 +1,8 @@
 /**
- * The one-time key dialog after a rotation. ISS-0135: a rotation whose rollback
- * could not put every file back still shows the new key, and names the files
- * left under it. The rotation behavior itself is proven in the secrets service.
+ * The one-time key dialog. It can only be dismissed through the acknowledgment,
+ * so it shows no header close button. ISS-0135: a rotation whose rollback could
+ * not put every file back still shows the new key, and names the files left
+ * under it. The rotation behavior itself is proven in the secrets service.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act } from 'react'
@@ -45,6 +46,45 @@ function render(strandedFiles?: string[]): void {
 }
 
 const text = (): string => document.body.textContent ?? ''
+
+describe('SecretSetupDialog first-time setup', () => {
+  it('hides the header close button and requires acknowledgment before confirming', () => {
+    const onAcknowledge = vi.fn()
+    act(() => {
+      root.render(
+        <SecretSetupDialog
+          workspaceKey="FPK1-TEST-KEY"
+          keyId="kid-123"
+          variant="setup"
+          onAcknowledge={onAcknowledge}
+        />
+      )
+    })
+
+    // No "Close" button should be rendered since dismissal is gated by acknowledgment.
+    const closeButtons = [...document.body.querySelectorAll('button')].filter(
+      (b) => b.textContent?.trim() === 'Close'
+    )
+    expect(closeButtons).toHaveLength(0)
+
+    const confirmBtn = [...document.body.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('secrets.setup.confirm')
+    ) as HTMLButtonElement
+    expect(confirmBtn).toBeDefined()
+    expect(confirmBtn.disabled).toBe(true)
+
+    const checkbox = document.body.querySelector('input[type="checkbox"]') as HTMLInputElement
+    act(() => {
+      checkbox.click()
+    })
+    expect(confirmBtn.disabled).toBe(false)
+
+    act(() => {
+      confirmBtn.click()
+    })
+    expect(onAcknowledge).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('SecretSetupDialog after a rotation', () => {
   it('shows the new key under the usual title when the rotation completed', () => {

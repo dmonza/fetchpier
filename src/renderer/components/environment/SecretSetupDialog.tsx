@@ -56,7 +56,7 @@ export function SecretSetupDialog({
         /* modal: dismissal only via acknowledge */
       }}
     >
-      <DialogContent className="max-w-[520px]">
+      <DialogContent className="max-w-[520px]" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-primary" />
