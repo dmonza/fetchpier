@@ -21,7 +21,11 @@ const MAX_TITLE_PART_LENGTH = 8192
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 const ABSOLUTE_PATH = /^(?:[/\\]|[a-zA-Z]:)/
 
-function isText(value: unknown, max: number, allowEmpty = false): value is string {
+/**
+ * A string of at most `max` characters with no control character (non-empty
+ * unless `allowEmpty`). Shared with the chip-mirror validator.
+ */
+export function isText(value: unknown, max: number, allowEmpty = false): value is string {
   return (
     typeof value === 'string' &&
     (allowEmpty || value.length > 0) &&
@@ -30,7 +34,8 @@ function isText(value: unknown, max: number, allowEmpty = false): value is strin
   )
 }
 
-function isRelativeSourcePath(value: unknown): value is string {
+/** A workspace-relative path: bounded text, not absolute, no `..` segment. */
+export function isRelativeSourcePath(value: unknown): value is string {
   return (
     isText(value, MAX_SOURCE_FILE_LENGTH) &&
     !ABSOLUTE_PATH.test(value) &&
