@@ -118,6 +118,7 @@
       "move": "Error al mover",
       "moveConflict": "\"{{name}}\" ya existe en la carpeta de destino",
       "moveIntoItself": "Una carpeta no puede moverse dentro de sí misma",
+      "cascadeRollbackFailed": "No se pudo completar el cambio ni deshacerlo. Estos archivos quedaron en su nueva ubicación; devolvelos a mano: {{paths}}",
       "nameConflict": "\"{{name}}\" ya existe en esta carpeta",
       "invalidEntryName": "\"{{name}}\" no es un nombre válido en todos los sistemas operativos: no puede contener < > : \" / \\ | ? *, terminar en punto o espacio, ni ser un nombre reservado como CON o NUL",
       "duplicate": "Error al duplicar",

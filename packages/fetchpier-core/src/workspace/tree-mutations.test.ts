@@ -3,10 +3,11 @@
 // real tmpdir. (On-disk cascade is also covered at the adapter integration level
 // in src/main/ipc/filesystem.ipc.integration.test.ts via the handle.)
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { promises as fs, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { parseCascadeRollbackPaths } from '@shared/lib/cascade-rollback'
 import {
   checkNameAvailable,
   createCollection,
@@ -52,6 +53,32 @@ function exists(rel: string): Promise<boolean> {
     .access(join(ws, rel))
     .then(() => true)
     .catch(() => false)
+}
+
+// ISS-0175 — a rename that fails for the moves `shouldFail` picks (by their
+// workspace-relative, forward-slash source and destination), `times` times,
+// with `code`; every other rename goes to the real filesystem.
+const realRename = fs.rename.bind(fs)
+function rel(p: string): string {
+  return relative(ws, p).split(sep).join('/')
+}
+function failRenames(
+  shouldFail: (from: string, to: string) => boolean,
+  code: string,
+  times = Number.POSITIVE_INFINITY
+): MockInstance<typeof fs.rename> {
+  let left = times
+  return vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+    if (left > 0 && shouldFail(rel(String(from)), rel(String(to)))) {
+      left--
+      throw Object.assign(new Error(`${code}: injected, rename '${String(from)}'`), { code })
+    }
+    return realRename(from, to)
+  })
+}
+/** Sorted entry names of a workspace-relative folder. */
+async function namesIn(rel: string): Promise<string[]> {
+  return (await fs.readdir(join(ws, rel))).sort()
 }
 
 describe('createCollection / createRequest', () => {
@@ -221,6 +248,99 @@ describe('renameEntry', () => {
   })
 })
 
+// ISS-0175 — the cascade is all-or-nothing: renames retry through a transient
+// lock, and an instance that still cannot move undoes everything already moved.
+describe('renameEntry cascade failures (ISS-0175)', () => {
+  it('retries the parent rename through a transient lock', async () => {
+    await seed('requests/login.http')
+    const spy = failRenames((from) => from === 'requests/login.http', 'EBUSY', 1)
+    await renameEntry(ws, 'requests/login.http', 'signin.http')
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(await namesIn('requests')).toEqual(['signin.http'])
+  })
+
+  it('retries an instance rename through a transient lock and cascades it', async () => {
+    await seed('requests/login.http')
+    await seed('requests/login.ok.instance.http')
+    failRenames((from) => from === 'requests/login.ok.instance.http', 'EPERM', 1)
+    const result = await renameEntry(ws, 'requests/login.http', 'signin.http')
+    expect(result.instances).toHaveLength(1)
+    expect(await namesIn('requests')).toEqual(['signin.http', 'signin.ok.instance.http'])
+  })
+
+  it('rolls back the parent and the instances already moved when a later instance fails', async () => {
+    await seed('requests/login.http', 'PARENT')
+    await seed('requests/login.a.instance.http', 'A')
+    await seed('requests/login.b.instance.http', 'B')
+    // Whichever instance the cascade reaches second fails for good.
+    let instancesSeen = 0
+    failRenames((from, to) => {
+      if (!from.endsWith('.instance.http') || !to.includes('signin.')) return false
+      instancesSeen++
+      return instancesSeen === 2
+    }, 'EIO')
+    await expect(renameEntry(ws, 'requests/login.http', 'signin.http')).rejects.toThrow(/EIO/)
+    expect(await namesIn('requests')).toEqual([
+      'login.a.instance.http',
+      'login.b.instance.http',
+      'login.http'
+    ])
+    expect(await fs.readFile(join(ws, 'requests', 'login.http'), 'utf-8')).toBe('PARENT')
+    expect(await fs.readFile(join(ws, 'requests', 'login.a.instance.http'), 'utf-8')).toBe('A')
+  })
+
+  it('rolls the parent back when the first instance fails (nothing cascaded yet)', async () => {
+    await seed('requests/login.http')
+    await seed('requests/login.ok.instance.http')
+    failRenames((from) => from === 'requests/login.ok.instance.http', 'EIO')
+    await expect(renameEntry(ws, 'requests/login.http', 'signin.http')).rejects.toThrow(/EIO/)
+    expect(await namesIn('requests')).toEqual(['login.http', 'login.ok.instance.http'])
+  })
+
+  it('rolls back after a lock that outlasts every retry', async () => {
+    await seed('requests/login.http')
+    await seed('requests/login.ok.instance.http')
+    const spy = failRenames((from) => from === 'requests/login.ok.instance.http', 'EBUSY')
+    await expect(renameEntry(ws, 'requests/login.http', 'signin.http')).rejects.toThrow(/EBUSY/)
+    const instanceAttempts = spy.mock.calls.filter(
+      ([from]) => rel(String(from)) === 'requests/login.ok.instance.http'
+    )
+    expect(instanceAttempts).toHaveLength(6) // first try + 5 retries
+    expect(await namesIn('requests')).toEqual(['login.http', 'login.ok.instance.http'])
+  })
+
+  it('moves nothing when the parent rename itself fails', async () => {
+    await seed('requests/login.http')
+    await seed('requests/login.ok.instance.http')
+    failRenames((from) => from === 'requests/login.http', 'EIO')
+    await expect(renameEntry(ws, 'requests/login.http', 'signin.http')).rejects.toThrow(/EIO/)
+    expect(await namesIn('requests')).toEqual(['login.http', 'login.ok.instance.http'])
+  })
+
+  it('reports the files left at their new location when the rollback itself fails', async () => {
+    await seed('requests/login.http')
+    await seed('requests/login.a.instance.http')
+    await seed('requests/login.b.instance.http')
+    failRenames(
+      (from, to) =>
+        from === 'requests/login.b.instance.http' ||
+        (from === 'requests/signin.http' && to === 'requests/login.http'),
+      'EIO'
+    )
+    const err = await renameEntry(ws, 'requests/login.http', 'signin.http').catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/^CASCADE_ROLLBACK_FAILED: /)
+    expect((err as Error).message).toContain('EIO')
+    expect(parseCascadeRollbackPaths((err as Error).message)).toEqual(['requests/signin.http'])
+    // The instance that had moved was still undone; only the parent is stranded.
+    expect(await namesIn('requests')).toEqual([
+      'login.a.instance.http',
+      'login.b.instance.http',
+      'signin.http'
+    ])
+  })
+})
+
 describe('moveEntry', () => {
   it('moves a request and cascades instances into the target folder', async () => {
     await seed('requests/auth/login.http')
@@ -242,6 +362,62 @@ describe('moveEntry', () => {
     await fs.mkdir(join(ws, 'requests', 'sub'), { recursive: true })
     await seed('requests/sub/a.http')
     await expect(moveEntry(ws, 'requests/a.http', 'requests/sub')).rejects.toThrow(/MOVE_CONFLICT/)
+  })
+})
+
+describe('moveEntry cascade failures (ISS-0175)', () => {
+  beforeEach(async () => {
+    await seed('requests/auth/login.http')
+    await seed('requests/auth/login.a.instance.http')
+    await seed('requests/auth/login.b.instance.http')
+    await fs.mkdir(join(ws, 'requests', 'users'), { recursive: true })
+  })
+
+  it('retries an instance move through a transient lock and cascades it', async () => {
+    failRenames((from) => from === 'requests/auth/login.a.instance.http', 'EACCES', 1)
+    const result = await moveEntry(ws, 'requests/auth/login.http', 'requests/users')
+    expect(result.instances).toHaveLength(2)
+    expect(await namesIn('requests/auth')).toEqual([])
+    expect(await namesIn('requests/users')).toEqual([
+      'login.a.instance.http',
+      'login.b.instance.http',
+      'login.http'
+    ])
+  })
+
+  it('moves the parent and the instances already moved back when a later instance fails', async () => {
+    let instancesSeen = 0
+    failRenames((from, to) => {
+      if (!from.startsWith('requests/auth/') || !to.startsWith('requests/users/')) return false
+      if (!from.endsWith('.instance.http')) return false
+      instancesSeen++
+      return instancesSeen === 2
+    }, 'EIO')
+    await expect(moveEntry(ws, 'requests/auth/login.http', 'requests/users')).rejects.toThrow(/EIO/)
+    expect(await namesIn('requests/auth')).toEqual([
+      'login.a.instance.http',
+      'login.b.instance.http',
+      'login.http'
+    ])
+    expect(await namesIn('requests/users')).toEqual([])
+  })
+
+  it('reports the instance left in the target folder when its rollback fails', async () => {
+    failRenames(
+      (from, to) =>
+        from === 'requests/auth/login.b.instance.http' ||
+        (from === 'requests/users/login.a.instance.http' &&
+          to === 'requests/auth/login.a.instance.http'),
+      'EIO'
+    )
+    const err = await moveEntry(ws, 'requests/auth/login.http', 'requests/users').catch((e) => e)
+    expect((err as Error).message).toMatch(/^CASCADE_ROLLBACK_FAILED: /)
+    expect(parseCascadeRollbackPaths((err as Error).message)).toEqual([
+      'requests/users/login.a.instance.http'
+    ])
+    // The parent was still moved back.
+    expect(await namesIn('requests/auth')).toEqual(['login.b.instance.http', 'login.http'])
+    expect(await namesIn('requests/users')).toEqual(['login.a.instance.http'])
   })
 })
 

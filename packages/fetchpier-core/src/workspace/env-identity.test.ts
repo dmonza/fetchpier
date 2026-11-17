@@ -373,6 +373,26 @@ describe('renameEnvironment (CA-03, CA-07, §6.4, §7.2)', () => {
     expect(onDisk.name).toBe('Staging')
   })
 
+  // ISS-0175 — the folder rename shares the workspace's retrying rename: a lock
+  // that clears within the backoff no longer fails the rename.
+  it('retries the folder rename through a transient lock (ISS-0175)', async () => {
+    const ws = newWorkspace()
+    await seed(ws, 'staging', { id: 'X', name: 'Staging' })
+    const transient = Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' })
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(transient)
+
+    const renamed = await renameEnvironment(ws, 'X', 'Producción')
+
+    expect(renamed.folder).toBe('produccion')
+    expect(await folderExists(ws, 'staging')).toBe(false)
+    const firstFolderRename = rename.mock.calls.filter(([from]) =>
+      String(from).endsWith(join('environments', 'staging'))
+    )
+    expect(firstFolderRename).toHaveLength(2)
+    const onDisk = JSON.parse(await fs.readFile(configOf(ws, 'produccion'), 'utf-8'))
+    expect(onDisk.name).toBe('Producción')
+  })
+
   it('fails with not-found for an identifier no folder holds', async () => {
     const ws = newWorkspace()
     await expect(renameEnvironment(ws, 'ghost', 'X')).rejects.toMatchObject({

@@ -120,8 +120,14 @@ function delay(ms: number): Promise<void> {
 /** Backoff schedule for a transient rename failure — short and bounded (~775 ms worst case). */
 const RENAME_RETRY_DELAYS_MS = [25, 50, 100, 200, 400]
 
-/** `fs.rename`, retried with backoff on a transient Windows contention error. */
-async function renameWithRetry(tmp: string, filePath: string): Promise<void> {
+/**
+ * `fs.rename`, retried with backoff on a transient Windows contention error.
+ * Exported for the core's other rename call sites — the tree mutations'
+ * rename/move cascade and an environment's folder rename — so every rename in
+ * the workspace shares one retry schedule and one retryable-error rule. Not on
+ * the `workspace` barrel: its callers all live in this folder.
+ */
+export async function renameWithRetry(tmp: string, filePath: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       await fsp.rename(tmp, filePath)

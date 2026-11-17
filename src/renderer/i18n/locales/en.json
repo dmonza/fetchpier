@@ -118,6 +118,7 @@
       "move": "Failed to move",
       "moveConflict": "\"{{name}}\" already exists in the destination folder",
       "moveIntoItself": "A folder cannot be moved into itself",
+      "cascadeRollbackFailed": "The change could not be finished or undone. These files kept their new location; move them back by hand: {{paths}}",
       "nameConflict": "\"{{name}}\" already exists in this folder",
       "invalidEntryName": "\"{{name}}\" is not a valid name on every operating system: it cannot contain < > : \" / \\ | ? *, end with a dot or a space, or be a reserved name such as CON or NUL",
       "duplicate": "Failed to duplicate",

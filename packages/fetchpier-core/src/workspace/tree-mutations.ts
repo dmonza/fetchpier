@@ -5,7 +5,7 @@
 // explicitly; the adapter's IPC handler is a thin validating/token-mapping shell.
 
 import { promises as fs } from 'node:fs'
-import { basename, dirname, extname, join, sep } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   FsCascadeResult,
@@ -23,8 +23,10 @@ import {
   isValidInstanceName,
   splitInstanceName
 } from '@shared/lib/request-instances'
+import { formatCascadeRollbackMessage } from '@shared/lib/cascade-rollback'
+import { describeError } from '../shared/describe-error'
 import { assertPortableName, assertSafeIdentifier, resolveInsideWorkspace } from './safe-path'
-import { atomicWriteFile } from './atomic-write'
+import { atomicWriteFile, renameWithRetry } from './atomic-write'
 import { requestsRootPath } from './tree'
 
 const HTTP_TEMPLATE = 'GET https://example.com\nContent-Type: application/json\n\n'
@@ -146,6 +148,48 @@ async function findInstanceSiblings(
     }
   }
   return out
+}
+
+/** `abs` relative to the workspace, with forward slashes (for user-facing reports). */
+function workspaceRelative(workspacePath: string, abs: string): string {
+  return relative(resolve(workspacePath), abs).split(sep).join('/')
+}
+
+/**
+ * Undo a rename/move cascade that could not finish (ISS-0175), so the workspace
+ * is left as it was instead of with the parent moved and instances orphaned
+ * under the old stem. `done` holds every rename already applied, parent first;
+ * they are reversed last-to-first, each through the same retry. Always throws:
+ * the original `cause` when every step was undone (an ordinary failed
+ * operation), or `CASCADE_ROLLBACK_FAILED` naming the files left at their new
+ * location when some could not be — the user has to put those back by hand,
+ * so they are reported, never only logged.
+ */
+async function undoCascade(
+  workspacePath: string,
+  op: 'rename' | 'move',
+  source: string,
+  done: readonly InstanceCascadePair[],
+  cause: unknown
+): Promise<never> {
+  const stranded: string[] = []
+  for (const { from, to } of [...done].reverse()) {
+    try {
+      await renameWithRetry(to, from)
+    } catch (err) {
+      console.error(`[tree:${op}] could not undo the move of "${from}":`, describeError(err))
+      stranded.push(workspaceRelative(workspacePath, to))
+    }
+  }
+  if (stranded.length === 0) throw cause
+  throw new Error(
+    formatCascadeRollbackMessage(
+      op,
+      workspaceRelative(workspacePath, source),
+      describeError(cause),
+      stranded.reverse()
+    )
+  )
 }
 
 /**
@@ -293,8 +337,11 @@ export async function renameEntry(
     if (newStem !== oldStem) siblings = await findInstanceSiblings(dir, oldStem)
   }
 
-  await fs.rename(resolvedOld, newPath)
+  await renameWithRetry(resolvedOld, newPath)
 
+  // All-or-nothing (ISS-0175): an instance that still cannot move after the
+  // retries undoes the parent and the instances already moved.
+  const done: InstanceCascadePair[] = [{ from: resolvedOld, to: newPath }]
   const instances: InstanceCascadePair[] = []
   for (const { name, instanceName } of siblings) {
     const from = resolveInsideWorkspace(workspacePath, dir, name)
@@ -308,7 +355,12 @@ export async function renameEntry(
       console.warn(`[tree:rename] skipping instance "${name}": "${basename(to)}" already exists`)
       continue
     }
-    await fs.rename(from, to)
+    try {
+      await renameWithRetry(from, to)
+    } catch (err) {
+      return undoCascade(workspacePath, 'rename', resolvedOld, done, err)
+    }
+    done.push({ from, to })
     instances.push({ from, to })
   }
   return { newPath, instances }
@@ -373,8 +425,10 @@ export async function moveEntry(
     siblings = await findInstanceSiblings(dir, name.slice(0, -HTTP_SUFFIX.length))
   }
 
-  await fs.rename(resolvedSource, dest)
+  await renameWithRetry(resolvedSource, dest)
 
+  // All-or-nothing, as in renameEntry (ISS-0175).
+  const done: InstanceCascadePair[] = [{ from: resolvedSource, to: dest }]
   const instances: InstanceCascadePair[] = []
   for (const { name: sibName } of siblings) {
     const from = resolveInsideWorkspace(workspacePath, dir, sibName)
@@ -383,7 +437,12 @@ export async function moveEntry(
       console.warn(`[tree:move] skipping instance "${sibName}": already exists in target`)
       continue
     }
-    await fs.rename(from, to)
+    try {
+      await renameWithRetry(from, to)
+    } catch (err) {
+      return undoCascade(workspacePath, 'move', resolvedSource, done, err)
+    }
+    done.push({ from, to })
     instances.push({ from, to })
   }
   return { newPath: dest, instances }
