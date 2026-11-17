@@ -324,9 +324,30 @@ describe('writeSchemaToDisk — environment handling', () => {
   })
 
   describe('environment availability is checked before any request is written (IMP-15)', () => {
-    it('rejects a leftover env folder with no config.json and writes nothing', async () => {
-      // git removed config.json but left the gitignored `.state/` behind.
+    // ISS-0170 (owner decision 1a 2c): git removed config.json but left the
+    // gitignored `.state/` behind — the name is free and the state is set aside.
+    it('creates the environment over a leftover folder holding only .state/', async () => {
+      const state = join(workspace, 'environments', 'pets', '.state')
+      await fs.mkdir(state, { recursive: true })
+      await fs.writeFile(join(state, 'cookies.json'), '{}')
+      const result = await writeSchemaToDisk(schemaWithVars(), {
+        targetFolder: workspace,
+        collectionName: 'Pets',
+        conflictStrategy: 'abort',
+        postman: { environmentStrategy: 'new', environmentName: 'Pets' },
+        workspacePath: workspace
+      })
+      expect(result.environmentCreated).toBe('pets')
+      await expect(fs.access(state)).rejects.toThrow()
+      const setAside = await fs.readdir(
+        join(workspace, '.fetchpier', '.state', 'set-aside-environments')
+      )
+      expect(setAside).toHaveLength(1)
+    })
+
+    it('rejects a config-less env folder holding other content and writes nothing', async () => {
       await fs.mkdir(join(workspace, 'environments', 'pets', '.state'), { recursive: true })
+      await fs.writeFile(join(workspace, 'environments', 'pets', 'notes.txt'), 'mine')
       await expect(
         writeSchemaToDisk(schemaWithVars(), {
           targetFolder: workspace,

@@ -156,40 +156,128 @@ async function readEnvFolderNames(workspacePath: string): Promise<string[]> {
   return folders
 }
 
+/** Machine-local, gitignored sub-folder of an environment folder (cookie jar, local values). */
+const ENV_STATE_DIR = '.state'
+
+/**
+ * Where the `.state/` of a reclaimed leftover folder is set aside (ISS-0170). It
+ * stays under a `.state/` segment, so the default `**\/.state/` ignore covers it,
+ * and outside `environments/`, whose every sub-folder — dot-folders included — is
+ * read as a candidate environment.
+ */
+const SET_ASIDE_ENV_STATE_REL = join('.fetchpier', '.state', 'set-aside-environments')
+
+/**
+ * What a folder under `environments/` is:
+ * - `environment` — its `config.json` reads;
+ * - `unreadable` — a `config.json` exists but does not read (corrupt, merge
+ *   conflict, permissions): it still occupies its name so nothing clobbers it;
+ * - `leftover` — no `config.json`, and nothing but `.state/` (or nothing at all).
+ *   That is what version control leaves when a teammate deletes or renames an
+ *   environment: the tracked config goes, the ignored machine-local state stays.
+ *   It is not an environment, so its name is free (ISS-0170);
+ * - `foreign` — no `config.json` but other content. The product owns only
+ *   `.state/`; anything else is the user's, so the folder keeps occupying its name.
+ */
+type EnvFolderKind = 'environment' | 'unreadable' | 'leftover' | 'foreign'
+
+async function classifyEnvFolder(
+  workspacePath: string,
+  folder: string
+): Promise<{ kind: EnvFolderKind; name?: string }> {
+  try {
+    return {
+      kind: 'environment',
+      name: (await readEnvFile(envConfigPath(workspacePath, folder))).name
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return { kind: 'unreadable' }
+  }
+  let entries: string[]
+  try {
+    entries = await fs.readdir(envFolderPath(workspacePath, folder))
+  } catch {
+    return { kind: 'unreadable' }
+  }
+  return { kind: entries.every((e) => e === ENV_STATE_DIR) ? 'leftover' : 'foreign' }
+}
+
 /**
  * Reject `folder` when another environment already occupies it. `exceptFolder`
  * is the folder the operation's own environment currently sits in, so renaming
  * to a name that derives to the folder it already occupies is not a collision.
  * The product never invents a disambiguated name: the folder is the public handle
  * a pipeline will use, so it must be one the user chose (§6.3).
+ *
+ * A **leftover** folder (see {@link classifyEnvFolder}) does not occupy the name:
+ * the on-disk names of the matching leftovers (more than one only on a
+ * case-sensitive filesystem) are returned so the writing caller can reclaim them
+ * with {@link reclaimLeftoverFolder} first. Nothing is written here.
  */
 async function assertFolderAvailable(
   workspacePath: string,
   folder: string,
   exceptFolder?: string
-): Promise<void> {
+): Promise<string[]> {
   const target = folder.toLowerCase()
-  if (exceptFolder && exceptFolder.toLowerCase() === target) return
+  if (exceptFolder && exceptFolder.toLowerCase() === target) return []
+  const leftovers: string[] = []
   for (const existing of await readEnvFolderNames(workspacePath)) {
     if (existing.toLowerCase() !== target) continue
-    let occupant = existing
-    try {
-      occupant = (await readEnvFile(envConfigPath(workspacePath, existing))).name
-    } catch {
-      // Folder without a readable config still occupies the name.
+    const { kind, name } = await classifyEnvFolder(workspacePath, existing)
+    if (kind === 'leftover') {
+      leftovers.push(existing)
+      continue
     }
     throw new Error(
-      `ENVIRONMENT_NAME_CONFLICT: folder "${existing}" is already used by environment "${occupant}"`
+      `ENVIRONMENT_NAME_CONFLICT: folder "${existing}" is already used by environment "${name ?? existing}"`
     )
   }
+  return leftovers
+}
+
+/**
+ * Free a leftover folder so an operation can land on it (ISS-0170, owner
+ * decision 2c). Its `.state/` holds this machine's cookies and local overrides of
+ * an environment that is gone here — possibly the only copy of a credential — so
+ * it is never deleted and never inherited: a non-empty `.state/` is **moved
+ * aside** to `.fetchpier/.state/set-aside-environments/<folder>-<ts>-<rand>/`; an
+ * empty one is removed. Then the empty folder is removed (`rmdir`, which refuses a
+ * folder something wrote into meanwhile). A failure propagates before the caller
+ * writes anything, with the state still where it was or already set aside.
+ */
+async function reclaimLeftoverFolder(workspacePath: string, folder: string): Promise<void> {
+  const dir = resolveInsideWorkspace(workspacePath, envFolderPath(workspacePath, folder))
+  const state = join(dir, ENV_STATE_DIR)
+  let stateEntries: string[] | null
+  try {
+    stateEntries = await fs.readdir(state)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    stateEntries = null
+  }
+  if (stateEntries && stateEntries.length === 0) {
+    await fs.rmdir(state)
+  } else if (stateEntries) {
+    const parent = resolveInsideWorkspace(
+      workspacePath,
+      join(workspacePath, SET_ASIDE_ENV_STATE_REL)
+    )
+    await fs.mkdir(parent, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[-:.]/g, '')
+    const target = join(parent, `${folder}-${stamp}-${randomUUID().slice(0, 8)}`)
+    await renameWithRetry(state, target)
+  }
+  await fs.rmdir(dir)
 }
 
 /**
  * Check, without writing anything, that `name` can create a new environment:
  * it derives to a folder (`ENVIRONMENT_NAME_EMPTY` otherwise) that nothing under
  * `environments/` occupies (`ENVIRONMENT_NAME_CONFLICT` otherwise) — the same
- * rule `createEnvironmentFile` applies. Lets a caller that writes other files
- * first fail before it has written any of them. Returns the derived folder.
+ * rule `createEnvironmentFile` applies, so a leftover holding only `.state/` is
+ * free (it is reclaimed by the create, not here). Lets a caller that writes other
+ * files first fail before it has written any of them. Returns the derived folder.
  */
 export async function assertEnvironmentNameAvailable(
   workspacePath: string,
@@ -263,7 +351,9 @@ export async function createEnvironmentFile(
   variables: Record<string, string | null> = {}
 ): Promise<Environment> {
   const folder = deriveFolderOrThrow(name)
-  await assertFolderAvailable(workspacePath, folder)
+  for (const leftover of await assertFolderAvailable(workspacePath, folder)) {
+    await reclaimLeftoverFolder(workspacePath, leftover)
+  }
 
   const env: Environment = { id: randomUUID(), name, variables, folder }
   await fs.mkdir(resolveInsideWorkspace(workspacePath, envFolderPath(workspacePath, folder)), {
@@ -291,7 +381,9 @@ export async function renameEnvironment(
 ): Promise<Environment> {
   const currentFolder = await resolveEnvFolder(workspacePath, envId)
   const nextFolder = deriveFolderOrThrow(newName)
-  await assertFolderAvailable(workspacePath, nextFolder, currentFolder)
+  for (const leftover of await assertFolderAvailable(workspacePath, nextFolder, currentFolder)) {
+    await reclaimLeftoverFolder(workspacePath, leftover)
+  }
 
   if (nextFolder.toLowerCase() !== currentFolder.toLowerCase()) {
     // Retried through a transient lock (an indexer or AV holding a file inside
