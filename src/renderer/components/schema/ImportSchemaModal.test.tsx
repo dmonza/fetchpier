@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { SchemaFormat, SchemaImportRequest } from '../../../shared/types'
+import type { SchemaFormat, SchemaImportRequest, WorkspaceTree } from '../../../shared/types'
 
 vi.mock('react-i18next', () => ({
   useTranslation: (): { t: (k: string, o?: Record<string, unknown>) => string } => ({
@@ -12,7 +12,7 @@ vi.mock('../../stores/environment', () => ({
   useEnvironmentStore: { getState: () => ({ environments: [], loadEnvironments: async () => {} }) }
 }))
 vi.mock('../../stores/workspace', () => ({
-  useWorkspaceStore: { getState: () => ({ workspacePath: '/ws' }) }
+  useWorkspaceStore: { getState: () => ({ workspacePath: '/ws', requestsRoot: '/ws/requests' }) }
 }))
 
 import { ImportSchemaModal } from './ImportSchemaModal'
@@ -37,14 +37,46 @@ async function flush(): Promise<void> {
   })
 }
 
-async function renderModal(): Promise<void> {
+const TREE: WorkspaceTree[] = [
+  {
+    name: 'api',
+    path: '/ws/requests/api',
+    type: 'folder',
+    kind: 'folder',
+    children: [
+      { name: 'v2', path: '/ws/requests/api/v2', type: 'folder', kind: 'folder', children: [] }
+    ]
+  },
+  { name: 'ping.http', path: '/ws/requests/ping.http', type: 'file', kind: 'request' },
+  { name: 'auth', path: '/ws/requests/auth', type: 'folder', kind: 'folder', children: [] }
+]
+
+let readTree: ReturnType<typeof vi.fn>
+
+async function renderModal(target = { folder: '/ws/requests', label: 'ws' }): Promise<void> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   await act(async () => {
-    useSchemaImportStore.getState().open({ targetFolder: '/ws/requests', targetLabel: 'requests' })
+    useSchemaImportStore.getState().open({ targetFolder: target.folder, targetLabel: target.label })
     root!.render(<ImportSchemaModal />)
   })
+  await flush()
+}
+
+function destinationSelect(): HTMLSelectElement {
+  const el = document.body.querySelector<HTMLSelectElement>('#schema-import-destination')
+  if (!el) throw new Error('destination select not rendered')
+  return el
+}
+
+async function chooseDestination(path: string): Promise<void> {
+  await act(async () => {
+    const select = destinationSelect()
+    select.value = path
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  await flush()
 }
 
 async function store(
@@ -77,8 +109,10 @@ beforeEach(() => {
     detectedFormat: 'openapi',
     schemaTitle: 'x'
   }))
+  readTree = vi.fn(async () => TREE)
   vi.stubGlobal('api', {
-    schema: { onProgress: () => () => {}, detectFormat, import: importSchema }
+    schema: { onProgress: () => () => {}, detectFormat, import: importSchema },
+    filesystem: { readTree }
   })
 })
 
@@ -137,6 +171,58 @@ describe('ImportSchemaModal — each tab keeps its own content (IMP-27)', () => 
     await clickImport()
     const req = importSchema.mock.calls[0][0] as SchemaImportRequest
     expect(req.source).toEqual({ kind: 'text', value: POSTMAN })
+  })
+})
+
+describe('ImportSchemaModal — destination selector', () => {
+  it('lists the root and every nested folder, preselecting the target it opened with', async () => {
+    await renderModal({ folder: '/ws/requests/api/v2', label: 'v2' })
+    const select = destinationSelect()
+    const options = [...select.options]
+    expect(options.map((o) => o.value)).toEqual([
+      '/ws/requests',
+      '/ws/requests/api',
+      '/ws/requests/api/v2',
+      '/ws/requests/auth'
+    ])
+    expect(options[0].textContent).toBe('schemaImport.destination.root {"name":"ws"}')
+    expect(options.map((o) => o.textContent?.trim()).slice(1)).toEqual(['api', 'v2', 'auth'])
+    expect(select.value).toBe('/ws/requests/api/v2')
+  })
+
+  it('imports into the destination chosen in the dialog', async () => {
+    await renderModal({ folder: '/ws/requests/api', label: 'api' })
+    await chooseDestination('/ws/requests/auth')
+    expect(useSchemaImportStore.getState().targetLabel).toBe('auth')
+    await store((s) => s.setFileContent('openapi.yaml', OPENAPI))
+    await clickImport()
+    const req = importSchema.mock.calls[0][0] as SchemaImportRequest
+    expect(req.targetFolder).toBe('/ws/requests/auth')
+  })
+
+  it('choosing the root labels the target with the workspace name', async () => {
+    await renderModal({ folder: '/ws/requests/api', label: 'api' })
+    await chooseDestination('/ws/requests')
+    expect(useSchemaImportStore.getState()).toMatchObject({
+      targetFolder: '/ws/requests',
+      targetLabel: 'ws'
+    })
+  })
+
+  it('keeps the opened target as an option when the tree no longer has it', async () => {
+    await renderModal({ folder: '/ws/requests/gone', label: 'gone' })
+    const select = destinationSelect()
+    expect(select.value).toBe('/ws/requests/gone')
+    expect([...select.options].map((o) => o.value)).toContain('/ws/requests/gone')
+  })
+
+  it('still offers the opened target when the tree cannot be read', async () => {
+    readTree.mockRejectedValueOnce(new Error('EACCES'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await renderModal({ folder: '/ws/requests/api', label: 'api' })
+    const select = destinationSelect()
+    expect(select.value).toBe('/ws/requests/api')
+    expect([...select.options].map((o) => o.value)).toEqual(['/ws/requests', '/ws/requests/api'])
   })
 })
 

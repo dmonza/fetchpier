@@ -16,6 +16,7 @@ import { resolveRenameBlur } from './rename-blur'
 import { flattenVisible, resolveTreeKey, typeAheadMatch } from './tree-nav'
 import { treeRowStateClass } from './tree-row-style'
 import { treeMutationErrorToast, treeNameErrorMessage } from './tree-name-error'
+import { collectFolderOptions, type FolderOption } from './folder-options'
 import { beginRepoint, endRepoint } from '../../lib/repoint-guard'
 import { collectAllPaths } from '../../lib/tree-paths'
 import { useEnvironmentStore } from '../../stores/environment'
@@ -779,11 +780,9 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
               )}
               style={{ paddingLeft: `${rowPaddingLeftPx(depth)}px` }}
               onClick={() => {
-                if (isSelectedFolder) {
-                  useTreeSelectionStore.getState().clearSelection()
-                } else {
-                  useTreeSelectionStore.getState().setSelected(node.path, 'folder')
-                }
+                // A click on the selected folder keeps it selected and only toggles it;
+                // deselecting is an empty-area click or Escape on the tree.
+                useTreeSelectionStore.getState().setSelected(node.path, 'folder')
                 setIsOpen(!isOpen)
               }}
             >
@@ -945,22 +944,6 @@ interface MoveToModalProps {
   onCancel: () => void
 }
 
-function collectFolders(
-  nodes: WorkspaceTree[],
-  excludePath: string,
-  result: { path: string; label: string; depth: number }[],
-  depth = 0
-): void {
-  for (const node of nodes) {
-    if (node.type === 'folder' && node.path !== excludePath) {
-      result.push({ path: node.path, label: node.name, depth })
-      if (node.children) {
-        collectFolders(node.children, excludePath, result, depth + 1)
-      }
-    }
-  }
-}
-
 function MoveToModal({
   rootPath,
   tree,
@@ -971,10 +954,10 @@ function MoveToModal({
   const { t } = useTranslation()
   const [selected, setSelected] = useState<string>(rootPath)
 
-  const folders: { path: string; label: string; depth: number }[] = [
-    { path: rootPath, label: t('collection.moveTo.root'), depth: 0 }
+  const folders: FolderOption[] = [
+    { path: rootPath, label: t('collection.moveTo.root'), depth: 0 },
+    ...collectFolderOptions(tree, excludePath)
   ]
-  collectFolders(tree, excludePath, folders)
 
   return (
     <Dialog
@@ -1616,16 +1599,23 @@ export function CollectionTree({
 
   const handleTreeKeyDown = (e: React.KeyboardEvent): void => {
     const target = e.target as HTMLElement
+    // React bubbles events from portaled content (the row context menus) through
+    // the component tree; keys pressed there are not tree navigation.
+    if (!e.currentTarget.contains(target)) return
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
     // An inline rename/create/duplicate input owns the keyboard while it is open.
     if (renamingPath || pendingCreate || creatingInstancePath || duplicatingInstancePath) return
     // Tab-switch / global chords are not tree navigation.
     if (e.ctrlKey || e.metaKey || e.altKey) return
 
+    // Escape clears selection and focus, so toolbar create/import target the root
+    // again. Keyboard focus stays in the tree; the next arrow key re-seeds focus.
     if (e.key === 'Escape') {
-      if (useTreeSelectionStore.getState().selectedPath !== null) {
+      const { selectedPath, focusedPath } = useTreeSelectionStore.getState()
+      if (selectedPath !== null || focusedPath !== null) {
         e.preventDefault()
-        useTreeSelectionStore.getState().clearSelection()
+        useTreeSelectionStore.getState().clear()
+        containerRef.current?.focus()
       }
       return
     }
@@ -1760,8 +1750,12 @@ export function CollectionTree({
         // row (roving tabindex). focus:outline-none — the row's own ring is the cue.
         tabIndex={focusedPath ? -1 : 0}
         onKeyDown={handleTreeKeyDown}
+        // A click on the empty area clears selection and focus. Clicks inside a
+        // portaled context menu bubble here through React and must not count.
         onClick={(e) => {
-          if (!(e.target as HTMLElement).closest('[role="treeitem"], input, textarea, button')) {
+          const target = e.target as HTMLElement
+          if (!e.currentTarget.contains(target)) return
+          if (!target.closest('[role="treeitem"], input, textarea, button')) {
             useTreeSelectionStore.getState().clear()
           }
         }}

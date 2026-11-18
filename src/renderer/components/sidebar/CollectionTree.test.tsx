@@ -33,8 +33,17 @@ const SAMPLE_TREE: WorkspaceTree[] = [
         kind: 'request'
       }
     ]
+  },
+  {
+    name: 'folderB',
+    path: '/ws/requests/folderB',
+    type: 'folder',
+    kind: 'folder',
+    children: []
   }
 ]
+
+const FOLDER_A = '/ws/requests/folderA'
 
 let container: HTMLDivElement
 let root: Root
@@ -67,8 +76,29 @@ function treeItem(label: string): HTMLElement {
   return found
 }
 
-describe('CollectionTree — folder deselection', () => {
-  beforeEach(() => {
+function treeContainer(): HTMLElement {
+  return container.querySelector<HTMLElement>('[role="tree"]')!
+}
+
+/** Open the row's context menu; Radix renders its items in a portal on document.body. */
+function openContextMenu(label: string): HTMLElement[] {
+  act(() => {
+    treeItem(label).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })
+    )
+  })
+  const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+  if (items.length === 0) throw new Error(`context menu did not open on: ${label}`)
+  return items
+}
+
+function selection(): { selectedPath: string | null; focusedPath: string | null } {
+  const { selectedPath, focusedPath } = useTreeSelectionStore.getState()
+  return { selectedPath, focusedPath }
+}
+
+describe('CollectionTree — selection and deselection', () => {
+  beforeEach(async () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -84,6 +114,7 @@ describe('CollectionTree — folder deselection', () => {
       pendingExpandablePaths: null,
       lastFolderKeys: []
     })
+    await renderTree()
   })
 
   afterEach(() => {
@@ -92,38 +123,56 @@ describe('CollectionTree — folder deselection', () => {
       root.unmount()
     })
     container.remove()
+    document.body.replaceChildren()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (window as any).api
   })
 
-  it('deselects a selected folder on second click, empty-area click, or Escape', async () => {
-    await renderTree()
+  it('a second click on the selected folder keeps it selected and only toggles it', () => {
+    act(() => treeItem('folderA').click())
+    expect(useTreeStateStore.getState().isExpanded(FOLDER_A)).toBe(true)
 
-    act(() => {
-      treeItem('folderA').click()
-    })
-    expect(useTreeSelectionStore.getState().selectedPath).toBe('/ws/requests/folderA')
+    act(() => treeItem('folderA').click())
+    expect(selection().selectedPath).toBe(FOLDER_A)
+    expect(useTreeStateStore.getState().isExpanded(FOLDER_A)).toBe(false)
+  })
 
+  it('a click on the empty area clears selection and focus', () => {
+    act(() => treeItem('folderA').click())
     act(() => {
-      treeItem('folderA').click()
+      treeContainer().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
-    expect(useTreeSelectionStore.getState().selectedPath).toBeNull()
+    expect(selection()).toEqual({ selectedPath: null, focusedPath: null })
+  })
 
+  it('Escape on the tree clears selection and focus, and keeps keyboard focus in the tree', () => {
+    act(() => treeItem('folderA').click())
+    treeItem('folderA').focus()
     act(() => {
-      treeItem('folderA').click()
+      treeItem('folderA').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      )
     })
-    const treeContainer = container.querySelector<HTMLElement>('[role="tree"]')!
-    act(() => {
-      treeContainer.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    expect(useTreeSelectionStore.getState().selectedPath).toBeNull()
+    expect(selection()).toEqual({ selectedPath: null, focusedPath: null })
+    expect(treeContainer().contains(document.activeElement)).toBe(true)
+  })
 
+  it('choosing a context-menu item on another row keeps the selection', () => {
+    act(() => treeItem('folderA').click())
+    const rename = openContextMenu('folderB').find(
+      (i) => i.textContent === 'collection.contextMenu.rename'
+    )!
+    act(() => rename.click())
+    expect(selection().selectedPath).toBe(FOLDER_A)
+  })
+
+  it('Escape that closes the context menu keeps the selection', () => {
+    act(() => treeItem('folderA').click())
+    const [first] = openContextMenu('folderA')
     act(() => {
-      treeItem('folderA').click()
+      first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    act(() => {
-      treeContainer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    })
-    expect(useTreeSelectionStore.getState().selectedPath).toBeNull()
+    expect(document.body.querySelectorAll('[role="menuitem"]')).toHaveLength(0)
+    expect(selection().selectedPath).toBe(FOLDER_A)
   })
 })
