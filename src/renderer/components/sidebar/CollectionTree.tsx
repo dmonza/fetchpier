@@ -408,6 +408,7 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
   )
   const selectedPath = useTreeSelectionStore((s) => s.selectedPath)
   const focusedPath = useTreeSelectionStore((s) => s.focusedPath)
+  const activeMarkHidden = useTreeSelectionStore((s) => s.activeMarkHidden)
   const isFocused = focusedPath === node.path
 
   // A request with instance children is expandable just like a folder.
@@ -427,7 +428,7 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
 
   const isRenaming = renamingPath === node.path
   const isCreatingHere = node.type === 'folder' && pendingCreate?.parentPath === node.path
-  const isActiveFile = node.type === 'file' && activeFilePath === node.path
+  const isActiveFile = node.type === 'file' && activeFilePath === node.path && !activeMarkHidden
   const isSelectedFolder = node.type === 'folder' && selectedPath === node.path
 
   // ── Drag & drop handlers ─────────────────────────────────────────────────
@@ -1066,6 +1067,12 @@ export function CollectionTree({
   const selectedType = useTreeSelectionStore((s) => s.selectedType)
   const focusedPath = useTreeSelectionStore((s) => s.focusedPath)
 
+  // A deselect hides the open request's mark until the active tab changes.
+  const activeTabId = useRequestStore((s) => s.activeTabId)
+  useEffect(() => {
+    useTreeSelectionStore.getState().showActiveMark()
+  }, [activeTabId])
+
   // Roving-focus plumbing: the scroll container is the keyboard host; a type-ahead
   // buffer accumulates printable keystrokes within a short window.
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1608,13 +1615,14 @@ export function CollectionTree({
     // Tab-switch / global chords are not tree navigation.
     if (e.ctrlKey || e.metaKey || e.altKey) return
 
-    // Escape clears selection and focus, so toolbar create/import target the root
-    // again. Keyboard focus stays in the tree; the next arrow key re-seeds focus.
+    // Escape clears selection and focus (and hides the open request's mark), so
+    // toolbar create/import target the root again. Keyboard focus stays in the
+    // tree; the next arrow key re-seeds focus.
     if (e.key === 'Escape') {
-      const { selectedPath, focusedPath } = useTreeSelectionStore.getState()
-      if (selectedPath !== null || focusedPath !== null) {
+      const { selectedPath, focusedPath, activeMarkHidden } = useTreeSelectionStore.getState()
+      if (selectedPath !== null || focusedPath !== null || !activeMarkHidden) {
         e.preventDefault()
-        useTreeSelectionStore.getState().clear()
+        useTreeSelectionStore.getState().deselect()
         containerRef.current?.focus()
       }
       return
@@ -1756,7 +1764,7 @@ export function CollectionTree({
           const target = e.target as HTMLElement
           if (!e.currentTarget.contains(target)) return
           if (!target.closest('[role="treeitem"], input, textarea, button')) {
-            useTreeSelectionStore.getState().clear()
+            useTreeSelectionStore.getState().deselect()
           }
         }}
         className={cn(

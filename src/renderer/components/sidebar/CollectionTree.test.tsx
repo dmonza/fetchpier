@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { WorkspaceTree } from '../../../shared/types'
+import type { Tab, WorkspaceTree } from '../../../shared/types'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -99,6 +99,8 @@ function selection(): { selectedPath: string | null; focusedPath: string | null 
 
 describe('CollectionTree — selection and deselection', () => {
   beforeEach(async () => {
+    // jsdom has no layout: the tree scrolls the keyboard-focused row into view.
+    Element.prototype.scrollIntoView = vi.fn()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -155,6 +157,48 @@ describe('CollectionTree — selection and deselection', () => {
     })
     expect(selection()).toEqual({ selectedPath: null, focusedPath: null })
     expect(treeContainer().contains(document.activeElement)).toBe(true)
+  })
+
+  describe('the open request mark', () => {
+    const REQ = '/ws/requests/folderA/reqA1.http'
+
+    function openTab(id: string, filePath: string): void {
+      act(() => {
+        useRequestStore.setState({
+          tabs: [{ id, title: id, filePath } as unknown as Tab],
+          activeTabId: id,
+          mruIds: [id]
+        })
+      })
+    }
+
+    const marked = (): boolean => treeItem('reqA1').className.includes('bg-primary-tint')
+
+    beforeEach(() => {
+      act(() => treeItem('folderA').click()) // expand so the request row renders
+      openTab('t1', REQ)
+    })
+
+    it('an empty-area click hides it until the active tab changes', () => {
+      expect(marked()).toBe(true)
+      act(() => {
+        treeContainer().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      expect(marked()).toBe(false)
+      openTab('t2', REQ)
+      expect(marked()).toBe(true)
+    })
+
+    it('Escape hides it until a row is clicked', () => {
+      act(() => {
+        treeItem('folderA').dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        )
+      })
+      expect(marked()).toBe(false)
+      act(() => treeItem('folderB').click())
+      expect(marked()).toBe(true)
+    })
   })
 
   it('choosing a context-menu item on another row keeps the selection', () => {

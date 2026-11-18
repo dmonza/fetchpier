@@ -21,6 +21,30 @@ describe('useTreeSelectionStore', () => {
     expect(useTreeSelectionStore.getState().selectedType).toBeNull()
   })
 
+  describe('active-request mark', () => {
+    it('deselect clears selection and focus and hides the mark; a row click shows it again', () => {
+      useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')
+      useTreeSelectionStore.getState().deselect()
+      expect(useTreeSelectionStore.getState()).toMatchObject({
+        selectedPath: null,
+        selectedType: null,
+        focusedPath: null,
+        activeMarkHidden: true
+      })
+      useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')
+      expect(useTreeSelectionStore.getState().activeMarkHidden).toBe(false)
+    })
+
+    it('showActiveMark and clear (workspace change) show the mark again', () => {
+      useTreeSelectionStore.getState().deselect()
+      useTreeSelectionStore.getState().showActiveMark()
+      expect(useTreeSelectionStore.getState().activeMarkHidden).toBe(false)
+      useTreeSelectionStore.getState().deselect()
+      useTreeSelectionStore.getState().clear()
+      expect(useTreeSelectionStore.getState().activeMarkHidden).toBe(false)
+    })
+  })
+
   describe('clearIfWithin', () => {
     it('clears the selection when the deleted node IS the selection', () => {
       useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')
