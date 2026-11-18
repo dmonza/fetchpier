@@ -26,6 +26,7 @@ import { Input } from '../ui/input'
 import { cn } from '../../lib/utils'
 import type { SchemaFormat, SchemaImportRequest } from '../../../shared/types'
 import { deriveEnvFolderName } from '../../../shared/lib/env-folder-name'
+import { collectFolderOptions, type FolderOption } from '../sidebar/folder-options'
 import { ImportResultSummary } from './ImportResultSummary'
 import { schemaImportErrorText } from './schema-import-error'
 
@@ -44,6 +45,27 @@ export function ImportSchemaModal(): React.JSX.Element | null {
   const state = useSchemaImportStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  // Folders of the request tree for the destination selector, read each time the
+  // dialog opens (it can be opened from the toolbar, with no tree at hand).
+  const [folderOptions, setFolderOptions] = useState<FolderOption[]>([])
+
+  useEffect(() => {
+    if (!state.isOpen) return
+    let cancelled = false
+    window.api.filesystem
+      .readTree()
+      .then((tree) => {
+        if (!cancelled) setFolderOptions(collectFolderOptions(tree))
+      })
+      .catch((err) => {
+        // The selector still offers the root and the target the dialog opened with.
+        console.error('[ImportSchemaModal] Failed to read the tree:', err)
+        if (!cancelled) setFolderOptions([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [state.isOpen])
 
   // Subscribe to progress events while the modal is open
   useEffect(() => {
@@ -194,6 +216,31 @@ export function ImportSchemaModal(): React.JSX.Element | null {
 
   const showResult = !!state.result
 
+  // Destination options: the request-tree root (labelled with the workspace name,
+  // as the toolbar import does), then every folder indented by depth. The target
+  // the dialog opened with is always an option, even if the tree no longer has it.
+  const { workspacePath, requestsRoot } = useWorkspaceStore.getState()
+  const rootName = workspacePath?.split(/[/\\]/).pop() || workspacePath || ''
+  const destinations: { path: string; label: string; text: string }[] = []
+  if (requestsRoot) {
+    destinations.push({
+      path: requestsRoot,
+      label: rootName,
+      text: t('schemaImport.destination.root', { name: rootName })
+    })
+  }
+  for (const f of folderOptions) {
+    destinations.push({
+      path: f.path,
+      label: f.label,
+      text: `${'   '.repeat(f.depth + 1)}${f.label}`
+    })
+  }
+  if (state.targetFolder && !destinations.some((d) => d.path === state.targetFolder)) {
+    const label = state.targetLabel ?? state.targetFolder
+    destinations.push({ path: state.targetFolder, label, text: label })
+  }
+
   return (
     <Dialog
       open={state.isOpen}
@@ -207,7 +254,9 @@ export function ImportSchemaModal(): React.JSX.Element | null {
             <Upload className="h-4 w-4" />
             {t('schemaImport.title')}
           </DialogTitle>
-          <DialogDescription>
+          {/* The visible control is the destination selector below; the
+              description keeps the destination announced to screen readers. */}
+          <DialogDescription className="sr-only">
             {t('schemaImport.target', { path: state.targetLabel ?? '' })}
           </DialogDescription>
         </DialogHeader>
@@ -224,6 +273,31 @@ export function ImportSchemaModal(): React.JSX.Element | null {
         ) : (
           <>
             <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="schema-import-destination"
+                  className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+                >
+                  {t('schemaImport.destination.label')}
+                </label>
+                <select
+                  id="schema-import-destination"
+                  value={state.targetFolder ?? ''}
+                  disabled={state.isImporting}
+                  onChange={(e) => {
+                    const chosen = destinations.find((d) => d.path === e.target.value)
+                    if (chosen) state.setTarget(chosen.path, chosen.label)
+                  }}
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                >
+                  {destinations.map((d) => (
+                    <option key={d.path} value={d.path}>
+                      {d.text}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <Tabs
                 value={state.sourceKind}
                 onValueChange={(v) => state.setSourceKind(v as typeof state.sourceKind)}

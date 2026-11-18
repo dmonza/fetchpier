@@ -15,9 +15,22 @@ interface TreeSelectionState {
    * the node disappears (external change, delete, move, rename).
    */
   focusedPath: string | null
+  /**
+   * The tree hides the open request's mark (tint and bar) after a deselect, as a
+   * code editor's explorer drops the active file's highlight on an empty-area
+   * click. It comes back when a request row is clicked or the active tab changes;
+   * selecting a folder leaves it hidden (the folder is what is selected). Visual
+   * only: the create/import target reads `selectedPath`, never this.
+   */
+  activeMarkHidden: boolean
   setSelected: (path: string, type: 'file' | 'folder') => void
   /** Set the roving keyboard focus (without changing the create/import selection). */
   setFocused: (path: string | null) => void
+  /** Empty-area click or Escape on the tree: clear selection and focus, hide the open request's mark. */
+  deselect: () => void
+  /** The active tab changed: show the open request's mark again. */
+  showActiveMark: () => void
+  /** Reset everything (workspace change). */
   clear: () => void
   /**
    * Clear the selection if it points at `deletedAbsPath` or anything inside it.
@@ -46,12 +59,23 @@ export const useTreeSelectionStore = create<TreeSelectionState>((set) => ({
   selectedPath: null,
   selectedType: null,
   focusedPath: null,
+  activeMarkHidden: false,
   // Clicking a node both selects it (for toolbar create/import targeting) and
   // focuses it (so the keyboard keeps acting on what the user just clicked).
+  // Only a request click brings the open request's mark back after a deselect.
   setSelected: (selectedPath, selectedType) =>
-    set({ selectedPath, selectedType, focusedPath: selectedPath }),
+    set((s) => ({
+      selectedPath,
+      selectedType,
+      focusedPath: selectedPath,
+      activeMarkHidden: selectedType === 'file' ? false : s.activeMarkHidden
+    })),
   setFocused: (focusedPath) => set({ focusedPath }),
-  clear: () => set({ selectedPath: null, selectedType: null, focusedPath: null }),
+  deselect: () =>
+    set({ selectedPath: null, selectedType: null, focusedPath: null, activeMarkHidden: true }),
+  showActiveMark: () => set((s) => (s.activeMarkHidden ? { activeMarkHidden: false } : s)),
+  clear: () =>
+    set({ selectedPath: null, selectedType: null, focusedPath: null, activeMarkHidden: false }),
   clearIfWithin: (deletedAbsPath) =>
     set((s) => {
       const patch: Partial<TreeSelectionState> = {}
