@@ -22,7 +22,7 @@ describe('useTreeSelectionStore', () => {
   })
 
   describe('active-request mark', () => {
-    it('deselect clears selection and focus and hides the mark; a row click shows it again', () => {
+    it('deselect clears selection and focus and hides the mark', () => {
       useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')
       useTreeSelectionStore.getState().deselect()
       expect(useTreeSelectionStore.getState()).toMatchObject({
@@ -31,7 +31,13 @@ describe('useTreeSelectionStore', () => {
         focusedPath: null,
         activeMarkHidden: true
       })
+    })
+
+    it('selecting a folder keeps the mark hidden; selecting a request shows it again', () => {
+      useTreeSelectionStore.getState().deselect()
       useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')
+      expect(useTreeSelectionStore.getState().activeMarkHidden).toBe(true)
+      useTreeSelectionStore.getState().setSelected('/ws/requests/api/get.http', 'file')
       expect(useTreeSelectionStore.getState().activeMarkHidden).toBe(false)
     })
 

@@ -189,7 +189,7 @@ describe('CollectionTree — selection and deselection', () => {
       expect(marked()).toBe(true)
     })
 
-    it('Escape hides it until a row is clicked', () => {
+    it('Escape hides it; selecting a folder keeps it hidden, clicking the request shows it', () => {
       act(() => {
         treeItem('folderA').dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
@@ -197,6 +197,9 @@ describe('CollectionTree — selection and deselection', () => {
       })
       expect(marked()).toBe(false)
       act(() => treeItem('folderB').click())
+      expect(useTreeSelectionStore.getState().selectedPath).toBe('/ws/requests/folderB')
+      expect(marked()).toBe(false)
+      act(() => treeItem('reqA1').click())
       expect(marked()).toBe(true)
     })
   })
