@@ -21,6 +21,14 @@ describe('useTreeSelectionStore', () => {
     expect(useTreeSelectionStore.getState().selectedType).toBeNull()
   })
 
+  it('clearSelection clears selectedPath and selectedType while preserving focusedPath', () => {
+    useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')
+    useTreeSelectionStore.getState().clearSelection()
+    expect(useTreeSelectionStore.getState().selectedPath).toBeNull()
+    expect(useTreeSelectionStore.getState().selectedType).toBeNull()
+    expect(useTreeSelectionStore.getState().focusedPath).toBe('/ws/requests/api')
+  })
+
   describe('clearIfWithin', () => {
     it('clears the selection when the deleted node IS the selection', () => {
       useTreeSelectionStore.getState().setSelected('/ws/requests/api', 'folder')

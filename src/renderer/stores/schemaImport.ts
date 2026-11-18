@@ -42,6 +42,7 @@ interface SchemaImportState {
   error: string | null
 
   open: (payload: SchemaImportOpenPayload) => void
+  setTarget: (targetFolder: string, targetLabel: string) => void
   close: () => void
   setSourceKind: (kind: ImportSourceKind) => void
   setFileContent: (name: string, content: string) => void
@@ -122,6 +123,7 @@ export const useSchemaImportStore = create<SchemaImportState>((set) => ({
       result: null,
       error: null
     }),
+  setTarget: (targetFolder, targetLabel) => set({ targetFolder, targetLabel }),
   close: () => set({ isOpen: false }),
 
   setSourceKind: (sourceKind) => set({ sourceKind }),

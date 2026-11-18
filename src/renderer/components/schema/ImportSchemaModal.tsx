@@ -193,6 +193,15 @@ export function ImportSchemaModal(): React.JSX.Element | null {
   if (!state.isOpen) return null
 
   const showResult = !!state.result
+  const { workspacePath, requestsRoot } = useWorkspaceStore.getState()
+  const canResetToRoot = Boolean(
+    !showResult &&
+    !state.isImporting &&
+    requestsRoot &&
+    state.targetFolder &&
+    state.targetFolder !== requestsRoot
+  )
+  const rootLabel = (workspacePath?.split(/[/\\]/).pop() ?? workspacePath) || requestsRoot || ''
 
   return (
     <Dialog
@@ -207,8 +216,17 @@ export function ImportSchemaModal(): React.JSX.Element | null {
             <Upload className="h-4 w-4" />
             {t('schemaImport.title')}
           </DialogTitle>
-          <DialogDescription>
-            {t('schemaImport.target', { path: state.targetLabel ?? '' })}
+          <DialogDescription className="flex items-center gap-2">
+            <span>{t('schemaImport.target', { path: state.targetLabel ?? '' })}</span>
+            {canResetToRoot && requestsRoot && (
+              <button
+                type="button"
+                onClick={() => state.setTarget(requestsRoot, rootLabel)}
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                {t('schemaImport.useWorkspaceRoot')}
+              </button>
+            )}
           </DialogDescription>
         </DialogHeader>
 

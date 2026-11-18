@@ -1174,6 +1174,7 @@
   "schemaImport": {
     "title": "Import schema",
     "target": "Importing into: {{path}}",
+    "useWorkspaceRoot": "Use workspace root",
     "source": {
       "file": "File",
       "url": "URL",

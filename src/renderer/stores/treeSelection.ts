@@ -18,6 +18,8 @@ interface TreeSelectionState {
   setSelected: (path: string, type: 'file' | 'folder') => void
   /** Set the roving keyboard focus (without changing the create/import selection). */
   setFocused: (path: string | null) => void
+  /** Clear the create/import target selection while preserving roving keyboard focus. */
+  clearSelection: () => void
   clear: () => void
   /**
    * Clear the selection if it points at `deletedAbsPath` or anything inside it.
@@ -51,6 +53,7 @@ export const useTreeSelectionStore = create<TreeSelectionState>((set) => ({
   setSelected: (selectedPath, selectedType) =>
     set({ selectedPath, selectedType, focusedPath: selectedPath }),
   setFocused: (focusedPath) => set({ focusedPath }),
+  clearSelection: () => set({ selectedPath: null, selectedType: null }),
   clear: () => set({ selectedPath: null, selectedType: null, focusedPath: null }),
   clearIfWithin: (deletedAbsPath) =>
     set((s) => {
