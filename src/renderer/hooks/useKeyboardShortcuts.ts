@@ -29,6 +29,8 @@ interface ShortcutHandlers {
   onOpenCommandPalette: () => void
   onFocusUrlBar: () => void
   onToggleSidebar: () => void
+  /** Ctrl/Cmd+Shift+F — focus the collection tree's filter field. */
+  onFilterSidebar: () => void
   onToggleActivityPanel: () => void
   onZoom: (intent: ZoomIntent) => void
   /** Ctrl+Tab — step backward through most-recently-used order. */
@@ -60,6 +62,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers): void {
     onOpenCommandPalette,
     onFocusUrlBar,
     onToggleSidebar,
+    onFilterSidebar,
     onToggleActivityPanel,
     onZoom,
     onNextTab,
@@ -166,6 +169,12 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers): void {
           e.preventDefault()
           gated('view.toggleSidebar', onToggleSidebar)
           break
+        case 'f':
+          // Plain Ctrl/Cmd+F stays with the focused editor (its own search).
+          if (!e.shiftKey) break
+          e.preventDefault()
+          gated('view.filterSidebar', onFilterSidebar)
+          break
         case 'j':
           e.preventDefault()
           gated('view.toggleActivityPanel', onToggleActivityPanel)
@@ -196,6 +205,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers): void {
     onOpenCommandPalette,
     onFocusUrlBar,
     onToggleSidebar,
+    onFilterSidebar,
     onToggleActivityPanel,
     onZoom,
     onNextTab,

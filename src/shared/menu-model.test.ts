@@ -70,8 +70,16 @@ describe('deriveMenuEnablement', () => {
 
     expect(enabled).not.toContain('file.newCollection')
     expect(enabled).not.toContain('file.closeWorkspace')
+    expect(enabled).not.toContain('view.filterSidebar')
     expect(enabled).toContain('file.newRequest')
     expect(enabled).toContain('file.openWorkspace')
+  })
+
+  it('offers "Filter sidebar" in the main window once a workspace is open, never in the popout', () => {
+    expect(enabledIn(state({ hasAnyTab: false, hasActiveTab: false }))).toContain(
+      'view.filterSidebar'
+    )
+    expect(enabledIn(state({ focusedWindow: 'popout' }))).not.toContain('view.filterSidebar')
   })
 
   it('keeps a workspace open with no tabs from offering tab actions', () => {

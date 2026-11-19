@@ -124,6 +124,7 @@ export interface MenuLabels {
     label: string
     commandPalette: string
     toggleSidebar: string
+    filterSidebar: string
     toggleActivityPanel: string
     toggleDevTools: string
     zoomIn: string

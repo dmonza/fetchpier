@@ -34,6 +34,7 @@ export const MENU_ITEM_IDS = [
   'request.focusUrl',
   'view.commandPalette',
   'view.toggleSidebar',
+  'view.filterSidebar',
   'view.toggleActivityPanel',
   'view.zoomIn',
   'view.zoomOut',
@@ -117,6 +118,8 @@ export function deriveMenuEnablement(state: MenuState): Record<MenuItemId, boole
 
     'view.commandPalette': main,
     'view.toggleSidebar': main,
+    // The filter belongs to the collection tree, which only exists with a workspace.
+    'view.filterSidebar': main && hasWorkspace,
     'view.toggleActivityPanel': main,
 
     // Zoom, developer tools and the Window menu are window properties, not

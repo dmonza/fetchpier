@@ -17,6 +17,7 @@ import { ThirdPartyLicensesDialog } from './ThirdPartyLicensesDialog'
 import { UpdatesPanel } from '../updates/UpdatesPanel'
 import { LazyBoundary } from '../ui/LazyBoundary'
 import { useWorkspaceStore } from '../../stores/workspace'
+import { useTreeFilterStore } from '../../stores/treeFilter'
 import { useEnvironmentStore } from '../../stores/environment'
 import { useRequestStore } from '../../stores/request'
 import { useUnsavedGuardStore, guardDiscard } from '../../stores/unsavedGuard'
@@ -297,6 +298,13 @@ export function AppLayout(): React.JSX.Element {
     setIsSidebarVisible((v) => !v)
   }, [])
 
+  // "Filter sidebar": show the sidebar if hidden, then focus the tree's filter
+  // field — a pending request the tree consumes once it is mounted.
+  const handleFilterSidebar = useCallback(() => {
+    setIsSidebarVisible(true)
+    useTreeFilterStore.getState().requestFocus()
+  }, [])
+
   const handleToggleActivityPanel = useCallback(() => {
     toggleActivityPanel()
   }, [toggleActivityPanel])
@@ -413,6 +421,9 @@ export function AppLayout(): React.JSX.Element {
         case 'view.toggleSidebar':
           handleToggleSidebar()
           break
+        case 'view.filterSidebar':
+          handleFilterSidebar()
+          break
         case 'view.toggleActivityPanel':
           handleToggleActivityPanel()
           break
@@ -440,6 +451,7 @@ export function AppLayout(): React.JSX.Element {
     handleFocusUrlBar,
     handleOpenCommandPalette,
     handleToggleSidebar,
+    handleFilterSidebar,
     handleToggleActivityPanel
   ])
 
@@ -455,6 +467,7 @@ export function AppLayout(): React.JSX.Element {
     onOpenCommandPalette: handleOpenCommandPalette,
     onFocusUrlBar: handleFocusUrlBar,
     onToggleSidebar: handleToggleSidebar,
+    onFilterSidebar: handleFilterSidebar,
     onToggleActivityPanel: handleToggleActivityPanel,
     onZoom: handleZoom,
     onNextTab: handleNextTab,
