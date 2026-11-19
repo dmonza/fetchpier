@@ -48,11 +48,42 @@ const FOLDER_A = '/ws/requests/folderA'
 let container: HTMLDivElement
 let root: Root
 
-async function renderTree(): Promise<void> {
+function setUp(): void {
+  // jsdom has no layout: the tree scrolls the keyboard-focused row into view.
+  Element.prototype.scrollIntoView = vi.fn()
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  useWorkspaceStore.setState({ workspacePath: '/ws', requestsRoot: '/ws/requests' })
+  useRequestStore.setState({ tabs: [], activeTabId: null, mruIds: [] })
+  useTreeSelectionStore.getState().clear()
+  useTreeStateStore.setState({
+    workspacePath: '/ws',
+    expanded: new Set(),
+    ready: true,
+    seedPending: false,
+    pendingFolderPaths: null,
+    pendingExpandablePaths: null,
+    lastFolderKeys: []
+  })
+}
+
+function tearDown(): void {
+  act(() => {
+    useTreeStateStore.getState().clear()
+    root.unmount()
+  })
+  container.remove()
+  document.body.replaceChildren()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  delete (window as any).api
+}
+
+async function renderTree(tree: WorkspaceTree[] = SAMPLE_TREE): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).api = {
     filesystem: {
-      readTree: vi.fn(async () => SAMPLE_TREE),
+      readTree: vi.fn(async () => tree),
       onChange: vi.fn(() => () => {}),
       checkName: vi.fn(async () => ({ available: true }))
     },
@@ -76,8 +107,26 @@ function treeItem(label: string): HTMLElement {
   return found
 }
 
+function treeItems(): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+}
+
 function treeContainer(): HTMLElement {
   return container.querySelector<HTMLElement>('[role="tree"]')!
+}
+
+function searchInput(): HTMLInputElement {
+  const el = container.querySelector<HTMLInputElement>('input[data-collection-search]')
+  if (!el) throw new Error('search input not found')
+  return el
+}
+
+function typeInto(input: HTMLInputElement, value: string): void {
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
 }
 
 /** Open the row's context menu; Radix renders its items in a portal on document.body. */
@@ -99,36 +148,11 @@ function selection(): { selectedPath: string | null; focusedPath: string | null 
 
 describe('CollectionTree — selection and deselection', () => {
   beforeEach(async () => {
-    // jsdom has no layout: the tree scrolls the keyboard-focused row into view.
-    Element.prototype.scrollIntoView = vi.fn()
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
-    useWorkspaceStore.setState({ workspacePath: '/ws', requestsRoot: '/ws/requests' })
-    useRequestStore.setState({ tabs: [], activeTabId: null, mruIds: [] })
-    useTreeSelectionStore.getState().clear()
-    useTreeStateStore.setState({
-      workspacePath: '/ws',
-      expanded: new Set(),
-      ready: true,
-      seedPending: false,
-      pendingFolderPaths: null,
-      pendingExpandablePaths: null,
-      lastFolderKeys: []
-    })
+    setUp()
     await renderTree()
   })
 
-  afterEach(() => {
-    act(() => {
-      useTreeStateStore.getState().clear()
-      root.unmount()
-    })
-    container.remove()
-    document.body.replaceChildren()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (window as any).api
-  })
+  afterEach(tearDown)
 
   it('a second click on the selected folder keeps it selected and only toggles it', () => {
     act(() => treeItem('folderA').click())
@@ -221,5 +245,60 @@ describe('CollectionTree — selection and deselection', () => {
     })
     expect(document.body.querySelectorAll('[role="menuitem"]')).toHaveLength(0)
     expect(selection().selectedPath).toBe(FOLDER_A)
+  })
+})
+
+const FILTER_TREE: WorkspaceTree[] = [
+  {
+    name: 'folderA',
+    path: '/ws/requests/folderA',
+    type: 'folder',
+    kind: 'folder',
+    children: [
+      {
+        name: 'reqA1.http',
+        path: '/ws/requests/folderA/reqA1.http',
+        type: 'file',
+        kind: 'request'
+      },
+      {
+        name: 'reqA2.http',
+        path: '/ws/requests/folderA/reqA2.http',
+        type: 'file',
+        kind: 'request'
+      }
+    ]
+  },
+  { name: 'reqRoot.http', path: '/ws/requests/reqRoot.http', type: 'file', kind: 'request' }
+]
+
+describe('CollectionTree — sidebar search', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('filters the tree, auto-expands matching branches without mutating persisted state, and clears', async () => {
+    await renderTree(FILTER_TREE)
+    expect(treeItems().map((el) => el.textContent?.trim())).toEqual(['folderA', 'reqRoot'])
+
+    typeInto(searchInput(), 'reqA1')
+    expect(treeItems().map((el) => el.textContent?.trim())).toEqual(['folderA', 'reqA1'])
+    expect(useTreeStateStore.getState().isExpanded('/ws/requests/folderA')).toBe(false)
+
+    act(() => {
+      searchInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(searchInput().value).toBe('')
+    expect(treeItems().map((el) => el.textContent?.trim())).toEqual(['folderA', 'reqRoot'])
+
+    typeInto(searchInput(), 'missing')
+    expect(treeItems()).toHaveLength(0)
+    expect(container.textContent).toContain('sidebar.noSearchResults')
+
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="sidebar.searchClear"]')!
+        .click()
+    })
+    expect(searchInput().value).toBe('')
   })
 })
