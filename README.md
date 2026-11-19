@@ -102,7 +102,7 @@ Development is sustained primarily by sponsorship: Sincrum (my studio) is the ma
 - Detachable Activity panel (history and run output) in its own window
 - On-demand version check — tells you when a newer release is out and links to the [GitHub Releases](https://github.com/dmonza/fetchpier/releases) page; it never downloads or installs anything by itself
 
-![Settings → Appearance with a custom amber color theme applied to the whole window](assets/screenshots/05-themes.png)
+![Settings → Appearance with a custom orchid color theme applied to the whole window](assets/screenshots/05-themes.png)
 
 ## Install
 
