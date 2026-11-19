@@ -28,6 +28,7 @@ function makeHandlers(state: MenuState = FULL_STATE) {
     onOpenCommandPalette: vi.fn(),
     onFocusUrlBar: vi.fn(),
     onToggleSidebar: vi.fn(),
+    onFilterSidebar: vi.fn(),
     onToggleActivityPanel: vi.fn(),
     onZoom: vi.fn(),
     onNextTab: vi.fn(),
@@ -210,6 +211,21 @@ describe('useKeyboardShortcuts — existing shortcuts still fire', () => {
     expect(h.onFocusUrlBar).toHaveBeenCalledTimes(1)
     expect(h.onToggleSidebar).toHaveBeenCalledTimes(1)
     expect(h.onToggleActivityPanel).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl/Cmd+Shift+F filters the sidebar, gated like its menu item', () => {
+    const h = makeHandlers()
+    mount(h)
+    keydown({ key: 'F', ctrlKey: true, shiftKey: true })
+    keydown({ key: 'f', ctrlKey: true }) // plain Ctrl+F belongs to the editors
+    expect(h.onFilterSidebar).toHaveBeenCalledTimes(1)
+
+    const closed = makeHandlers({ ...FULL_STATE, hasWorkspace: false })
+    act(() => root.unmount())
+    root = createRoot(container)
+    mount(closed)
+    keydown({ key: 'F', ctrlKey: true, shiftKey: true })
+    expect(closed.onFilterSidebar).not.toHaveBeenCalled()
   })
 
   it('ignores keys pressed without Ctrl/Cmd', () => {

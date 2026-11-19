@@ -23,7 +23,8 @@ import { useRequestStore } from '../../stores/request'
 import { tabsAffectedBy } from './tabs-affected'
 import { resolveRenameBlur } from './rename-blur'
 import { flattenVisible, resolveTreeKey, typeAheadMatch } from './tree-nav'
-import { filterTree } from './tree-filter'
+import { filterTree, matchRanges } from './tree-filter'
+import { useTreeFilterStore } from '../../stores/treeFilter'
 import { treeRowStateClass } from './tree-row-style'
 import { treeMutationErrorToast, treeNameErrorMessage } from './tree-name-error'
 import { collectFolderOptions, type FolderOption } from './folder-options'
@@ -177,14 +178,59 @@ interface TreeActions {
   /** Instance display-names that are siblings of `node` (for duplicate pre-fill). */
   getInstanceSiblingNames: (node: WorkspaceTree, parentStem?: string) => Set<string>
   isFiltering: boolean
+  /** The filter query, for highlighting the matching part of each row's label. */
+  filterQuery: string
   isSearchNodeExpanded: (path: string) => boolean
   onToggleSearchExpanded: (path: string, open: boolean) => void
+}
+
+/** A row label with the parts that match the filter query emphasised. */
+function HighlightedLabel({
+  text,
+  query,
+  className
+}: {
+  text: string
+  query: string
+  className?: string
+}): React.JSX.Element {
+  const ranges = matchRanges(text, query)
+  if (ranges.length === 0) return <span className={className}>{text}</span>
+  const parts: React.ReactNode[] = []
+  let at = 0
+  for (const [start, end] of ranges) {
+    if (start > at) parts.push(text.slice(at, start))
+    parts.push(
+      <mark key={start} className="bg-transparent font-semibold text-primary">
+        {text.slice(start, end)}
+      </mark>
+    )
+    at = end
+  }
+  if (at < text.length) parts.push(text.slice(at))
+  return <span className={className}>{parts}</span>
 }
 
 /** The folder containing `path` (plain string trim — works for `/` and `\`). */
 function parentDirOf(path: string): string {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return i > 0 ? path.slice(0, i) : path
+}
+
+/**
+ * Make the folder a toolbar create targets reachable, so its name input renders:
+ * clear the filter (it may hide the folder) and expand the folder and every
+ * ancestor below the request-tree root (it may be collapsed). Context-menu creates
+ * already target a visible row and expand it themselves.
+ */
+function revealCreateTarget(requestsRoot: string): void {
+  useTreeFilterStore.getState().setQuery('')
+  const { selectedPath, selectedType } = useTreeSelectionStore.getState()
+  const target = resolveTargetFolder(requestsRoot, selectedPath, selectedType)
+  const { isExpanded, setExpanded } = useTreeStateStore.getState()
+  for (let p = target; p !== requestsRoot && p.length > requestsRoot.length; p = parentDirOf(p)) {
+    if (!isExpanded(p)) setExpanded(p, true)
+  }
 }
 
 const TreeContext = createContext<TreeActions | null>(null)
@@ -415,6 +461,7 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
     onDrop,
     getInstanceSiblingNames,
     isFiltering,
+    filterQuery,
     isSearchNodeExpanded,
     onToggleSearchExpanded
   } = useTree()
@@ -604,7 +651,11 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
                   isActiveFile ? 'text-primary' : 'text-muted-foreground'
                 )}
               />
-              <span className="truncate italic">{displayName}</span>
+              <HighlightedLabel
+                className="truncate italic"
+                text={displayName}
+                query={filterQuery}
+              />
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
@@ -715,7 +766,7 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
                   isActiveFile ? 'text-primary' : 'text-muted-foreground'
                 )}
               />
-              <span className="truncate">{stem}</span>
+              <HighlightedLabel className="truncate" text={stem} query={filterQuery} />
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
@@ -828,7 +879,7 @@ function TreeNode({ node, depth, parentStem }: TreeNodeProps): React.JSX.Element
               ) : (
                 <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               )}
-              <span className="truncate">{node.name}</span>
+              <HighlightedLabel className="truncate" text={node.name} query={filterQuery} />
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
@@ -1067,8 +1118,12 @@ export function CollectionTree({
 
   const [tree, setTree] = useState<WorkspaceTree[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  // The filter query lives in a store so a toolbar create (and the "Filter sidebar"
+  // shortcut) can act on it; which branches are collapsed while filtering is a
+  // view-only state of this component, never written to tree-state.json.
+  const searchQuery = useTreeFilterStore((s) => s.query)
   const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(() => new Set())
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Reset tree synchronously when workspace changes — avoids flashing stale
   // entries before the watcher re-populates. Using the "prev-prop" pattern so
@@ -1078,10 +1133,14 @@ export function CollectionTree({
     setPrevWorkspacePath(workspacePath)
     setTree([])
     setIsLoading(Boolean(workspacePath))
-    setSearchQuery('')
     setSearchCollapsed(new Set())
+    useTreeFilterStore.getState().setQuery('')
     useTreeSelectionStore.getState().clear()
   }
+
+  // The query does not outlive the tree: closing the workspace or hiding the
+  // sidebar unmounts it.
+  useEffect(() => () => useTreeFilterStore.getState().setQuery(''), [])
 
   const [isRootDragOver, setIsRootDragOver] = useState(false)
 
@@ -1106,6 +1165,12 @@ export function CollectionTree({
   useEffect(() => {
     useTreeSelectionStore.getState().showActiveMark()
   }, [activeTabId])
+
+  // A toolbar create renders its name input among the target folder's visible
+  // children, so make that folder reachable when the create starts.
+  useEffect(() => {
+    if (pendingRootCreate && requestsRoot) revealCreateTarget(requestsRoot)
+  }, [pendingRootCreate, requestsRoot])
 
   // Roving-focus plumbing: the scroll container is the keyboard host; a type-ahead
   // buffer accumulates printable keystrokes within a short window.
@@ -1646,6 +1711,17 @@ export function CollectionTree({
     [isFiltering, isSearchNodeExpanded]
   )
 
+  // "Filter sidebar" (shortcut / menu): focus the field once it is rendered — the
+  // request may predate this mount (the sidebar was hidden) or the tree's load.
+  const filterFocusRequested = useTreeFilterStore((s) => s.focusRequested)
+  useEffect(() => {
+    const input = searchInputRef.current
+    if (!filterFocusRequested || !input) return
+    input.focus()
+    input.select()
+    useTreeFilterStore.getState().consumeFocus()
+  }, [filterFocusRequested, isLoading])
+
   // ── Keyboard navigation (roving focus + type-ahead) ─────────────────────────
 
   // Move DOM focus to the keyboard-focused row, but only when the tree already
@@ -1762,6 +1838,7 @@ export function CollectionTree({
     onDrop: handleDropOnNode,
     getInstanceSiblingNames,
     isFiltering,
+    filterQuery: searchQuery,
     isSearchNodeExpanded,
     onToggleSearchExpanded: handleToggleSearchExpanded
   }
@@ -1810,8 +1887,29 @@ export function CollectionTree({
   }
 
   const updateSearchQuery = (next: string): void => {
-    setSearchQuery(next)
+    useTreeFilterStore.getState().setQuery(next)
     setSearchCollapsed(new Set())
+  }
+
+  // Keys in the filter field: Escape clears the query, or — already empty — hands
+  // the keyboard to the tree; ArrowDown moves into the tree at its first visible row.
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      if (searchQuery) updateSearchQuery('')
+      else containerRef.current?.focus()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      const [first] = flattenVisible(filteredTree, isNodeExpandedInView)
+      if (!first) return
+      e.preventDefault()
+      // Focus the container first: the roving-focus effect then moves DOM focus
+      // onto the row, as it does for arrow keys inside the tree.
+      containerRef.current?.focus()
+      useTreeSelectionStore.getState().setFocused(first.path)
+    }
   }
 
   return (
@@ -1820,17 +1918,12 @@ export function CollectionTree({
         <div className="relative flex items-center">
           <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground" />
           <input
+            ref={searchInputRef}
             data-collection-search
             type="text"
             value={searchQuery}
             onChange={(e) => updateSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape' && searchQuery) {
-                e.preventDefault()
-                e.stopPropagation()
-                updateSearchQuery('')
-              }
-            }}
+            onKeyDown={handleSearchKeyDown}
             placeholder={t('sidebar.search')}
             aria-label={t('sidebar.search')}
             className="h-7 w-full min-w-0 rounded border border-border-default bg-background pl-7 pr-6 text-xs focus:outline-none focus:ring-1 focus:ring-ring"

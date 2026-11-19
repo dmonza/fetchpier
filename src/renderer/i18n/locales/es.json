@@ -67,7 +67,7 @@
     "workspaceSettings": "Configuración del workspace",
     "openOrCreateWorkspace": "Abrir o crear workspace",
     "closeWorkspace": "Cerrar workspace",
-    "search": "Filtrar colecciones...",
+    "search": "Filtrar requests y colecciones",
     "searchClear": "Limpiar filtro",
     "noSearchResults": "No hay colecciones ni requests que coincidan"
   },
@@ -1161,6 +1161,7 @@
       "label": "Vista",
       "commandPalette": "Paleta de comandos…",
       "toggleSidebar": "Alternar barra lateral",
+      "filterSidebar": "Filtrar barra lateral",
       "toggleActivityPanel": "Alternar panel de actividad",
       "toggleDevTools": "Alternar herramientas de desarrollo",
       "zoomIn": "Acercar",

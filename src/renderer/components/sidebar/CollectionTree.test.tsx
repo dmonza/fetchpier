@@ -17,6 +17,7 @@ import { CollectionTree } from './CollectionTree'
 import { useRequestStore } from '../../stores/request'
 import { useTreeSelectionStore } from '../../stores/treeSelection'
 import { useTreeStateStore } from '../../stores/treeState'
+import { useTreeFilterStore } from '../../stores/treeFilter'
 import { useWorkspaceStore } from '../../stores/workspace'
 
 const SAMPLE_TREE: WorkspaceTree[] = [
@@ -300,5 +301,81 @@ describe('CollectionTree — sidebar search', () => {
         .click()
     })
     expect(searchInput().value).toBe('')
+  })
+
+  it('highlights the matching part of each matching name', async () => {
+    await renderTree(FILTER_TREE)
+    typeInto(searchInput(), 'a1')
+    const marks = [...treeItem('reqA1').querySelectorAll('mark')].map((m) => m.textContent)
+    expect(marks).toEqual(['A1'])
+    // A folder kept only because a child matched is not highlighted.
+    expect(treeItem('folderA').querySelector('mark')).toBeNull()
+  })
+
+  it('ArrowDown in the field moves keyboard focus to the first visible row', async () => {
+    await renderTree(FILTER_TREE)
+    typeInto(searchInput(), 'reqA1')
+    searchInput().focus()
+    act(() => {
+      searchInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+    expect(useTreeSelectionStore.getState().focusedPath).toBe('/ws/requests/folderA')
+    expect(document.activeElement).toBe(treeItem('folderA'))
+  })
+
+  it('Escape in an empty field moves keyboard focus to the tree', async () => {
+    await renderTree(FILTER_TREE)
+    searchInput().focus()
+    act(() => {
+      searchInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(treeContainer().contains(document.activeElement)).toBe(true)
+  })
+
+  it('a focus request (shortcut or menu) focuses the field, also one made before mounting', async () => {
+    act(() => useTreeFilterStore.getState().requestFocus())
+    await renderTree(FILTER_TREE)
+    expect(document.activeElement).toBe(searchInput())
+    expect(useTreeFilterStore.getState().focusRequested).toBe(false)
+
+    treeItem('folderA').focus()
+    act(() => useTreeFilterStore.getState().requestFocus())
+    expect(document.activeElement).toBe(searchInput())
+  })
+})
+
+describe('CollectionTree — a toolbar create always shows its name input', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  const nameInput = (): HTMLInputElement | null =>
+    container.querySelector<HTMLInputElement>('input[placeholder="collection.newRequestName"]')
+
+  function startToolbarCreate(): void {
+    act(() => {
+      root.render(<CollectionTree pendingRootCreate="request" onClearRootCreate={() => {}} />)
+    })
+  }
+
+  it('expands the selected folder when it is collapsed', async () => {
+    await renderTree(FILTER_TREE)
+    act(() => treeItem('folderA').click()) // select + expand
+    act(() => treeItem('folderA').click()) // stays selected, collapses
+    expect(useTreeStateStore.getState().isExpanded('/ws/requests/folderA')).toBe(false)
+
+    startToolbarCreate()
+    expect(useTreeStateStore.getState().isExpanded('/ws/requests/folderA')).toBe(true)
+    expect(nameInput()).not.toBeNull()
+  })
+
+  it('clears a filter that hides the selected folder', async () => {
+    await renderTree(FILTER_TREE)
+    act(() => treeItem('folderA').click())
+    typeInto(searchInput(), 'reqRoot')
+    expect(treeItems().map((el) => el.textContent?.trim())).toEqual(['reqRoot'])
+
+    startToolbarCreate()
+    expect(searchInput().value).toBe('')
+    expect(nameInput()).not.toBeNull()
   })
 })

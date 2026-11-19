@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceTree } from '../../../shared/types'
-import { filterTree } from './tree-filter'
+import { filterTree, matchRanges } from './tree-filter'
 
 const folder = (name: string, children: WorkspaceTree[]): WorkspaceTree => ({
   name,
@@ -70,5 +70,38 @@ describe('filterTree', () => {
 
   it('returns an empty array when nothing matches', () => {
     expect(filterTree(tree, 'does-not-exist')).toEqual([])
+  })
+
+  it('a multi-word query keeps only names that contain every word, in any order', () => {
+    const result = filterTree(tree, 'user create')
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('users')
+    expect(result[0].children?.map((c) => c.name)).toEqual(['create-user.http'])
+    // A name holding only one of the words is not a match.
+    expect(filterTree(tree, 'list create')).toEqual([])
+  })
+})
+
+describe('matchRanges', () => {
+  it('returns nothing for an empty query or a label that does not hold every word', () => {
+    expect(matchRanges('create-user', '')).toEqual([])
+    expect(matchRanges('create-user', '   ')).toEqual([])
+    expect(matchRanges('create-user', 'create list')).toEqual([])
+  })
+
+  it('marks every occurrence of every word, case-insensitively, sorted', () => {
+    expect(matchRanges('Create-User', 'user CREATE')).toEqual([
+      [0, 6],
+      [7, 11]
+    ])
+    expect(matchRanges('abab', 'ab')).toEqual([
+      [0, 2],
+      [2, 4]
+    ])
+  })
+
+  it('merges overlapping words into one range', () => {
+    // 'health' is [0, 6), 'althc' is [2, 7): one range [0, 7).
+    expect(matchRanges('healthcheck', 'health althc')).toEqual([[0, 7]])
   })
 })

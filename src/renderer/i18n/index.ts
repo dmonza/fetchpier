@@ -110,6 +110,7 @@ function pushMenuLabels(): void {
       label: i18next.t('menu.view.label'),
       commandPalette: i18next.t('menu.view.commandPalette'),
       toggleSidebar: i18next.t('menu.view.toggleSidebar'),
+      filterSidebar: i18next.t('menu.view.filterSidebar'),
       toggleActivityPanel: i18next.t('menu.view.toggleActivityPanel'),
       toggleDevTools: i18next.t('menu.view.toggleDevTools'),
       zoomIn: i18next.t('menu.view.zoomIn'),

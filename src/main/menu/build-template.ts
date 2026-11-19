@@ -46,6 +46,7 @@ export const RENDERER_SERVED_ITEMS = [
   'request.focusUrl',
   'view.commandPalette',
   'view.toggleSidebar',
+  'view.filterSidebar',
   'view.toggleActivityPanel'
 ] as const satisfies readonly MenuItemId[]
 
@@ -61,6 +62,7 @@ const ACCELERATORS: Partial<Record<MenuItemId, string>> = {
   'request.focusUrl': 'CmdOrCtrl+L',
   'view.commandPalette': 'CmdOrCtrl+P',
   'view.toggleSidebar': 'CmdOrCtrl+B',
+  'view.filterSidebar': 'CmdOrCtrl+Shift+F',
   'view.toggleActivityPanel': 'CmdOrCtrl+J',
   'view.toggleDevTools': 'Alt+Cmd+I',
   'view.zoomIn': 'CmdOrCtrl+=',
@@ -163,6 +165,7 @@ export function buildMenuTemplate(deps: MenuTemplateDeps): MenuItemConstructorOp
         served('view.commandPalette', labels.view.commandPalette),
         separator,
         served('view.toggleSidebar', labels.view.toggleSidebar),
+        served('view.filterSidebar', labels.view.filterSidebar),
         served('view.toggleActivityPanel', labels.view.toggleActivityPanel),
         separator,
         owned('view.zoomIn', labels.view.zoomIn, () => onZoom('in')),

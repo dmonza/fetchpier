@@ -53,6 +53,7 @@ export const FALLBACK_MENU_LABELS: MenuLabels = {
     label: 'View',
     commandPalette: 'Command Palette…',
     toggleSidebar: 'Toggle Sidebar',
+    filterSidebar: 'Filter Sidebar',
     toggleActivityPanel: 'Toggle Activity Panel',
     toggleDevTools: 'Toggle Developer Tools',
     zoomIn: 'Zoom In',

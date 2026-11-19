@@ -67,7 +67,7 @@
     "workspaceSettings": "Workspace settings",
     "openOrCreateWorkspace": "Open or create workspace",
     "closeWorkspace": "Close workspace",
-    "search": "Filter collections...",
+    "search": "Filter requests and collections",
     "searchClear": "Clear filter",
     "noSearchResults": "No matching collections or requests"
   },
@@ -1161,6 +1161,7 @@
       "label": "View",
       "commandPalette": "Command Palette…",
       "toggleSidebar": "Toggle Sidebar",
+      "filterSidebar": "Filter Sidebar",
       "toggleActivityPanel": "Toggle Activity Panel",
       "toggleDevTools": "Toggle Developer Tools",
       "zoomIn": "Zoom In",
