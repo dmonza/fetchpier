@@ -73,9 +73,9 @@ async function importFixture(page: Page, scenario: Scenario): Promise<void> {
   const textarea = dialog.locator('textarea').first()
   await textarea.fill(content)
 
-  // Pick the Postman format explicitly. The `<label>` isn't `htmlFor`-linked,
-  // so we locate the native select by its option values instead.
-  await dialog.locator('select').selectOption('postman')
+  // Pick the collection format explicitly, by the selector's label: the dialog
+  // holds more than one native select (Destination, Format).
+  await dialog.getByLabel('Format', { exact: true }).selectOption('postman')
 
   // Switch the environment strategy to "Don't import" so the Import button
   // is enabled regardless of whether an env name is filled in. This strategy

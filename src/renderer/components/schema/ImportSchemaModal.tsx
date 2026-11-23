@@ -369,10 +369,14 @@ export function ImportSchemaModal(): React.JSX.Element | null {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  <label
+                    htmlFor="schema-import-format"
+                    className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+                  >
                     {t('schemaImport.format.label')}
                   </label>
                   <select
+                    id="schema-import-format"
                     value={state.format}
                     onChange={(e) => state.setFormat(e.target.value as SchemaFormat | 'auto')}
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
