@@ -226,6 +226,36 @@ describe('ImportSchemaModal — destination selector', () => {
   })
 })
 
+describe('ImportSchemaModal — format selector', () => {
+  function labelled(text: string): HTMLElement | null {
+    const label = [...document.body.querySelectorAll('label')].find(
+      (l) => l.textContent?.trim() === text
+    )
+    return label?.control ?? null
+  }
+
+  it('is named by its Format label, apart from the Destination selector', async () => {
+    await renderModal()
+    const format = labelled('schemaImport.format.label')
+    expect(format).toBeInstanceOf(HTMLSelectElement)
+    expect(format).not.toBe(destinationSelect())
+  })
+
+  it('choosing a format through the labelled control sets the format, not the destination', async () => {
+    await renderModal({ folder: '/ws/requests/api', label: 'api' })
+    const format = labelled('schemaImport.format.label') as HTMLSelectElement
+    await act(async () => {
+      format.value = 'postman'
+      format.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flush()
+    expect(useSchemaImportStore.getState()).toMatchObject({
+      format: 'postman',
+      targetFolder: '/ws/requests/api'
+    })
+  })
+})
+
 describe('ImportSchemaModal — import failures are translated (IMP-28)', () => {
   it('shows the coded reason, not the IPC text or an absolute path', async () => {
     importSchema.mockRejectedValueOnce(
