@@ -1613,8 +1613,8 @@ SOFTWARE.
 
 The following npm packages may be included in this product:
 
- - @fetchpier/cli@0.9.7
- - @fetchpier/core@0.9.7
+ - @fetchpier/cli@0.9.8
+ - @fetchpier/core@0.9.8
 
 These packages each contain the following license:
 
