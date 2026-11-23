@@ -5,6 +5,219 @@ All notable changes to Fetchpier are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8] - 2026-11-23
+
+Every send now reports passive security findings about the exchange it just
+made, in the app and, on request, on the command line, and the collection tree
+gains a filter. Most of the rest comes from a full review of the product: it
+closes ways a save could lose or rewrite part of a request file, the app and the
+command line could send different bytes for the same request, a secret could
+stay readable, and history, cookies, certificates and imports could show or keep
+the wrong thing. Changes that alter behavior on purpose are marked _Behavior
+change_. If you set per-request settings in the app, read the first entry under
+Fixed.
+
+### Added
+
+- **Security findings for every send.** The response viewer has a new Security
+  section, with a shield icon and a count, listing what the exchange already
+  shows — nothing extra is ever sent to collect it: a redirect that dropped to
+  plain HTTP; legacy TLS versions, weak ciphers, no forward secrecy, a
+  certificate that is untrusted, expired, about to expire or has a weak key, or
+  verification turned off; missing or weak security headers (HSTS, `nosniff`,
+  content-security and framing protection on HTML pages, permissive CORS) and
+  version banners; cookies without `Secure` or `HttpOnly`; credentials in the
+  query string; and responses a shared cache may keep. Each finding names what it
+  is about (never a value), explains it in one line and links to its reference. When nothing fires it says how many rules were applied, never that
+  the endpoint is secure.
+- **A findings policy per workspace.** Workspace Settings → Security turns
+  findings on or off, enables or disables each rule, and sets how many days
+  before expiry a certificate is reported (30 by default). The policy lives in
+  the workspace settings file, so the team shares it.
+- **`--findings`** adds the same findings to the terminal output and to the JSON
+  and HTML reports. It never changes a run's outcome or exit code, the JUnit
+  report does not carry them, and the JSON report adds them as optional fields
+  without changing its version.
+- **The address of the server that answered** is shown for each run in the
+  activity log (omitted when the request went through a proxy).
+- **Filter the collection tree.** A field above the tree keeps the folders,
+  requests and instances whose names contain every word typed, in any order,
+  and highlights the match. **Filter Sidebar** (`Cmd/Ctrl+Shift+F`, also in the
+  View menu) focuses it, showing the sidebar if it was hidden; Escape clears it
+  and ↓ moves to the first row. New request and New collection always show their
+  name input, clearing the filter or expanding the target folder first.
+- **Choose where an import lands.** The import dialog has a Destination selector
+  listing the root of the request tree and every folder.
+
+### Changed
+
+- **The tree selection can be cleared.** Escape in the tree clears the
+  selection, so New request, New collection and Import go to the root again;
+  clicking the selected folder only expands or collapses it. A right-click menu
+  no longer clears the selection.
+- **OpenAPI and Swagger references are resolved inside the document only.** A
+  `$ref` that points to another file or a URL is no longer followed: importing
+  never reads your disk or reaches the network on the document's behalf, and the
+  reference is listed as an _Unresolved reference_ warning. A reference that
+  cannot be resolved now affects only the place that uses it, instead of
+  degrading the whole import, and a recursive schema is marked where it recurses.
+  _(Behavior change)_
+- **Form bodies read the same in the app and on the command line.** When the app
+  opens an `x-www-form-urlencoded` body, a `+` is a space and `%2B` is a plus; it
+  used to keep `+` as a plus and send it as `%2B`. The command line now encodes
+  variable values in a form body as the app does, so a value holding `&`, `=`,
+  `+`, `%` or a space reaches the server the same way from both. _(Behavior
+  change)_
+- **`fp.request.url` includes the query in the app**, as it already did on the
+  command line, and a pre-request script that rewrites the URL is sent as
+  written. Pre-request scripts in the app can also read a form body as its
+  encoded text and rewrite it; the rewritten body is sent. _(Behavior change)_
+- **`fp run` on a folder skips every entry whose name starts with a dot**, so
+  files attached to requests are no longer run as requests when their name ends
+  in `.http`. A path you name explicitly still runs. _(Behavior change)_
+- The desktop runtime is updated to Electron 43.8.12, the latest release of its
+  line.
+
+### Fixed
+
+- **Per-request settings now apply to sends from the app.** Every override set
+  in a request's Settings tab was ignored when sending from the app (the command
+  line applied them). Choosing "use the cookie jar" for one request in a
+  workspace that disables the jar is now saved, and kept when the file is
+  reopened.
+- **Saving no longer loses or rewrites parts of a request file.**
+  - A `###` line before the first request no longer deletes the metadata above
+    it or writes the request twice.
+  - A script or settings block without its end line is reported, instead of
+    swallowing the request (and, in a file with several requests, moving the
+    next one into its place).
+  - A request saved with an empty URL reopens as saved; it used to reopen blank,
+    and the next save overwrote it.
+  - A file that cannot be read is never overwritten, either after Reload or from
+    the unsaved-changes prompt.
+  - `# @id` after a blank line in the leading comments is kept, and multipart and
+    binary file names containing spaces survive a reopen.
+  - Auth values keep their leading and trailing spaces, a U+2028 / U+2029
+    character no longer adds `# ` on every save, and an unknown body subtype is
+    reported instead of being rewritten silently.
+- **Editing the URL no longer corrupts the query.** A parameter whose value holds
+  `&`, `%`, an escape such as `%20` or `#` (or whose name holds `=`) is kept
+  intact while you type elsewhere in the URL. A `#fragment` after the query is no
+  longer sent as part of the last parameter.
+- **Sending**
+  - A body on `GET`, `DELETE`, `OPTIONS` or a custom method is sent with its
+    length, and its 301 / 302 / 307 / 308 redirects are followed.
+  - Through a proxy, every value of a repeated request header reaches the server.
+  - A proxy that refuses the tunnel (407, 403, 502) is reported as such, not as
+    "Request cancelled", and a cancel you ask for shows a translated message.
+  - A URL without a scheme, which is sent over HTTPS, now also gets the
+    certificates, proxy and `NO_PROXY` decision of HTTPS. An HTTPS proxy signed by
+    a custom CA is trusted for plain-HTTP targets too, and `NO_PROXY` matches IPv6
+    entries.
+  - Disabled query parameters, form fields and multipart parts no longer make a
+    send fail over a secret they reference.
+  - Switching environments while a request is in flight no longer drops or
+    misdirects its script's environment changes, and a change that cannot be
+    saved is shown instead of only logged.
+  - Standard status codes always show their reason phrase, the size of binary
+    and non-UTF-8 responses counts the bytes received, and a deflate body over
+    the decoding limit reports the limit.
+- **Scripts**
+  - `fp.response.headers.getAll` and `count` see every value of a repeated
+    response header, `Set-Cookie` included; they used to be joined into one.
+  - A pre-request script that changes a secret's value sends the new value; the
+    old one was sent.
+  - Logging a multipart body or `fp.request` no longer aborts the script.
+  - `expect(fn).to.throw(/pattern/)` works, a negated `property(name, value)`
+    checks the value, multipart parts behave as an array, `xml2Json` decodes
+    numeric character references, and a top-level `const` or `let` named like a
+    blocked global (`module`, `process`, …) no longer stops the whole script.
+  - The command line reports the right line for a script error.
+- **Cookies**
+  - A `Max-Age` cookie's lifetime counts from when it was received, not from each
+    time it is sent, and the Cookies panel shows the same expiry the jar uses.
+  - Editing a cookie's expiry no longer shifts it by your time-zone offset.
+  - The jar accepts a cookie whose `Domain` is the responding host's own IPv4
+    address or single-label name, and an out-of-range `Max-Age` no longer fails
+    the send.
+  - A send no longer undoes cookies captured by other sends running at the same
+    time, or edits made in the Cookies panel meanwhile; an unreadable cookie file
+    is no longer replaced by an almost empty one.
+  - With the jar off, cookies from the end of a redirect chain are shown for the
+    host that sent them.
+- **Certificates and workspace settings**
+  - An unreadable workspace settings file is never rewritten. Changing a
+    workspace setting or certificate is refused with an error naming the file,
+    instead of losing its certificates, findings policy and other content.
+  - Edits made to the settings file outside the app are picked up before the app
+    changes a certificate.
+  - Removing a certificate no longer deletes a file another entry still uses, and
+    entries without an identifier no longer make toggle, edit or remove act on
+    the wrong certificate.
+  - The client-certificate preview resolves variables in the request URL.
+- **Secrets**
+  - Rotating the encryption key is all-or-nothing: if any file cannot be
+    rewritten, the files already rewritten are put back, and the new key is
+    saved before the first one changes. Rotation no longer skips
+    environments it cannot read, and no longer fails with a false "tampering"
+    error on local values encrypted under an older key.
+  - A double click on Make secret can no longer run the first-time setup twice,
+    and names starting with `$` are refused.
+  - A value that cannot be shown because its key is missing is reported as such,
+    not as "Corrupt", and is no longer offered to be cleared.
+  - On Linux without a keyring, switching workspaces keeps the workspace keys
+    until the app quits.
+- **History and the Activity window**
+  - The Requests filter reaches runs older than the newest 50.
+  - The detached Activity window refreshes when runs are added or history is
+    cleared, follows the workspace that is open, shows and filters by the same
+    request chips as the docked panel, and runs Open, Raw, Repeat and Open file
+    in the main window. It no longer overwrites the main window's saved tabs.
+  - Tabs restored at launch but not yet opened show their history.
+  - Repeat and Open keep the query string, Open works on a form run with a
+    malformed `%` escape, and the opened run shows the right response size.
+  - Renaming or moving a request no longer rewrites the bytes of its recorded
+    runs.
+- **Workspace and files**
+  - File changes are detected when the workspace sits inside a folder whose name
+    starts with a dot.
+  - Creating or renaming refuses names that are not valid on Windows (a colon, a
+    trailing dot, a device name such as `CON`).
+  - A rename or move that cannot carry along a request's instances is undone and
+    reported, instead of leaving the files half moved.
+  - An environment name stays free when, after pulling a teammate's delete or
+    rename, its folder holds only this machine's local state.
+  - A brief read failure no longer empties the collection tree, and the app keeps
+    watching the workspace after a failed recovery.
+- **Import**
+  - Collection import keeps already-encoded query values as they are and bare
+    flags such as `?wsdl` as flags, and imports a form-data body as a multipart
+    body with one part per field.
+  - GraphQL import generates valid queries for deeply nested types.
+  - OpenAPI import keeps unquoted YAML dates as written, accepts
+    `openapi: 3.0`, imports Swagger 2 Basic authentication, warns about schemes it
+    cannot import, and no longer drops operations whose names differ only in
+    case.
+  - Importing from a URL follows redirects and uses the configured proxy and
+    certificate authorities.
+- Closing a tab with the middle mouse button no longer starts autoscroll, the
+  first-time secrets setup dialog no longer shows a close button it does not
+  honour, and the import dialog's Format selector is labelled for screen readers.
+
+### Security
+
+- **A secret a pre-request script copies into the request is masked** in the
+  recorded request — activity log, command-line history and reports. It was
+  masked only in the response.
+- **A failed pre-request script no longer prints secret values** in its error,
+  in the terminal or in any report.
+- **The Cookies tab no longer receives the full request URL**, which could carry
+  an API key or another secret in the query.
+- **A proxy value with credentials but no scheme** no longer puts the username in
+  the error message.
+- Another path from a script to the host's code constructor is closed. Scripts
+  run in a sandbox meant to prevent accidents, not to contain hostile code.
+
 ## [0.9.7] - 2026-11-09
 
 Fetchpier can now be recoloured: palettes for Light and Dark, from a preset or
@@ -325,6 +538,7 @@ nobody could install.
   every connection originates from your request configuration. No telemetry, no
   background traffic, no remote content in the UI.
 
+[0.9.8]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.8
 [0.9.7]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.7
 [0.9.6]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.6
 [0.9.5]: https://github.com/dmonza/fetchpier/releases/tag/v0.9.5
