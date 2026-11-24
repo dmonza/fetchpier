@@ -1611,7 +1611,11 @@ export function EnvironmentEditorModal({ onClose }: ModalProps): React.JSX.Eleme
                   {locked && (
                     <div className="flex items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-2 text-xs">
                       <Lock className="h-3.5 w-3.5 text-warning" />
-                      <span className="flex-1">{t('secrets.locked.banner')}</span>
+                      <span className="flex-1">
+                        {status?.keystoreUnreadable
+                          ? t('secrets.locked.keystoreUnreadable')
+                          : t('secrets.locked.banner')}
+                      </span>
                       <Button
                         size="sm"
                         className="h-6 text-xs"

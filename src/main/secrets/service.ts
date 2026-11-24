@@ -29,13 +29,15 @@ import {
   clearSessionMeta,
   findKeyMetadata,
   getWorkspaceKey,
+  KeystoreUnreadableError,
   listKeyEntries,
   peekKeyMaterial,
   removeKey,
+  resolveWorkspaceKey,
   setKeyHint,
   storeWorkspaceKey
 } from './keystore'
-import { lockAll } from './unlock-state'
+import { forgetKey, isUnlocked, lockAll } from './unlock-state'
 import { computeReferences } from './references'
 import {
   clearLocalValue,
@@ -73,12 +75,14 @@ export async function getStatus(workspacePath: string): Promise<SecretsStatus> {
   const backend = detectBackend()
   const manifest = await workspace.openWorkspace(workspacePath).secrets.readManifest()
   if (!manifest) return { hasManifest: false, unlocked: false, backend }
-  const key = await getWorkspaceKey(manifest.encryption.keyId)
-  return {
-    hasManifest: true,
-    unlocked: key !== null,
-    backend,
-    keyId: manifest.encryption.keyId
+  const keyId = manifest.encryption.keyId
+  try {
+    const key = await resolveWorkspaceKey(keyId)
+    return { hasManifest: true, unlocked: key !== null, backend, keyId }
+  } catch (err) {
+    // ISS-0205: a keystore that cannot be read is not "no key stored".
+    if (!(err instanceof KeystoreUnreadableError)) throw err
+    return { hasManifest: true, unlocked: false, backend, keyId, keystoreUnreadable: true }
   }
 }
 
@@ -98,8 +102,10 @@ export async function setupKey(workspacePath: string): Promise<SecretsSetupResul
     }
     const rawKey = await secrets.generateWorkspaceKey()
     const manifest = await secrets.buildManifest(rawKey)
-    await ws.secrets.writeManifest(manifest)
+    // Key first, then manifest (as rotation does): a keystore that cannot be
+    // written (ISS-0205) must not leave a manifest naming a key nobody was shown.
     await storeWorkspaceKey(manifest.encryption.keyId, rawKey, workspaceHint(workspacePath))
+    await ws.secrets.writeManifest(manifest)
     return { key: secrets.formatKey(rawKey), keyId: manifest.encryption.keyId }
   })
 }
@@ -152,8 +158,18 @@ export async function enterKey(
   if (!(await secrets.verifyKeyAgainstChallenge(rawKey, manifest))) {
     return { ok: false, reason: 'wrong-key', keyId: manifest.encryption.keyId }
   }
-  await storeWorkspaceKey(manifest.encryption.keyId, rawKey, workspaceHint(workspacePath))
-  return { ok: true, keyId: manifest.encryption.keyId }
+  const keyId = manifest.encryption.keyId
+  const wasLive = isUnlocked(keyId)
+  try {
+    await storeWorkspaceKey(keyId, rawKey, workspaceHint(workspacePath))
+  } catch (err) {
+    // ISS-0205: the keystore could not be read, so the key was not saved and
+    // nothing was written. Do not leave it live behind an `ok: false`.
+    if (!(err instanceof KeystoreUnreadableError)) throw err
+    if (!wasLive) forgetKey(keyId)
+    return { ok: false, reason: 'keystore-unreadable', keyId }
+  }
+  return { ok: true, keyId }
 }
 
 /** Resolve the unlocked workspace key, or throw `SECRETS_KEY_MISSING`. */

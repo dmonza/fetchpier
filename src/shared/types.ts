@@ -1433,6 +1433,12 @@ export interface SecretsStatus {
   backend: KeystoreBackend
   /** The keyId the workspace expects (16 hex), when a manifest exists. */
   keyId?: string
+  /**
+   * The machine keystore exists but could not be read (I/O error, file in use,
+   * unparseable `keystore.json`), so `unlocked: false` does not mean "no key
+   * stored". Present (true) only in that case; nothing was reset or rewritten.
+   */
+  keystoreUnreadable?: true
 }
 
 /** Result of generating or rotating the workspace key — shown once for backup. */
@@ -1457,7 +1463,11 @@ export interface SecretsEnterKeyResult {
   ok: boolean
   keyId?: string
   /** Why the key was rejected, when `ok` is false. */
-  reason?: 'invalid-format' | 'wrong-key' | 'no-manifest'
+  /**
+   * `keystore-unreadable`: the key matched, but the machine keystore could not
+   * be read, so it was not saved (nothing was written) and stays locked.
+   */
+  reason?: 'invalid-format' | 'wrong-key' | 'no-manifest' | 'keystore-unreadable'
 }
 
 // ── Workspace keys management (REQ-0073) ─────────────────────────────────────

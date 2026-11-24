@@ -252,6 +252,43 @@ describe('secrets service', () => {
     expect((await service.getStatus(ws)).unlocked).toBe(true)
   })
 
+  // ISS-0205: an unreadable keystore is surfaced, never shown as "no key stored".
+  it('getStatus and enterKey report an unreadable keystore and leave it as found', async () => {
+    const { key } = await service.setupKey(ws)
+    lockAll()
+    const keystorePath = join(userDataDir, 'secrets', 'keystore.json')
+    await fs.writeFile(keystorePath, '{ "version": 1, "keys": {')
+
+    expect(await service.getStatus(ws)).toMatchObject({
+      hasManifest: true,
+      unlocked: false,
+      keystoreUnreadable: true
+    })
+    expect(await service.enterKey(ws, key)).toMatchObject({
+      ok: false,
+      reason: 'keystore-unreadable'
+    })
+    // The rejected key is not left live behind an `ok: false`.
+    expect((await service.getStatus(ws)).unlocked).toBe(false)
+    expect(await fs.readFile(keystorePath, 'utf-8')).toBe('{ "version": 1, "keys": {')
+  })
+
+  it('setupKey with an unreadable keystore fails before writing the manifest', async () => {
+    // A keystore with a working master key whose keystore.json no longer parses.
+    const other = await secrets.generateWorkspaceKey()
+    await storeWorkspaceKey(secrets.deriveKeyId(other), other)
+    await fs.writeFile(join(userDataDir, 'secrets', 'keystore.json'), 'not json')
+    await expect(service.setupKey(ws)).rejects.toMatchObject({ code: 'KEYSTORE_UNREADABLE' })
+    // No manifest naming a key the user was never shown.
+    expect(await workspace.openWorkspace(ws).secrets.readManifest()).toBeNull()
+  })
+
+  it('getStatus omits keystoreUnreadable when the keystore reads', async () => {
+    await service.setupKey(ws)
+    lockAll()
+    expect(await service.getStatus(ws)).not.toHaveProperty('keystoreUnreadable')
+  })
+
   // Security review Vuln 1: a crafted config.json whose `id` escapes the
   // workspace must not drive a write outside it — even via the no-key path.
   // REQ-0070 Vuln 1, under the identity split: a crafted `config.json` can still

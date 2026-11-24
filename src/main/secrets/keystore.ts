@@ -12,6 +12,14 @@
  * `keystore.json` is serialized (`withKeystoreLock`). An undecryptable master
  * key (keychain reset, new machine) is recoverable: the keystore is treated as
  * empty and rebuilt as workspace keys are re-entered (§7.2).
+ *
+ * ISS-0205 — only two cases count as "nothing to read": a file that does not
+ * exist (`ENOENT`), and a master key read in full that no longer decrypts. Any
+ * other read error, or a `keystore.json` that does not parse, is a
+ * {@link KeystoreUnreadableError}: write paths fail with it and write nothing;
+ * read paths report "no key". The reset itself runs only on a write path, and
+ * first sets the previous files aside (`<name>.<timestamp>.bak`, same folder)
+ * instead of overwriting them.
  */
 
 import { app, safeStorage } from 'electron'
@@ -65,6 +73,29 @@ function keystorePath(): string {
 }
 
 /**
+ * ISS-0205 — the keystore exists but cannot be read right now (an I/O or
+ * permission error, a file another program holds, a `keystore.json` that does
+ * not parse). Distinct from "no key stored": nothing is reset or rewritten.
+ */
+export class KeystoreUnreadableError extends Error {
+  readonly code = 'KEYSTORE_UNREADABLE'
+  constructor(
+    readonly file: 'master.key' | 'keystore.json',
+    options?: { cause?: unknown }
+  ) {
+    super(
+      `The machine keystore (${file}) could not be read. Nothing was changed; try again.`,
+      options
+    )
+    this.name = 'KeystoreUnreadableError'
+  }
+}
+
+function isMissing(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+}
+
+/**
  * The master key, cached as a promise so concurrent first uses share one load —
  * caching the value let two callers both miss and generate two master keys, the
  * second one stranding every entry wrapped by the first. A failed load is not
@@ -73,10 +104,44 @@ function keystorePath(): string {
 let masterPromise: Promise<Uint8Array> | null = null
 
 /**
- * Load (or lazily generate) the machine-local master key. Generating a fresh
- * one resets the keystore — the previous entries are no longer decryptable.
+ * Read `master.key` without ever writing. `missing` and `undecryptable` are the
+ * two states a reset may follow; any other read error throws.
  */
-function loadMasterKey(): Promise<Uint8Array> {
+async function readMasterKey(): Promise<Uint8Array | 'missing' | 'undecryptable'> {
+  let enc: Buffer
+  try {
+    enc = await fs.readFile(masterKeyPath())
+  } catch (err) {
+    if (isMissing(err)) return 'missing'
+    throw new KeystoreUnreadableError('master.key', { cause: err })
+  }
+  try {
+    const raw = Buffer.from(safeStorage.decryptString(enc), 'base64')
+    if (raw.length === secrets.KEY_BYTES) return new Uint8Array(raw)
+  } catch {
+    // Read in full but not decryptable (keychain reset, new machine).
+  }
+  return 'undecryptable'
+}
+
+/**
+ * Read path: the cached or on-disk master key, or null when there is none that
+ * opens (missing or undecryptable). Never generates and never writes.
+ */
+async function loadExistingMasterKey(): Promise<Uint8Array | null> {
+  if (masterPromise) return masterPromise
+  const found = await readMasterKey()
+  if (!(found instanceof Uint8Array)) return null
+  masterPromise ??= Promise.resolve(found)
+  return masterPromise
+}
+
+/**
+ * Write path: load the master key, or generate one when there is none that
+ * opens. Generating resets the keystore — the previous entries are no longer
+ * decryptable — so the old files are set aside first.
+ */
+function loadOrCreateMasterKey(): Promise<Uint8Array> {
   if (!masterPromise) {
     masterPromise = readOrCreateMasterKey().catch((err: unknown) => {
       masterPromise = null
@@ -88,19 +153,32 @@ function loadMasterKey(): Promise<Uint8Array> {
 
 async function readOrCreateMasterKey(): Promise<Uint8Array> {
   await fs.mkdir(secretsDir(), { recursive: true })
-  try {
-    const enc = await fs.readFile(masterKeyPath())
-    const b64 = safeStorage.decryptString(enc)
-    const raw = Buffer.from(b64, 'base64')
-    if (raw.length === secrets.KEY_BYTES) return new Uint8Array(raw)
-  } catch {
-    // Missing or undecryptable — generate a new master and reset the keystore.
-  }
+  const found = await readMasterKey()
+  if (found instanceof Uint8Array) return found
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const raw = new Uint8Array(randomBytes(secrets.KEY_BYTES))
   const enc = safeStorage.encryptString(Buffer.from(raw).toString('base64'))
-  await workspace.atomicWriteFile(masterKeyPath(), enc)
-  await workspace.atomicWriteFile(keystorePath(), JSON.stringify({ version: 1, keys: {} }, null, 2))
+  await withKeystoreLock(async () => {
+    // Set aside before writing: a failed rename aborts the reset with nothing overwritten.
+    if (found === 'undecryptable') await setAside(masterKeyPath(), stamp)
+    await setAside(keystorePath(), stamp)
+    await workspace.atomicWriteFile(masterKeyPath(), enc)
+    await workspace.atomicWriteFile(keystorePath(), JSON.stringify(emptyKeystore(), null, 2))
+  })
   return raw
+}
+
+/** Rename `path` to `<path>.<stamp>.bak` in the same folder; a missing file is a no-op. */
+async function setAside(path: string, stamp: string): Promise<void> {
+  try {
+    await fs.rename(path, `${path}.${stamp}.bak`)
+  } catch (err) {
+    if (!isMissing(err)) throw err
+  }
+}
+
+function emptyKeystore(): KeystoreFile {
+  return { version: 1, keys: {} }
 }
 
 /**
@@ -116,33 +194,52 @@ function withKeystoreLock<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
+/**
+ * `keystore.json`, or an empty map when it does not exist. An unreadable or
+ * unparseable file throws {@link KeystoreUnreadableError}: a write built on an
+ * empty map would drop every entry the file holds (ISS-0205).
+ */
 async function readKeystoreFile(): Promise<KeystoreFile> {
+  let raw: string
   try {
-    const raw = await fs.readFile(keystorePath(), 'utf-8')
-    const parsed = JSON.parse(raw) as KeystoreFile
-    if (parsed && typeof parsed === 'object' && parsed.keys && typeof parsed.keys === 'object') {
-      return { version: 1, keys: parsed.keys }
-    }
-  } catch {
-    // Missing or corrupt — treat as empty (§7.2).
+    raw = await fs.readFile(keystorePath(), 'utf-8')
+  } catch (err) {
+    if (isMissing(err)) return emptyKeystore()
+    throw new KeystoreUnreadableError('keystore.json', { cause: err })
   }
-  return { version: 1, keys: {} }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new KeystoreUnreadableError('keystore.json', { cause: err })
+  }
+  const keys = (parsed as Partial<KeystoreFile> | null)?.keys
+  if (!keys || typeof keys !== 'object' || Array.isArray(keys)) {
+    throw new KeystoreUnreadableError('keystore.json')
+  }
+  return { version: 1, keys }
+}
+
+/** Unwrap an entry with the existing master key; null when it does not open. */
+async function unwrapEntry(keyId: string, entry: KeystoreEntry): Promise<Uint8Array | null> {
+  const master = await loadExistingMasterKey()
+  if (!master) return null
+  try {
+    const b64 = await secrets.decryptValue(master, keyId, entry.key)
+    const raw = Buffer.from(b64, 'base64')
+    return raw.length === secrets.KEY_BYTES ? new Uint8Array(raw) : null
+  } catch {
+    return null
+  }
 }
 
 async function getStoredKey(keyId: string): Promise<Uint8Array | null> {
   const file = await readKeystoreFile()
   const entry = file.keys[keyId]
   if (!entry) return null
-  try {
-    const master = await loadMasterKey()
-    const b64 = await secrets.decryptValue(master, keyId, entry.key)
-    const raw = Buffer.from(b64, 'base64')
-    if (raw.length !== secrets.KEY_BYTES) return null
-    await touchLastUsed(entry, keyId)
-    return new Uint8Array(raw)
-  } catch {
-    return null
-  }
+  const key = await unwrapEntry(keyId, entry)
+  if (key) await touchLastUsed(entry, keyId)
+  return key
 }
 
 /**
@@ -174,7 +271,7 @@ async function putStoredKey(
   rawKey: Uint8Array,
   workspaceHint?: string
 ): Promise<void> {
-  const master = await loadMasterKey()
+  const master = await loadOrCreateMasterKey()
   const keyB64 = Buffer.from(rawKey).toString('base64')
   const wrapped = await secrets.encryptValue(master, keyId, keyB64)
   await withKeystoreLock(async () => {
@@ -194,9 +291,11 @@ async function putStoredKey(
 
 /**
  * Resolve the live workspace key for a keyId: in-memory first, then (on the
- * persistent backend) the keystore. Returns null when locked / not stored.
+ * persistent backend) the keystore. Returns null when locked / not stored, and
+ * throws {@link KeystoreUnreadableError} when the keystore cannot be read — the
+ * secrets status uses it to tell the two apart.
  */
-export async function getWorkspaceKey(keyId: string): Promise<Uint8Array | null> {
+export async function resolveWorkspaceKey(keyId: string): Promise<Uint8Array | null> {
   const live = getLiveKey(keyId)
   if (live) return live
   if (detectBackend() === 'os-keychain') {
@@ -207,6 +306,19 @@ export async function getWorkspaceKey(keyId: string): Promise<Uint8Array | null>
     }
   }
   return null
+}
+
+/**
+ * {@link resolveWorkspaceKey} for the callers that only need "is there a key":
+ * an unreadable keystore reads as locked (null), and nothing is written.
+ */
+export async function getWorkspaceKey(keyId: string): Promise<Uint8Array | null> {
+  try {
+    return await resolveWorkspaceKey(keyId)
+  } catch (err) {
+    if (err instanceof KeystoreUnreadableError) return null
+    throw err
+  }
 }
 
 /**
@@ -298,16 +410,7 @@ export async function peekKeyMaterial(keyId: string): Promise<Uint8Array | null>
   if (live) return live
   const file = await readKeystoreFile()
   const entry = file.keys[keyId]
-  if (!entry) return null
-  try {
-    const master = await loadMasterKey()
-    const b64 = await secrets.decryptValue(master, keyId, entry.key)
-    const raw = Buffer.from(b64, 'base64')
-    if (raw.length !== secrets.KEY_BYTES) return null
-    return new Uint8Array(raw)
-  } catch {
-    return null
-  }
+  return entry ? unwrapEntry(keyId, entry) : null
 }
 
 /** Update just the display hint of an existing entry (persisted and/or session). */

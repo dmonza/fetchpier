@@ -1337,6 +1337,7 @@
     "sessionOnlyNotice": "No se detectó un llavero del sistema — tu clave se guarda solo para esta sesión y se pedirá de nuevo al reiniciar.",
     "locked": {
       "banner": "Este entorno tiene secretos, pero está bloqueado. Ingresá la clave del workspace para revelarlos o editarlos.",
+      "keystoreUnreadable": "Este entorno tiene secretos, pero no se pudo leer el almacén de claves de esta máquina, así que no se pueden comprobar las claves guardadas. No se cambió nada. Probá de nuevo o ingresá la clave del workspace.",
       "unlock": "Desbloquear"
     },
     "setup": {
@@ -1356,6 +1357,7 @@
       "invalidFormat": "No parece una clave válida (falló el formato o la suma de verificación).",
       "wrongKey": "Esa clave no corresponde a este workspace (se esperaba la clave {{keyId}}).",
       "failed": "No se pudo validar la clave.",
+      "keystoreUnreadable": "La clave es correcta, pero no se pudo leer el almacén de claves de esta máquina, así que no se guardó. No se cambió nada. Probá de nuevo en un momento.",
       "unlock": "Desbloquear"
     },
     "rotate": {

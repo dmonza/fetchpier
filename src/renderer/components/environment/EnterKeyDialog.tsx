@@ -36,7 +36,9 @@ export function EnterKeyDialog({ expectedKeyId, onClose, onUnlocked }: Props): R
       setError(
         result.reason === 'invalid-format'
           ? t('secrets.enterKey.invalidFormat')
-          : t('secrets.enterKey.wrongKey', { keyId: result.keyId ?? expectedKeyId ?? '' })
+          : result.reason === 'keystore-unreadable'
+            ? t('secrets.enterKey.keystoreUnreadable')
+            : t('secrets.enterKey.wrongKey', { keyId: result.keyId ?? expectedKeyId ?? '' })
       )
     } catch {
       setError(t('secrets.enterKey.failed'))

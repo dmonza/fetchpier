@@ -791,6 +791,38 @@ describe('reveal errors', () => {
     await act(async () => root.unmount())
   })
 
+  // ISS-0205: an unreadable keystore is told apart from "no key stored".
+  it('a locked workspace whose keystore cannot be read says so in the banner', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = (window as any).api
+    api.secrets.status.mockResolvedValue({ ...UNLOCKED, unlocked: false, keystoreUnreadable: true })
+    const { root } = await mount()
+
+    const body = document.body.textContent ?? ''
+    expect(body).toContain('secrets.locked.keystoreUnreadable')
+    expect(body).not.toContain('secrets.locked.banner')
+    expect(body).toContain('secrets.locked.unlock')
+
+    await act(async () => root.unmount())
+    // Leave the store as the other cases expect it (they start from an unlocked status).
+    useSecretsStore.setState({ status: null })
+  })
+
+  it('a plain locked workspace keeps the usual banner', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const api = (window as any).api
+    api.secrets.status.mockResolvedValue({ ...UNLOCKED, unlocked: false })
+    const { root } = await mount()
+
+    const body = document.body.textContent ?? ''
+    expect(body).toContain('secrets.locked.banner')
+    expect(body).not.toContain('secrets.locked.keystoreUnreadable')
+
+    await act(async () => root.unmount())
+    // Leave the store as the other cases expect it (they start from an unlocked status).
+    useSecretsStore.setState({ status: null })
+  })
+
   it('the status is refreshed when the workspace changes while the editor is open', async () => {
     useEnvironmentStore.setState({ workspacePath: 'C:/ws-a' })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1337,6 +1337,7 @@
     "sessionOnlyNotice": "No OS keyring detected — your key is held only for this session and will be asked again next launch.",
     "locked": {
       "banner": "This environment has secrets, but it is locked. Enter the workspace key to reveal or edit them.",
+      "keystoreUnreadable": "This environment has secrets, but the keystore on this machine could not be read, so saved keys cannot be checked. Nothing was changed. Try again, or enter the workspace key.",
       "unlock": "Unlock"
     },
     "setup": {
@@ -1356,6 +1357,7 @@
       "invalidFormat": "That does not look like a valid key (format/checksum failed).",
       "wrongKey": "That key does not match this workspace (expected key {{keyId}}).",
       "failed": "Could not validate the key.",
+      "keystoreUnreadable": "The key is correct, but the keystore on this machine could not be read, so it was not saved. Nothing was changed. Try again in a moment.",
       "unlock": "Unlock"
     },
     "rotate": {
