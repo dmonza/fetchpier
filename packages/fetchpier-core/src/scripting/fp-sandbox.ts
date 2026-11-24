@@ -37,6 +37,7 @@ import type {
   EnvironmentChanges
 } from '@shared/types'
 import { safeClone } from '../shared/safe-clone'
+import { scriptFileName, scriptOnlyStack } from './script-stack'
 import { recordToHeaders } from '@shared/lib/headers'
 import { isReservedVariableName } from '@shared/lib/dynamic-variables'
 
@@ -1022,10 +1023,14 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
   }
 
   // ── Logging ────────────────────────────────────────────────────────────
+  // Stacks keep only the script's own lines (no host frame or path), for a
+  // logged error and for the top-level one alike.
+  const scriptFile = scriptFileName(phase)
+  const cloneOptions = { stack: (stack: string) => scriptOnlyStack(stack, scriptFile) }
   const pushLog = (level: ScriptLog['level'], args: unknown[]): void => {
     logs.push({
       level,
-      args: args.map((a) => safeClone(a)),
+      args: args.map((a) => safeClone(a, cloneOptions)),
       timestamp: new Date().toISOString(),
       seq: seq++
     })
@@ -1117,7 +1122,7 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
     vm.runInContext(wrappedScript, context, {
       timeout: timeoutMs,
       displayErrors: true,
-      filename: `fp-${phase}-script.js`
+      filename: scriptFile
     })
   } catch (err) {
     // Timeouts surface as a vm-generated Error; syntax errors too.
@@ -1125,7 +1130,7 @@ export function runFpScript(input: FpSandboxInput): FpSandboxOutcome {
     const e = err as Error
     result.error = {
       message: e?.message ?? String(err),
-      stack: e?.stack
+      stack: typeof e?.stack === 'string' ? scriptOnlyStack(e.stack, scriptFile) : e?.stack
     }
   }
 

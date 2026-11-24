@@ -1038,6 +1038,164 @@ describe('safeClone — log argument shapes', () => {
     })
     expect(outcome.result.logs[0].args[0]).toBe('Symbol(tag)')
   })
+
+  // ISS-0002: Error, Date, Map and Set keep their data instead of becoming `{}`.
+  const runPost = (script: string, body = 'not json') =>
+    runFpScript({
+      phase: 'post-response',
+      script,
+      request: baseRequest(),
+      response: { ...baseResponse, body },
+      environment: {},
+      variables: {}
+    })
+
+  /** Every frame of `stack` is a line of the script; no host path is left anywhere. */
+  function expectScriptOnly(stack: string | undefined, file = 'fp-post-response-script.js'): void {
+    expect(typeof stack).toBe('string')
+    for (const line of stack!.split('\n')) {
+      if (/^\s+at /.test(line)) expect(line).toContain(file)
+    }
+    expect(stack).not.toContain(process.cwd())
+    expect(stack).not.toContain('node:')
+    expect(stack).not.toContain('fp-sandbox')
+  }
+
+  it('logs a caught script error as { name, message, stack } with script frames only', () => {
+    const outcome = runPost(
+      `try { JSON.parse(fp.response.body) } catch (e) { console.error('parse failed', e) }`
+    )
+    const [label, err] = outcome.result.logs[0].args as [string, Record<string, string>]
+    expect(label).toBe('parse failed')
+    expect(err.name).toBe('SyntaxError')
+    expect(err.message).toMatch(/JSON/)
+    expect(err.stack).toMatch(/^SyntaxError: /)
+    expect(err.stack).toContain('at fp-post-response-script.js:2:')
+    expectScriptOnly(err.stack)
+  })
+
+  it('logs an error thrown by an fp method without its host frames', () => {
+    const outcome = runPost(`try { fp.response.json() } catch (e) { fp.log(e) }`)
+    const err = outcome.result.logs[0].args[0] as Record<string, string>
+    expect(err.name).toBe('Error')
+    expect(err.message).toMatch(/^fp\.response\.json\(\): body is not valid JSON/)
+    expect(err.stack).toContain('at fp-post-response-script.js:2:')
+    expectScriptOnly(err.stack)
+  })
+
+  it('logs a nested error and keeps the enumerable properties of an error', () => {
+    const outcome = runPost(
+      `const e = new TypeError('boom'); e.code = 42; fp.log({ err: e }); fp.log(e)`
+    )
+    const nested = (outcome.result.logs[0].args[0] as { err: Record<string, unknown> }).err
+    expect(nested).toMatchObject({ name: 'TypeError', message: 'boom' })
+    expect(outcome.result.logs[1].args[0]).toMatchObject({
+      name: 'TypeError',
+      message: 'boom',
+      code: 42
+    })
+  })
+
+  it('logs an error whose stack was replaced by the script, filtered too', () => {
+    const outcome = runPost(
+      `const e = new Error('x'); e.stack = 'Error: x\\n    at host (/opt/host.js:1:1)'; fp.log(e)`
+    )
+    expect((outcome.result.logs[0].args[0] as Record<string, unknown>).stack).toBe('Error: x')
+  })
+
+  it('logs a plain object with name and message as the object it is', () => {
+    const outcome = runPost(`fp.log({ name: 'n', message: 'm', extra: 1 })`)
+    expect(outcome.result.logs[0].args[0]).toEqual({ name: 'n', message: 'm', extra: 1 })
+  })
+
+  it('logs a Date as its ISO string and an invalid Date as "Invalid Date"', () => {
+    const outcome = runPost(
+      `console.log(new Date(0)); console.log(new Date('nope')); fp.log({ a: { b: { c: new Date(0) } } })`
+    )
+    expect(outcome.result.logs[0].args).toEqual(['1970-01-01T00:00:00.000Z'])
+    expect(outcome.result.logs[1].args).toEqual(['Invalid Date'])
+    // A Date is a leaf: at the depth limit it is still its string, not "truncated".
+    expect(outcome.result.logs[2].args[0]).toEqual({
+      a: { b: { c: '1970-01-01T00:00:00.000Z' } }
+    })
+  })
+
+  it('logs a Map as [key, value] entries and a Set as its values', () => {
+    const outcome = runPost(
+      `console.log(new Map([['a', 1], [{ k: 1 }, new Set([2])]]), new Set([1, 'two', [3]]))`
+    )
+    expect(outcome.result.logs[0].args).toEqual([
+      [
+        ['a', 1],
+        [{ k: 1 }, [2]]
+      ],
+      [1, 'two', [3]]
+    ])
+  })
+
+  it('logs empty collections as empty arrays', () => {
+    const outcome = runPost(`fp.log(new Map(), new Set())`)
+    expect(outcome.result.logs[0].args).toEqual([[], []])
+  })
+
+  it('keeps Map and Set inside the cycle and depth limits', () => {
+    const outcome = runPost(
+      `const m = new Map(); m.set('self', m); const s = new Set(); s.add(s);
+       fp.log(m, s, { a: { b: { c: new Map([[1, 2]]) } } })`
+    )
+    const [m, s, deep] = outcome.result.logs[0].args
+    expect(m).toEqual([['self', { __inspect: 'circular' }]])
+    expect(s).toEqual([{ __inspect: 'circular' }])
+    expect(deep).toEqual({ a: { b: { c: { __inspect: 'truncated', kind: 'array' } } } })
+  })
+})
+
+describe('script error stack — script frames only (ISS-0002)', () => {
+  const run = (phase: 'pre-request' | 'post-response', script: string, timeoutMs?: number) =>
+    runFpScript({
+      phase,
+      script,
+      request: baseRequest(),
+      response: phase === 'post-response' ? { ...baseResponse, body: 'not json' } : undefined,
+      environment: {},
+      variables: {},
+      ...(timeoutMs !== undefined ? { timeoutMs } : {})
+    }).result.error
+
+  function expectScriptOnly(stack: string | undefined, file: string): void {
+    expect(typeof stack).toBe('string')
+    for (const line of stack!.split('\n')) {
+      if (/^\s+at /.test(line)) expect(line).toContain(file)
+    }
+    expect(stack).not.toContain(process.cwd())
+    expect(stack).not.toContain('node:')
+    expect(stack).not.toContain('fp-sandbox')
+  }
+
+  it('keeps the script header and frames of a runtime error', () => {
+    const error = run('pre-request', `function f() { throw new Error('in f') }\nf()`)
+    expect(error?.stack).toMatch(/^fp-pre-request-script\.js:2\n/)
+    expect(error?.stack).toContain('at f (fp-pre-request-script.js:2:')
+    expectScriptOnly(error?.stack, 'fp-pre-request-script.js')
+  })
+
+  it('drops the host header and frames of an error an fp method threw', () => {
+    const error = run('post-response', `fp.response.json()`)
+    expect(error?.stack).toMatch(/^Error: fp\.response\.json\(\): body is not valid JSON/)
+    expect(error?.stack).toContain('at fp-post-response-script.js:2:')
+    expectScriptOnly(error?.stack, 'fp-post-response-script.js')
+  })
+
+  it('keeps the script header of a syntax error and no host frame', () => {
+    const error = run('post-response', `let x = ;`)
+    expect(error?.stack).toMatch(/^fp-post-response-script\.js:2\nlet x = ;\n/)
+    expectScriptOnly(error?.stack, 'fp-post-response-script.js')
+  })
+
+  it('reduces a timeout to its message line', () => {
+    const error = run('pre-request', `while (true) {}`, 50)
+    expect(error?.stack).toMatch(/^Error: Script execution timed out after 50ms$/)
+  })
 })
 
 describe('environment proxy — set / remove / re-set bookkeeping', () => {
